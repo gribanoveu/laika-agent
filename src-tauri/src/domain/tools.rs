@@ -159,6 +159,7 @@ impl ApprovalPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::temp_dir;
 
     /// Adding a variant without listing it in `ALL` would silently shrink every
     /// other test in this file to a subset of the enum.
@@ -276,20 +277,6 @@ mod tests {
         for &tool in ToolName::ALL {
             assert!(!policy.requires_approval(tool, false), "{tool:?}");
         }
-    }
-
-    /// Hoist this out of the test module when a second file needs it.
-    fn temp_dir(label: &str) -> PathBuf {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static N: AtomicU32 = AtomicU32::new(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after the epoch")
-            .as_nanos();
-        let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("atlas-tools-{label}-{nanos}-{n}"));
-        std::fs::create_dir_all(&dir).expect("temp dir is creatable");
-        dir
     }
 
     /// The whole point of resolving the root once: a boundary still holding a

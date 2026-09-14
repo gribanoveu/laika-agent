@@ -1,4 +1,7 @@
 pub mod domain;
+#[cfg(test)]
+mod testing;
+pub mod services;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
