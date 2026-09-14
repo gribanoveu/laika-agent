@@ -17,6 +17,7 @@ pub mod create_directory;
 pub mod delete_directory;
 pub mod delete_file;
 pub mod edit_file;
+pub mod git;
 pub mod grep;
 pub mod list_files;
 pub mod move_path;
@@ -41,5 +42,8 @@ pub fn execute_tool(
         ToolCall::DeleteDirectory(args) => delete_directory::delete_directory(scope, args),
         ToolCall::Move(args) => move_path::move_path(scope, args),
         ToolCall::Todo(args) => todo::todo(todos, args),
+        ToolCall::GitStatus => git::git_status(scope),
+        ToolCall::GitDiff(args) => git::git_diff(scope, args),
+        ToolCall::GitBlame(args) => git::git_blame(scope, args),
     }
 }

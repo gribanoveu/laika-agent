@@ -502,6 +502,9 @@ pub enum ToolCall {
     DeleteDirectory(DeleteDirectoryArgs),
     Move(MoveArgs),
     Todo(TodoArgs),
+    GitStatus,
+    GitDiff(GitDiffArgs),
+    GitBlame(GitBlameArgs),
 }
 
 impl ToolCall {
@@ -517,6 +520,9 @@ impl ToolCall {
             ToolCall::DeleteDirectory(_) => ToolName::DeleteDirectory,
             ToolCall::Move(_) => ToolName::Move,
             ToolCall::Todo(_) => ToolName::Todo,
+            ToolCall::GitStatus => ToolName::GitStatus,
+            ToolCall::GitDiff(_) => ToolName::GitDiff,
+            ToolCall::GitBlame(_) => ToolName::GitBlame,
         }
     }
 
@@ -590,6 +596,28 @@ pub enum ToolResult {
     /// delta because the caller owns the list and this is how it gets it back.
     #[serde(rename_all = "camelCase")]
     Todo { tasks: Vec<Task> },
+    #[serde(rename_all = "camelCase")]
+    GitStatus {
+        branch: Option<String>,
+        staged: Vec<GitFileStatus>,
+        unstaged: Vec<GitFileStatus>,
+        conflicted: Vec<GitFileStatus>,
+        truncated: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    GitDiff {
+        path: String,
+        /// What was compared with what, e.g. `index → working tree`.
+        label: String,
+        diff: FileDiffStats,
+        is_binary: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    GitBlame {
+        path: String,
+        hunks: Vec<BlameHunk>,
+        truncated: bool,
+    },
 }
 
 /// `readFile` arguments.
@@ -901,4 +929,49 @@ impl From<TodoUpdateStatus> for TodoStatus {
             TodoUpdateStatus::Cancelled => TodoStatus::Cancelled,
         }
     }
+}
+
+/// `gitDiff` arguments — one file, never a directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffArgs {
+    pub path: String,
+    /// `"unstaged"` (default) or `"staged"`. Ignored when `commit` is set.
+    pub scope: Option<String>,
+    /// A commit hash or ref. When set, diffs that commit against its parent.
+    pub commit: Option<String>,
+}
+
+/// `gitBlame` arguments. The range mirrors `readFile`'s.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBlameArgs {
+    pub path: String,
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub start_line: Option<u32>,
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub end_line: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileStatus {
+    /// Relative to the scope root, like every other path a tool reports.
+    pub path: String,
+    /// One letter: `M`, `A`, `D`, `R`, `U`, `?`.
+    pub status: String,
+}
+
+/// A run of consecutive lines that arrived in one commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameHunk {
+    pub start_line: u32,
+    pub line_count: u32,
+    /// Short hash — the long one costs context and buys nothing to read.
+    pub commit: String,
+    pub author: String,
+    pub date: String,
+    /// First line of the commit message.
+    pub summary: String,
 }
