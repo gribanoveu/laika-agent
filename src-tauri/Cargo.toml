@@ -31,6 +31,7 @@ globset = "0.4.20"
 similar = "3.2.0"
 git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+serde_path_to_error = "0.1.20"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
