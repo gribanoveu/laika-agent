@@ -15,6 +15,7 @@ Claude Code Desktop.
 | [04-reuse-map.md](04-reuse-map.md) | Постатейно: что вычленяется из Alfa Atlas и в каком виде |
 | [05-gaps.md](05-gaps.md) | Чего в Atlas нет и надо писать с нуля; риски переноса |
 | [06-port-plan.md](06-port-plan.md) | Порядок переноса: этапы и фичи, рабочий чеклист |
+| [07-upstream-findings.md](07-upstream-findings.md) | Находки в Alfa Atlas, замеченные при чтении его кода |
 
 ## Три тезиса, из которых растёт всё остальное
 
