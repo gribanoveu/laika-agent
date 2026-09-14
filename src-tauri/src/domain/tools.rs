@@ -496,6 +496,7 @@ pub enum ToolCall {
     Grep(GrepArgs),
     ListFiles(ListFilesArgs),
     WriteFile(WriteFileArgs),
+    EditFile(EditFileArgs),
 }
 
 impl ToolCall {
@@ -505,6 +506,7 @@ impl ToolCall {
             ToolCall::Grep(_) => ToolName::Grep,
             ToolCall::ListFiles(_) => ToolName::ListFiles,
             ToolCall::WriteFile(_) => ToolName::WriteFile,
+            ToolCall::EditFile(_) => ToolName::EditFile,
         }
     }
 
@@ -553,6 +555,11 @@ pub enum ToolResult {
     },
     #[serde(rename_all = "camelCase")]
     FileWritten {
+        path: String,
+        diff: FileDiffStats,
+    },
+    #[serde(rename_all = "camelCase")]
+    FileEdited {
         path: String,
         diff: FileDiffStats,
     },
@@ -751,4 +758,24 @@ fn hash(content: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     content.hash(&mut hasher);
     hasher.finish()
+}
+
+/// One anchored replacement. `old` must occur exactly once in the file's
+/// current content — see `services::ai_tools::tools::edit_file`, where not
+/// matching, matching more than once, and two edits overlapping all reject the
+/// whole call before anything is written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEdit {
+    pub old: String,
+    pub new: String,
+}
+
+/// `editFile` arguments. The file must already exist — creating one stays
+/// `writeFile`'s job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditFileArgs {
+    pub path: String,
+    pub edits: Vec<FileEdit>,
 }

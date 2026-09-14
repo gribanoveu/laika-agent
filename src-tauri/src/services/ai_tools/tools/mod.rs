@@ -13,6 +13,7 @@
 
 use crate::domain::tools::{ReadFiles, ToolCall, ToolError, ToolResult, ToolScope};
 
+pub mod edit_file;
 pub mod grep;
 pub mod list_files;
 pub mod write_file;
@@ -28,5 +29,6 @@ pub fn execute_tool(
         ToolCall::Grep(args) => grep::grep(scope, args),
         ToolCall::ListFiles(args) => list_files::list_files(scope, args),
         ToolCall::WriteFile(args) => write_file::write_file(scope, args, reads),
+        ToolCall::EditFile(args) => edit_file::edit_file(scope, args, reads),
     }
 }
