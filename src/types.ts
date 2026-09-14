@@ -30,7 +30,7 @@ export const isApproval = (t: ToolCall | Approval): t is Approval => "command" i
 
 export type ChangedFile = { name: string; add: number; del: number };
 
-export type AsideTab = "context" | "mcp" | "skills" | "rules" | "files" | "terminal";
+export type AsideTab = "changes" | "mcp" | "skills" | "rules" | "files" | "terminal";
 
 export type PanelItem = {
   id: string;

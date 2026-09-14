@@ -4,7 +4,6 @@ import {
   ChevronUp,
   Clock,
   Keyboard,
-  LogOut,
   MessageSquare,
   PanelLeft,
   Plus,
@@ -142,18 +141,6 @@ export function Sidebar({
                   <Clock size={14} />
                 </span>
                 About atlas-cli
-              </button>
-              <div className="user-menu-sep" />
-              <button
-                className="user-menu-item danger"
-                role="menuitem"
-                type="button"
-                onClick={() => setMenuOpen(false)}
-              >
-                <span className="ico">
-                  <LogOut size={14} />
-                </span>
-                Sign out
               </button>
             </div>
           )}

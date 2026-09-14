@@ -21,8 +21,8 @@ const CARDS: { title: string; text: string; action: string; tab: AsideTab | null
   {
     title: "Stage and commit",
     text: "Перенесите файлы в staged и создайте коммит в правой панели.",
-    action: "Open Context panel →",
-    tab: "context",
+    action: "Open Changes panel →",
+    tab: "changes",
   },
 ];
 

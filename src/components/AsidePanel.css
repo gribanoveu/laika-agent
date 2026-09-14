@@ -1,7 +1,7 @@
 .aside {
-  width: 300px;
+  width: var(--aside-width, 300px);
   flex: none;
-  margin-left: 10px;
+  position: relative;
   background: var(--bg-panel);
   border-radius: var(--radius);
   display: flex;
@@ -11,37 +11,46 @@
 }
 .window.aside-collapsed .aside {
   width: 52px;
-  margin-left: 6px;
 }
 
 .aside-head {
   flex: none;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 0;
   padding: 10px 8px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 .window.aside-collapsed .aside-head {
   flex-direction: column;
+  /* Column flow turns align-items into horizontal alignment — centre the rail. */
+  align-items: center;
   padding: 12px 0 8px;
   border-bottom: 0;
 }
+/* Shares the tab row's box so it sits on the same line as the tab icons,
+   separated by a hairline instead of a hover square. */
 .aside-toggle {
-  width: 30px;
-  height: 30px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  background: none;
+  padding: 2px 8px 8px 4px;
+  margin: 0 4px -1px 0;
   border: 0;
-  color: var(--text-dim);
+  border-right: 1px solid var(--border-soft);
+  /* Matches the tab underline so both icon rows share one baseline. */
+  border-bottom: 1.5px solid transparent;
+  background: none;
+  color: var(--text-faint);
   cursor: pointer;
 }
 .aside-toggle:hover {
-  background: var(--bg-hover);
   color: var(--text);
+}
+.window.aside-collapsed .aside-toggle {
+  padding: 4px;
+  margin: 0;
+  border-right: 0;
 }
 .window.aside-collapsed .aside-toggle svg {
   transform: scaleX(-1);
@@ -51,26 +60,24 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  gap: 14px;
-  padding: 4px 6px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.tabs::-webkit-scrollbar {
-  display: none;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  column-gap: 2px;
+  padding: 4px 4px 0;
 }
 .window.aside-collapsed .tabs {
   display: none;
 }
+/* Icon only — the name lives in the tooltip, so the row never has to wrap. */
 .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 0;
   cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
   color: var(--text-faint);
-  white-space: nowrap;
-  padding: 0 0 9px;
+  padding: 2px 4px 8px;
   border-bottom: 1.5px solid transparent;
   margin-bottom: -1px;
 }

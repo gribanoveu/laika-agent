@@ -1,4 +1,4 @@
-import { CornerDownLeft, FolderGit2, MessageSquarePlus } from "lucide-react";
+import { FolderGit2, MessageSquarePlus } from "lucide-react";
 import type { Session } from "../types";
 import "./ChatEmptyState.css";
 
@@ -38,11 +38,11 @@ export function ChatEmptyState({ session, onOpenRepo, onNewChat }: Props) {
         </button>
       </div>
       <p className="chat-empty-hint">
-        Type below and press
-        <kbd>
-          <CornerDownLeft size={10} />
-        </kbd>
-        to send · <kbd>⇧↵</kbd> for a new line
+        <kbd>Enter</kbd> to send
+        <span className="sep">·</span>
+        <kbd>Shift</kbd>
+        <span className="plus">+</span>
+        <kbd>Enter</kbd> for a new line
       </p>
     </div>
   );

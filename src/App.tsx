@@ -4,8 +4,10 @@ import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
 import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
+import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
+import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import type { AsideTab, ChatSummary, Session, Turn } from "./types";
@@ -31,10 +33,22 @@ const dragOrMaximize = (e: React.MouseEvent) => {
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
-  const [tab, setTab] = useState<AsideTab>("context");
+  const [tab, setTab] = useState<AsideTab>("changes");
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const toast = useToast();
+  const panels = usePanelSizes({
+    sidebar: {
+      collapsed,
+      collapse: () => setCollapsed(true),
+      expand: () => setCollapsed(false),
+    },
+    aside: {
+      collapsed: asideCollapsed,
+      collapse: () => setAsideCollapsed(true),
+      expand: () => setAsideCollapsed(false),
+    },
+  });
 
   const openTab = (next: AsideTab) => {
     setTab(next);
@@ -46,6 +60,12 @@ export default function App() {
   return (
     <div
       className={`window${collapsed ? " collapsed" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}
+      style={
+        {
+          "--sidebar-width": `${panels.widths.sidebar}px`,
+          "--aside-width": `${panels.widths.aside}px`,
+        } as React.CSSProperties
+      }
     >
       <div className="titlebar" onMouseDown={dragOrMaximize}>
         <WindowControls />
@@ -66,6 +86,12 @@ export default function App() {
           onOnboardingAction={openTab}
         />
 
+        <PanelResizeHandle
+          ariaLabel="Resize the chat list"
+          onResize={panels.resizeSidebarBy}
+          onResizeEnd={panels.endResize}
+        />
+
         <main className="main">
           <ChatPanel
             session={session}
@@ -76,6 +102,13 @@ export default function App() {
           />
           <Composer onNotify={toast.show} />
         </main>
+
+        <PanelResizeHandle
+          invert
+          ariaLabel="Resize the side panel"
+          onResize={panels.resizeAsideBy}
+          onResizeEnd={panels.endResize}
+        />
 
         <AsidePanel
           tab={tab}

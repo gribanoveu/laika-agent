@@ -1,0 +1,35 @@
+/* Occupies the gap between two panels — that gap is the whole grab area. */
+.panel-resize-handle {
+  flex: none;
+  width: 10px;
+  align-self: stretch;
+  position: relative;
+  z-index: 6;
+  cursor: col-resize;
+  touch-action: none;
+}
+/* Short grip in the middle of the gap, not a full-height rule. */
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.panel-resize-handle:hover::after {
+  background: var(--text-faint);
+}
+.panel-resize-handle.is-active::after {
+  background: var(--text-dim);
+}
+
+/* Width animates when a panel collapses, never while the pointer drives it. */
+body.is-resizing .sidebar,
+body.is-resizing .aside {
+  transition: none;
+}

@@ -7,13 +7,13 @@ import {
   SquareTerminal,
   Table2,
 } from "lucide-react";
-import { ContextPanel } from "./ContextPanel";
+import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
 const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
-  { id: "context", label: "Context", icon: Table2 },
+  { id: "changes", label: "Changes", icon: Table2 },
   { id: "mcp", label: "MCP", icon: Plug },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "rules", label: "Rules", icon: BookText },
@@ -35,7 +35,13 @@ type Props = {
   onNotify: (msg: string) => void;
 };
 
-export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNotify }: Props) {
+export function AsidePanel({
+  tab,
+  onTabChange,
+  collapsed,
+  onToggleCollapse,
+  onNotify,
+}: Props) {
   return (
     <aside className="aside">
       <div className="aside-head">
@@ -48,16 +54,17 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
           <PanelRight size={15} />
         </button>
         <div className="tabs" role="tablist">
-          {TABS.map(({ id, label }) => (
+          {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               role="tab"
+              title={label}
               aria-selected={tab === id}
               className={`tab${tab === id ? " active" : ""}`}
               onClick={() => onTabChange(id)}
             >
-              {label}
+              <Icon size={15} />
             </button>
           ))}
         </div>
@@ -82,7 +89,7 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
 
       <div className="aside-body">
         <div className="tabpanel" role="tabpanel">
-          {tab === "context" && <ContextPanel onNotify={onNotify} />}
+          {tab === "changes" && <ChangesPanel onNotify={onNotify} />}
           {tab === "mcp" && (
             <ItemList
               label="Connected servers"

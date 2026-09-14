@@ -57,12 +57,21 @@
 .chat-empty-hint kbd {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
   border-radius: 5px;
   background: var(--bg-bubble);
   border: 1px solid var(--border-soft);
   font-family: var(--font-mono);
   font-size: 10.5px;
+  line-height: 1;
   color: var(--text-dim);
+}
+.chat-empty-hint .plus {
+  margin: 0 -2px;
+}
+.chat-empty-hint .sep {
+  margin: 0 3px;
+  opacity: 0.6;
 }

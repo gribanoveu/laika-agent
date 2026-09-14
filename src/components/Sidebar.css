@@ -1,13 +1,14 @@
 .sidebar {
-  width: 248px;
+  width: var(--sidebar-width, 248px);
   flex: none;
+  position: relative;
   background: var(--bg-panel);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  margin-right: 10px;
   transition: width 0.22s ease;
-  overflow: hidden;
+  /* No overflow:hidden here — it would clip the account menu, which deliberately
+     sits outside the rail when collapsed. Clipping lives on the rows below. */
 }
 .window.collapsed .sidebar {
   width: 58px;
@@ -18,6 +19,7 @@
   align-items: center;
   gap: 6px;
   padding: 12px 10px 10px;
+  overflow: hidden;
 }
 .window.collapsed .sidebar-top {
   flex-direction: column;
@@ -54,6 +56,7 @@
 
 .group {
   padding: 10px 10px 0;
+  overflow: hidden;
 }
 .window.collapsed .group {
   display: none;
@@ -215,15 +218,6 @@
 }
 .user-menu-item:hover .ico {
   color: var(--text-dim);
-}
-.user-menu-sep {
-  height: 1px;
-  background: var(--border-soft);
-  margin: 4px 6px;
-}
-.user-menu-item.danger:hover,
-.user-menu-item.danger:hover .ico {
-  color: var(--red);
 }
 
 @media (max-width: 760px) {

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
 import type { ChangedFile } from "../types";
-import "./ContextPanel.css";
+import "./ChangesPanel.css";
 
 type Props = { onNotify: (msg: string) => void };
 
@@ -38,7 +38,7 @@ function StageRow({
   );
 }
 
-export function ContextPanel({ onNotify }: Props) {
+export function ChangesPanel({ onNotify }: Props) {
   const { unstaged, staged, stage, unstage, stageAll } = useStaging();
   const [message, setMessage] = useState("");
 
@@ -116,14 +116,6 @@ export function ContextPanel({ onNotify }: Props) {
         </div>
       </div>
 
-      <div className="panel-section">
-        <div className="section-label">
-          <span>Session context</span>
-        </div>
-        <div className="empty" style={{ paddingTop: 0 }}>
-          No repository open.
-        </div>
-      </div>
     </>
   );
 }
