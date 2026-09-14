@@ -10,16 +10,29 @@
 
 use std::fs;
 
-use crate::domain::tools::{ReadFileArgs, ToolError, ToolResult, ToolScope};
+use crate::domain::tools::{ReadFileArgs, ReadFiles, ToolError, ToolResult, ToolScope};
 
-use super::super::resolve::resolve_existing;
+use super::super::resolve::{relative_to_root, resolve_existing};
 
-pub fn read_file(scope: &ToolScope, args: &ReadFileArgs) -> Result<ToolResult, ToolError> {
+pub fn read_file(
+    scope: &ToolScope,
+    args: &ReadFileArgs,
+    reads: &mut ReadFiles,
+) -> Result<ToolResult, ToolError> {
     let path = resolve_existing(scope, &args.path)?;
     if !path.is_file() {
         return Err(ToolError::NotAFile(args.path.clone()));
     }
     let content = fs::read_to_string(&path).map_err(ToolError::Io)?;
+
+    // Recorded against the whole file even when a slice is returned, and under
+    // the canonical spelling rather than whatever the model typed — otherwise
+    // `./src/a.rs` and `src/a.rs` would be two different files to the registry.
+    // A range that happens to cover the whole file still counts as partial:
+    // being conservative costs one re-read, being wrong costs the file.
+    let whole = args.start_line.is_none() && args.end_line.is_none();
+    reads.record(&relative_to_root(scope, &path)?, &content, whole);
+
     Ok(slice_lines(content, args.start_line, args.end_line))
 }
 
@@ -71,7 +84,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::ToolCall;
+    use crate::domain::tools::{ReadFiles, ToolCall};
     use crate::services::ai_tools::tools::execute_tool;
     use crate::testing::temp_dir;
     use std::path::PathBuf;
@@ -82,6 +95,12 @@ mod tests {
         let scope = ToolScope::new(&dir).expect("root resolves");
         let root = scope.root().to_path_buf();
         (scope, root)
+    }
+
+    /// Every test reads with a throwaway registry unless it is testing the
+    /// registry itself, so a signature change lands here and nowhere else.
+    fn read(scope: &ToolScope, args: &ReadFileArgs) -> Result<ToolResult, ToolError> {
+        read_file(scope, args, &mut ReadFiles::default())
     }
 
     fn args(path: &str, start: Option<u32>, end: Option<u32>) -> ReadFileArgs {
@@ -111,7 +130,7 @@ mod tests {
     fn a_whole_file_read_is_byte_identical() {
         for body in ["one\ntwo\nthree\n", "no trailing newline", "", "\n\n"] {
             let (scope, _) = fixture("read-identical", body);
-            let (content, ..) = unwrap_file(read_file(&scope, &args("file.txt", None, None)).unwrap());
+            let (content, ..) = unwrap_file(read(&scope, &args("file.txt", None, None)).unwrap());
             assert_eq!(content, body, "body {body:?} came back changed");
         }
     }
@@ -120,7 +139,7 @@ mod tests {
     fn a_whole_file_read_reports_the_full_range() {
         let (scope, _) = fixture("read-range-full", "one\ntwo\nthree\n");
         let (_, start, end, total) =
-            unwrap_file(read_file(&scope, &args("file.txt", None, None)).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", None, None)).unwrap());
         assert_eq!((start, end, total), (1, 3, 3));
     }
 
@@ -128,7 +147,7 @@ mod tests {
     fn a_requested_range_returns_only_those_lines() {
         let (scope, _) = fixture("read-range", "one\ntwo\nthree\nfour\n");
         let (content, start, end, total) =
-            unwrap_file(read_file(&scope, &args("file.txt", Some(2), Some(3))).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", Some(2), Some(3))).unwrap());
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end, total), (2, 3, 4));
     }
@@ -140,12 +159,12 @@ mod tests {
     fn an_out_of_range_request_is_clamped_not_refused() {
         let (scope, _) = fixture("read-clamp", "one\ntwo\n");
         let (content, start, end, total) =
-            unwrap_file(read_file(&scope, &args("file.txt", Some(1), Some(900))).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", Some(1), Some(900))).unwrap());
         assert_eq!(content, "one\ntwo\n");
         assert_eq!((start, end, total), (1, 2, 2));
 
         let (_, start, end, _) =
-            unwrap_file(read_file(&scope, &args("file.txt", Some(900), None)).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", Some(900), None)).unwrap());
         assert_eq!((start, end), (2, 2), "a start past EOF lands on the last line");
     }
 
@@ -155,7 +174,7 @@ mod tests {
     fn an_inverted_range_returns_the_start_line() {
         let (scope, _) = fixture("read-inverted", "one\ntwo\nthree\n");
         let (content, start, end, _) =
-            unwrap_file(read_file(&scope, &args("file.txt", Some(3), Some(1))).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", Some(3), Some(1))).unwrap());
         assert_eq!(content, "three\n");
         assert_eq!((start, end), (3, 3));
     }
@@ -166,7 +185,7 @@ mod tests {
     fn an_empty_file_claims_no_lines() {
         let (scope, _) = fixture("read-empty", "");
         let (content, start, end, total) =
-            unwrap_file(read_file(&scope, &args("file.txt", Some(1), Some(5))).unwrap());
+            unwrap_file(read(&scope, &args("file.txt", Some(1), Some(5))).unwrap());
         assert_eq!(content, "");
         assert_eq!((start, end, total), (0, 0, 0));
     }
@@ -176,7 +195,7 @@ mod tests {
         let (scope, root) = fixture("read-dir", "body");
         std::fs::create_dir(root.join("sub")).expect("dir is creatable");
         assert!(matches!(
-            read_file(&scope, &args("sub", None, None)),
+            read(&scope, &args("sub", None, None)),
             Err(ToolError::NotAFile(_))
         ));
     }
@@ -185,7 +204,7 @@ mod tests {
     fn a_missing_file_reports_not_found() {
         let (scope, _) = fixture("read-404", "body");
         assert!(matches!(
-            read_file(&scope, &args("nope.txt", None, None)),
+            read(&scope, &args("nope.txt", None, None)),
             Err(ToolError::NotFound(_))
         ));
     }
@@ -196,7 +215,7 @@ mod tests {
     fn a_path_leaving_the_root_is_refused() {
         let (scope, _) = fixture("read-escape", "body");
         assert!(matches!(
-            read_file(&scope, &args("../file.txt", None, None)),
+            read(&scope, &args("../file.txt", None, None)),
             Err(ToolError::PathEscape(_))
         ));
     }
@@ -224,7 +243,7 @@ mod tests {
         let json = r#"{"tool": "readFile", "args": {"path": "file.txt", "startLine": "2", "endLine": "3"}}"#;
         let call: ToolCall = serde_json::from_str(json).expect("quoted numbers parse");
 
-        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call).unwrap());
+        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call, &mut ReadFiles::default()).unwrap());
 
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end), (2, 3));

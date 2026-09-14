@@ -136,7 +136,7 @@ fn render_children(node: &Node, prefix: &str, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::ToolCall;
+    use crate::domain::tools::{ReadFiles, ToolCall};
     use crate::services::ai_tools::tools::execute_tool;
     use crate::testing::temp_dir;
     use std::path::Path;
@@ -376,7 +376,7 @@ mod tests {
         let (scope, root) = fixture("list-dispatch");
         write(&root, "src/a.rs", "");
         assert!(matches!(
-            execute_tool(&scope, &call),
+            execute_tool(&scope, &call, &mut ReadFiles::default()),
             Ok(ToolResult::FileList { .. })
         ));
     }

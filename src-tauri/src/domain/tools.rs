@@ -452,6 +452,19 @@ pub enum ToolError {
         id: String,
         available: Option<Vec<String>>,
     },
+    /// A write to a file the agent never read. Not pedantry: replacing a file
+    /// whose contents were never seen destroys work nobody looked at, and the
+    /// model has no way to know what it just lost.
+    #[error("read {0} before writing to it — a file you have not read may not be what you expect")]
+    FileNotRead(String),
+    /// A wholesale replacement of a file the agent has only read part of.
+    #[error("you have only read part of {0} — read it in full before replacing it, or use editFile to change just the part you know")]
+    FileReadInPart(String),
+    /// The file moved under the agent between the read and the write. The
+    /// classic loss: the agent read, a person edited in their own editor, the
+    /// agent wrote its stale copy over the top.
+    #[error("{0} changed on disk since you read it — read it again before writing, or your change will overwrite someone else's")]
+    FileChangedSinceRead(String),
     /// A git read failed. Carried as a string so git types stay out of the
     /// tool boundary.
     #[error("git error: {0}")]
@@ -482,6 +495,7 @@ pub enum ToolCall {
     ReadFile(ReadFileArgs),
     Grep(GrepArgs),
     ListFiles(ListFilesArgs),
+    WriteFile(WriteFileArgs),
 }
 
 impl ToolCall {
@@ -490,6 +504,7 @@ impl ToolCall {
             ToolCall::ReadFile(_) => ToolName::ReadFile,
             ToolCall::Grep(_) => ToolName::Grep,
             ToolCall::ListFiles(_) => ToolName::ListFiles,
+            ToolCall::WriteFile(_) => ToolName::WriteFile,
         }
     }
 
@@ -535,6 +550,11 @@ pub enum ToolResult {
     FileList {
         entries: Vec<ToolFileEntry>,
         truncated: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    FileWritten {
+        path: String,
+        diff: FileDiffStats,
     },
 }
 
@@ -619,4 +639,116 @@ pub struct ToolFileEntry {
     /// takes, so an entry round-trips without editing.
     pub path: String,
     pub is_dir: bool,
+}
+
+/// `writeFile` arguments. Creates the file or replaces it whole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteFileArgs {
+    pub path: String,
+    pub content: String,
+}
+
+/// The line-diff summary attached to every settled write.
+///
+/// Consumed by two independent readers: the UI's `+N −M` badge and diff view,
+/// and the model itself — which otherwise sees only `{"path": "…"}` and has no
+/// way to confirm what landed on disk. `lines_added`/`lines_removed` are the
+/// true totals even when `unified_diff` was cut short.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiffStats {
+    pub lines_added: u32,
+    pub lines_removed: u32,
+    pub unified_diff: String,
+    pub truncated: bool,
+}
+
+/// What the agent has read, and what the file looked like when it did.
+///
+/// One registry answers two questions that would otherwise be separate
+/// features. A write to a path with no entry is a write to a file the agent
+/// never looked at; a write to a path whose content no longer hashes the same
+/// is a write over somebody else's change. Both destroy work, and both are the
+/// same lookup.
+///
+/// Owned by the caller and passed in, so the executor itself stays stateless —
+/// the same arrangement the turn's todo list uses. It has to survive an
+/// approval pause, or every approved write would come back as "the file
+/// changed".
+#[derive(Debug, Clone, Default)]
+pub struct ReadFiles {
+    /// Keyed by root-relative path, the spelling every tool reports.
+    seen: std::collections::HashMap<String, FileRead>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FileRead {
+    /// Of the whole file as it was on disk, not of the slice returned.
+    hash: u64,
+    /// Whether the agent has seen all of it. A partial read is enough to place
+    /// an anchored edit — the anchor's uniqueness and this hash cover the rest
+    /// — but not to replace the file wholesale: overwriting 500 lines having
+    /// read 50 destroys 450 nobody looked at.
+    whole: bool,
+}
+
+/// Why a write was refused before it touched the disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteBlocked {
+    NeverRead,
+    /// Read, but only in part, where the whole file was needed.
+    ReadInPart,
+    ChangedSinceRead,
+}
+
+impl ReadFiles {
+    /// Records what a read saw. `content` is the whole file, whatever slice of
+    /// it was returned.
+    pub fn record(&mut self, path: &str, content: &str, whole: bool) {
+        self.seen.insert(
+            path.to_string(),
+            FileRead {
+                hash: hash(content),
+                whole,
+            },
+        );
+    }
+
+    /// Whether the agent may write `current` at `path`, or why not.
+    ///
+    /// `require_whole` is the difference between an anchored edit and a
+    /// wholesale replacement.
+    pub fn check(&self, path: &str, current: &str, require_whole: bool) -> Result<(), WriteBlocked> {
+        let Some(seen) = self.seen.get(path) else {
+            return Err(WriteBlocked::NeverRead);
+        };
+        if seen.hash != hash(current) {
+            return Err(WriteBlocked::ChangedSinceRead);
+        }
+        if require_whole && !seen.whole {
+            return Err(WriteBlocked::ReadInPart);
+        }
+        Ok(())
+    }
+
+    /// After a successful write the agent knows what it just put there, so the
+    /// next write to the same path must not be refused as stale. `whole` says
+    /// whether it now knows the entire file: true after a replacement, and
+    /// unchanged after an edit, which taught it nothing about the parts it had
+    /// not read.
+    pub fn record_write(&mut self, path: &str, content: &str, whole: bool) {
+        let whole = whole || self.seen.get(path).is_some_and(|s| s.whole);
+        self.record(path, content, whole);
+    }
+}
+
+/// Not persisted anywhere, so a non-cryptographic hash with no stability
+/// guarantee across releases is enough. It detects an edit made behind the
+/// agent's back, not a forgery.
+fn hash(content: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
 }

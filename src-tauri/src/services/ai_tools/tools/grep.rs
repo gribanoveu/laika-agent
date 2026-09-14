@@ -190,7 +190,7 @@ fn truncate(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::ToolCall;
+    use crate::domain::tools::{ReadFiles, ToolCall};
     use crate::services::ai_tools::tools::execute_tool;
     use crate::testing::temp_dir;
 
@@ -444,7 +444,7 @@ mod tests {
         let (scope, root) = fixture("grep-dispatch");
         write(&root, "a.txt", "todo\n");
         assert!(matches!(
-            execute_tool(&scope, &call),
+            execute_tool(&scope, &call, &mut ReadFiles::default()),
             Ok(ToolResult::GrepResults { .. })
         ));
     }
