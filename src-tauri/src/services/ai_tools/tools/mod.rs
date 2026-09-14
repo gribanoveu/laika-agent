@@ -13,9 +13,13 @@
 
 use crate::domain::tools::{ReadFiles, ToolCall, ToolError, ToolResult, ToolScope};
 
+pub mod create_directory;
+pub mod delete_directory;
+pub mod delete_file;
 pub mod edit_file;
 pub mod grep;
 pub mod list_files;
+pub mod move_path;
 pub mod write_file;
 pub mod read_file;
 
@@ -30,5 +34,9 @@ pub fn execute_tool(
         ToolCall::ListFiles(args) => list_files::list_files(scope, args),
         ToolCall::WriteFile(args) => write_file::write_file(scope, args, reads),
         ToolCall::EditFile(args) => edit_file::edit_file(scope, args, reads),
+        ToolCall::CreateDirectory(args) => create_directory::create_directory(scope, args),
+        ToolCall::DeleteFile(args) => delete_file::delete_file(scope, args, reads),
+        ToolCall::DeleteDirectory(args) => delete_directory::delete_directory(scope, args),
+        ToolCall::Move(args) => move_path::move_path(scope, args),
     }
 }

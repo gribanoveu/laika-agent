@@ -497,6 +497,10 @@ pub enum ToolCall {
     ListFiles(ListFilesArgs),
     WriteFile(WriteFileArgs),
     EditFile(EditFileArgs),
+    CreateDirectory(CreateDirectoryArgs),
+    DeleteFile(DeleteFileArgs),
+    DeleteDirectory(DeleteDirectoryArgs),
+    Move(MoveArgs),
 }
 
 impl ToolCall {
@@ -507,6 +511,10 @@ impl ToolCall {
             ToolCall::ListFiles(_) => ToolName::ListFiles,
             ToolCall::WriteFile(_) => ToolName::WriteFile,
             ToolCall::EditFile(_) => ToolName::EditFile,
+            ToolCall::CreateDirectory(_) => ToolName::CreateDirectory,
+            ToolCall::DeleteFile(_) => ToolName::DeleteFile,
+            ToolCall::DeleteDirectory(_) => ToolName::DeleteDirectory,
+            ToolCall::Move(_) => ToolName::Move,
         }
     }
 
@@ -563,6 +571,19 @@ pub enum ToolResult {
         path: String,
         diff: FileDiffStats,
     },
+    #[serde(rename_all = "camelCase")]
+    DirectoryCreated { path: String },
+    /// Carries the diff for the same reason a write does: the model should see
+    /// the size of what it just removed, not only that something was removed.
+    #[serde(rename_all = "camelCase")]
+    FileDeleted {
+        path: String,
+        diff: FileDiffStats,
+    },
+    #[serde(rename_all = "camelCase")]
+    DirectoryDeleted { path: String },
+    #[serde(rename_all = "camelCase")]
+    Moved { from: String, to: String },
 }
 
 /// `readFile` arguments.
@@ -778,4 +799,33 @@ pub struct FileEdit {
 pub struct EditFileArgs {
     pub path: String,
     pub edits: Vec<FileEdit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDirectoryArgs {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFileArgs {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteDirectoryArgs {
+    pub path: String,
+    /// Omitted or false refuses a directory that has contents, so an
+    /// over-broad path costs one refusal instead of a tree.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub recursive: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveArgs {
+    pub path: String,
+    pub new_path: String,
 }
