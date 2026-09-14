@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::llm::{ChatStreamResult, ChatUsage, LlmMessage};
-use crate::domain::tools::{Task, ToolResult};
+use crate::domain::tools::{ReadFiles, Task, ToolResult};
 
 /// How one turn ended.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +57,11 @@ pub struct ChatDone {
 /// - `todos` — an earlier round of the same turn may already have changed the
 ///   checklist. This carries the loop's accumulated state, not "unchanged
 ///   since the turn began".
+/// - `reads` — what the agent has read so far this turn. Alfa Atlas has no
+///   such registry and so has six fields here; with one, leaving it out makes
+///   the pause itself destructive: the approved write lands on a file the
+///   resumed turn no longer remembers reading, and is refused for exactly the
+///   reason the user just approved it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingApproval {
@@ -68,6 +73,8 @@ pub struct PendingApproval {
     pub calls: Vec<PendingToolCall>,
     #[serde(default)]
     pub todos: Vec<Task>,
+    #[serde(default)]
+    pub reads: ReadFiles,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,6 +263,8 @@ mod tests {
     }
 
     fn pending(calls: Vec<PendingToolCall>) -> PendingApproval {
+        let mut reads = ReadFiles::default();
+        reads.record("a.rs", "fn main() {}", true);
         PendingApproval {
             history: vec![LlmMessage::user("do it")],
             round: 3,
@@ -263,6 +272,7 @@ mod tests {
             event_seq: 42,
             calls,
             todos: Vec::new(),
+            reads,
         }
     }
 
@@ -281,6 +291,23 @@ mod tests {
         assert_eq!(after.event_seq, 42);
         assert_eq!(after.calls, before.calls);
         assert_eq!(after.history.len(), 1);
+        // The registry has to come back too, or the write the user just
+        // approved is refused for never having read the file.
+        assert!(after.reads.check("a.rs", "fn main() {}", true).is_ok());
+    }
+
+    /// Every field by name, so a field that stops being part of the checkpoint
+    /// — dropped, renamed, or marked skip — fails here rather than in a turn
+    /// that silently resets a ceiling.
+    #[test]
+    fn the_checkpoint_carries_exactly_these_fields() {
+        let json = serde_json::to_value(pending(vec![call("a", true)])).expect("serializes");
+        let mut fields: Vec<&str> = json.as_object().expect("an object").keys().map(String::as_str).collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            ["budgetUsed", "calls", "eventSeq", "history", "reads", "round", "todos"]
+        );
     }
 
     #[test]

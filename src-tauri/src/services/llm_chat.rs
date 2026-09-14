@@ -5,12 +5,27 @@
 //! rule here is pure and takes no provider, which is what makes it testable
 //! without a model at the other end.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::time::Duration;
 
-use crate::domain::llm::LlmToolCall;
-use crate::domain::tools::{ToolName, ToolResult};
+use crate::domain::llm::{
+    ChatRequest, ChatStreamResult, LlmError, LlmMessage, LlmRole, LlmToolCall,
+    sanitize_tool_call_arguments,
+};
+use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
+use crate::domain::tools::{ApprovalPolicy, ReadFiles, Task, ToolName, ToolResult, ToolScope};
+use crate::domain::turn::{
+    ChatDone, ChatEventPayload, ChatEventSink, ChatStreamOutcome, ChatTurnEvent, DecisionError,
+    PendingApproval, PendingToolCall, ToolCallDecision, ToolCallEvent, ToolResultEvent,
+};
+use crate::infra::llm_debug_log;
+use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
+use crate::services::ai_tools::tools::list_files::render_file_tree;
+use crate::services::ai_tools::tools::{execute_tool, tool_definitions};
+use crate::services::llm_session::LlmSession;
 
 /// How many model↔tool round trips one turn may run.
 ///
@@ -111,9 +126,725 @@ pub fn truncated_round_note(round_truncated: bool, failed: bool, content: String
     }
 }
 
+/// Everything one turn needs that is not the conversation itself.
+///
+/// Cancellation and waiting arrive as functions rather than as a flag and a
+/// `thread::sleep`, for the same reason the events do: the loop then runs in a
+/// test at full speed, and neither the retry wait nor the stop button needs a
+/// real clock to be exercised.
+pub struct Turn<'a> {
+    pub events: &'a ChatEventSink,
+    pub session: &'a LlmSession,
+    pub scope: &'a ToolScope,
+    pub approval: &'a ApprovalPolicy,
+    /// Polled between rounds, after a round streams, between individual calls,
+    /// and during a retry wait.
+    pub cancelled: &'a dyn Fn() -> bool,
+    /// Called in one-second slices while waiting to retry, so a stop takes
+    /// effect during the wait rather than after it.
+    pub sleep: &'a dyn Fn(Duration),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TurnError {
+    #[error("{0}")]
+    Provider(#[from] LlmError),
+    #[error("the assistant did not finish within {rounds} rounds of tool calls. Ask it to continue if it still has work to do.")]
+    Exhausted { rounds: u32 },
+    #[error("cannot resume: {0}")]
+    BadResume(String),
+    #[error(transparent)]
+    Decision(#[from] DecisionError),
+}
+
+/// Assigns each event its place in the stream. The cursor is restored from the
+/// checkpoint on resume, which is what keeps one turn's numbering monotonic
+/// across the gap.
+struct Events<'a> {
+    sink: &'a ChatEventSink,
+    seq: Cell<u64>,
+}
+
+impl<'a> Events<'a> {
+    fn new(sink: &'a ChatEventSink, seq: u64) -> Self {
+        Self {
+            sink,
+            seq: Cell::new(seq),
+        }
+    }
+
+    fn emit(&self, round: u32, target_id: Option<String>, event: ChatEventPayload) {
+        let seq = self.seq.get().saturating_add(1);
+        self.seq.set(seq);
+        (self.sink)(ChatTurnEvent {
+            seq,
+            round,
+            target_id,
+            event,
+        });
+    }
+
+    fn last_seq(&self) -> u64 {
+        self.seq.get()
+    }
+}
+
+/// What the loop carries from round to round, and what a pause has to hand
+/// back. One struct rather than eight parameters, because the two entry points
+/// below would otherwise have to keep the same order twice.
+struct State {
+    history: Vec<LlmMessage>,
+    round: u32,
+    budget_used: u32,
+    todos: Vec<Task>,
+    reads: ReadFiles,
+}
+
+/// A fresh turn: run from the first round until the model stops asking for
+/// tools, a call needs a human, or the turn is cancelled.
+pub fn stream(
+    turn: &Turn,
+    messages: Vec<LlmMessage>,
+    todos: Vec<Task>,
+) -> Result<ChatStreamOutcome, TurnError> {
+    let state = State {
+        history: messages,
+        round: 0,
+        budget_used: 0,
+        todos,
+        reads: ReadFiles::default(),
+    };
+    run(turn, state, 0, None)
+}
+
+/// Continues a turn that paused for approval.
+///
+/// Takes the checkpoint whole, exactly as [`ChatStreamOutcome::PendingApproval`]
+/// handed it over. Alfa Atlas takes its six fields apart into six parameters and
+/// relies on the front end to reassemble them — a forgotten field is then a
+/// silently reset round ceiling rather than a compile error (see
+/// `docs/07-upstream-findings.md`, B-4).
+pub fn resume(
+    turn: &Turn,
+    checkpoint: PendingApproval,
+    decisions: Vec<ToolCallDecision>,
+) -> Result<ChatStreamOutcome, TurnError> {
+    checkpoint.check_decisions(&decisions)?;
+
+    // The history has to still end with the assistant's tool-call turn: the
+    // resumed round appends this round's tool results, and results with no
+    // request in front of them are rejected by the provider — long after the
+    // point where the mismatch could be explained.
+    match checkpoint.history.last() {
+        Some(last) if last.role == LlmRole::Assistant && !last.tool_calls.is_empty() => {}
+        _ => {
+            return Err(TurnError::BadResume(
+                "the history must end with the assistant's tool-call round".to_string(),
+            ));
+        }
+    }
+
+    let calls: Vec<LlmToolCall> = checkpoint
+        .calls
+        .iter()
+        .map(|call| LlmToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        })
+        .collect();
+    let state = State {
+        history: checkpoint.history,
+        round: checkpoint.round,
+        budget_used: checkpoint.budget_used,
+        todos: checkpoint.todos,
+        reads: checkpoint.reads,
+    };
+    run(turn, state, checkpoint.event_seq, Some((calls, decisions)))
+}
+
+/// The loop both entry points run.
+///
+/// `resume` carries a round whose calls are already known and already decided;
+/// a fresh round asks the model instead. Everything after that point is the
+/// same code, which is the reason a paused turn behaves like an ordinary one.
+fn run(
+    turn: &Turn,
+    mut state: State,
+    event_seq: u64,
+    mut resume: Option<(Vec<LlmToolCall>, Vec<ToolCallDecision>)>,
+) -> Result<ChatStreamOutcome, TurnError> {
+    let events = Events::new(turn.events, event_seq);
+    // `<tool>|<arguments>` → hash of what came back, see `dedupe_repeat_result`.
+    // Not part of the checkpoint: after a pause the first repeat of a read
+    // comes back in full once more, which costs context and loses nothing.
+    let mut seen_results: HashMap<String, u64> = HashMap::new();
+
+    loop {
+        // Checkpoint one. Before the ceiling check as well, so a turn the user
+        // stopped reports as cancelled rather than as having run out of rounds.
+        if (turn.cancelled)() {
+            return Ok(ChatStreamOutcome::Cancelled(ChatDone {
+                result: ChatStreamResult::default(),
+                todos: state.todos,
+            }));
+        }
+        if state.round >= MAX_TOOL_ITERATIONS as u32 || state.budget_used >= MAX_TOOL_BUDGET {
+            return Err(TurnError::Exhausted {
+                rounds: state.round,
+            });
+        }
+        state.round += 1;
+        let round = state.round;
+
+        // Per round, not per turn: whether *this* round's reply was cut off.
+        // A resumed round has no reply of its own — the round that produced
+        // these calls already reported, and whatever note it earned is in the
+        // history.
+        let mut round_truncated = false;
+
+        let (calls, decisions) = if let Some((calls, decisions)) = resume.take() {
+            // Charged again on the resumed pass, exactly as `round` is counted
+            // twice: otherwise pausing would be a way to buy budget.
+            state.budget_used += round_cost(&calls);
+            (calls, decisions)
+        } else {
+            events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
+
+            let request = ChatRequest {
+                messages: state.history.clone(),
+                tools: tool_definitions(),
+                model: turn.session.model.clone(),
+            };
+            let result = match stream_one_round(turn, &events, round, request)? {
+                Some(result) => result,
+                // Cancelled during a retry wait.
+                None => {
+                    return Ok(ChatStreamOutcome::Cancelled(ChatDone {
+                        result: ChatStreamResult::default(),
+                        todos: state.todos,
+                    }));
+                }
+            };
+
+            round_truncated = result.truncated;
+            if let Some(usage) = result.usage {
+                events.emit(
+                    round,
+                    Some(format!("round:{round}")),
+                    ChatEventPayload::ContextUsage(usage),
+                );
+            }
+            // Said outright rather than left to the deltas that streamed it,
+            // and said before the two exits below: a round that is about to be
+            // cancelled, or to pause on a confirmation, has still reported
+            // what it said.
+            events.emit(
+                round,
+                Some(format!("round:{round}")),
+                ChatEventPayload::RoundCompleted {
+                    text: result.text.clone(),
+                    reasoning: result.reasoning.clone(),
+                },
+            );
+
+            // Checkpoint two. Before the pause check and before any call runs,
+            // so a stop that landed as the round finished pre-empts the write
+            // that round asked for — not merely the model's next sentence.
+            if (turn.cancelled)() {
+                return Ok(ChatStreamOutcome::Cancelled(ChatDone {
+                    result,
+                    todos: state.todos,
+                }));
+            }
+
+            if result.tool_calls.is_empty() {
+                return Ok(ChatStreamOutcome::Done(ChatDone {
+                    result,
+                    todos: state.todos,
+                }));
+            }
+
+            // The assistant's own turn goes back into the history before its
+            // results do, so the next request shows the provider its own prior
+            // request. `None` content for a tool-only turn is what the wire
+            // actually says.
+            state.history.push(LlmMessage {
+                role: LlmRole::Assistant,
+                content: (!result.text.is_empty()).then(|| result.text.clone()),
+                tool_call_id: None,
+                tool_calls: sanitize_tool_call_arguments(&result.tool_calls),
+            });
+            state.budget_used += round_cost(&result.tool_calls);
+
+            // Containment before approval: a write outside the workspace has
+            // to fail as a tool error now, not show the user a card for an
+            // operation that cannot happen. Severed arguments fail here too,
+            // which is the case the truncation note exists for.
+            let mut runnable: Vec<LlmToolCall> = Vec::new();
+            for call in &result.tool_calls {
+                match preflight_tool_call(turn.scope, &state.reads, call) {
+                    Ok(()) => runnable.push(call.clone()),
+                    Err(e) => {
+                        report_call(&events, round, call);
+                        let message = format!("Error: {e}");
+                        report_result(&events, round, &call.id, None, Some(&message));
+                        state.history.push(tool_message(
+                            &call.id,
+                            truncated_round_note(round_truncated, true, message),
+                        ));
+                    }
+                }
+            }
+            if runnable.is_empty() {
+                // Every call in the round was refused before running. Let the
+                // model react to the errors on the next round.
+                continue;
+            }
+
+            let pending: Vec<PendingToolCall> = runnable
+                .iter()
+                .map(|call| PendingToolCall {
+                    requires_confirmation: needs_approval(turn.approval, call),
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                })
+                .collect();
+            if pending.iter().any(|call| call.requires_confirmation) {
+                // The whole round pauses, including the calls that need no
+                // decision: with nothing executed there is no partial round to
+                // describe to whoever resumes it.
+                return Ok(ChatStreamOutcome::PendingApproval(PendingApproval {
+                    history: state.history,
+                    round,
+                    budget_used: state.budget_used,
+                    event_seq: events.last_seq(),
+                    calls: pending,
+                    todos: state.todos,
+                    reads: state.reads,
+                }));
+            }
+
+            (runnable, Vec::new())
+        };
+
+        for call in &calls {
+            // The "stopped between two calls of one round" case. Breaking
+            // rather than returning here lets checkpoint one build the outcome,
+            // so there is one place that decides what a cancelled turn looks
+            // like.
+            if (turn.cancelled)() {
+                break;
+            }
+            report_call(&events, round, call);
+
+            let decision = decisions.iter().find(|d| d.id == call.id);
+            let outcome = match decision {
+                Some(d) if !d.approved => Err(denial(d)),
+                _ => parse_tool_call(call)
+                    .and_then(|parsed| {
+                        execute_tool(turn.scope, &parsed, &mut state.reads, &mut state.todos)
+                    })
+                    .map_err(|e| format!("Error: {e}")),
+            };
+
+            report_result(
+                &events,
+                round,
+                &call.id,
+                outcome.as_ref().ok(),
+                outcome.as_ref().err().map(String::as_str),
+            );
+
+            // What the model reads, as opposed to what the UI was given: a
+            // listing is a tree rather than a flat array of paths, because the
+            // model would otherwise have to rebuild the directory structure
+            // from N separate strings.
+            let content = match &outcome {
+                Ok(ToolResult::FileList { entries, truncated }) => {
+                    render_file_tree(entries, *truncated)
+                }
+                Ok(result) => serde_json::to_string(result)
+                    .unwrap_or_else(|_| "Error: the result could not be serialized".to_string()),
+                Err(message) => message.clone(),
+            };
+            let content = truncated_round_note(round_truncated, outcome.is_err(), content);
+            let content =
+                dedupe_repeat_result(&mut seen_results, call, outcome.as_ref().ok(), content);
+            state.history.push(tool_message(&call.id, content));
+        }
+    }
+}
+
+/// One round against the provider, retried while [`retry_delay`] allows it.
+///
+/// `Ok(None)` means the turn was cancelled during a wait — the caller turns
+/// that into the same cancelled outcome as every other stopping point.
+fn stream_one_round(
+    turn: &Turn,
+    events: &Events,
+    round: u32,
+    request: ChatRequest,
+) -> Result<Option<ChatStreamResult>, TurnError> {
+    let mut attempt = 0;
+    loop {
+        llm_debug_log::log_request(turn.session.debug_logging, &turn.session.provider_id, round, &request);
+
+        // Set by any callback below: once a byte of this attempt has reached
+        // us, the round is no longer repeatable.
+        let produced_output = Cell::new(false);
+        let on_delta = |delta: &str| {
+            produced_output.set(true);
+            events.emit(
+                round,
+                Some(format!("round:{round}:text")),
+                ChatEventPayload::Delta {
+                    delta: delta.to_string(),
+                },
+            );
+        };
+        let on_reasoning = |delta: &str| {
+            produced_output.set(true);
+            events.emit(
+                round,
+                Some(format!("round:{round}:reasoning")),
+                ChatEventPayload::Reasoning {
+                    delta: delta.to_string(),
+                },
+            );
+        };
+        let on_tool_call_delta = |id: &str, name: &str, arguments: &str| {
+            produced_output.set(true);
+            events.emit(
+                round,
+                Some(format!("round:{round}:tool:{id}")),
+                ChatEventPayload::ToolCallDelta(ToolCallEvent {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    arguments: arguments.to_string(),
+                }),
+            );
+        };
+
+        let result = turn.session.provider.chat_stream(
+            request.clone(),
+            &on_delta,
+            &on_reasoning,
+            &on_tool_call_delta,
+            turn.cancelled,
+        );
+        llm_debug_log::log_response(turn.session.debug_logging, &turn.session.provider_id, round, &result);
+
+        let error = match result {
+            Ok(result) => return Ok(Some(result)),
+            Err(error) => error,
+        };
+        let Some(delay) = retry_delay(&error, attempt, produced_output.get()) else {
+            return Err(TurnError::Provider(error));
+        };
+        attempt += 1;
+        events.emit(
+            round,
+            Some(format!("round:{round}")),
+            ChatEventPayload::Retrying {
+                attempt,
+                max_attempts: MAX_ATTEMPTS,
+                delay_seconds: delay.as_secs(),
+            },
+        );
+        if !wait(turn, delay) {
+            return Ok(None);
+        }
+    }
+}
+
+/// Sleeps in one-second slices, checking for a stop between them. `false` if
+/// the turn was cancelled before the wait was over — a minute-long wait that
+/// ignored the stop button would look exactly like a hang.
+fn wait(turn: &Turn, delay: Duration) -> bool {
+    let slice = Duration::from_secs(1);
+    let mut left = delay;
+    while !left.is_zero() {
+        if (turn.cancelled)() {
+            return false;
+        }
+        let step = left.min(slice);
+        (turn.sleep)(step);
+        left -= step;
+    }
+    !(turn.cancelled)()
+}
+
+/// Whether this call has to be shown to a human first.
+///
+/// An unparseable call is never risky: it cannot run, and asking about a call
+/// that is going to fail either way spends the user's attention on nothing.
+fn needs_approval(policy: &ApprovalPolicy, call: &LlmToolCall) -> bool {
+    match parse_tool_call(call) {
+        Ok(parsed) => policy.requires_approval(parsed.name(), parsed.is_risky()),
+        Err(_) => false,
+    }
+}
+
+/// What a refused call tells the model. The reason is the point: a model told
+/// only "denied" tries the same call again, then a near variant of it.
+fn denial(decision: &ToolCallDecision) -> String {
+    match &decision.reason {
+        Some(reason) if !reason.trim().is_empty() => {
+            format!("Denied by the user: {reason}")
+        }
+        _ => "Denied by the user.".to_string(),
+    }
+}
+
+fn tool_message(call_id: &str, content: String) -> LlmMessage {
+    LlmMessage {
+        role: LlmRole::Tool,
+        content: Some(content),
+        tool_call_id: Some(call_id.to_string()),
+        tool_calls: vec![],
+    }
+}
+
+fn report_call(events: &Events, round: u32, call: &LlmToolCall) {
+    events.emit(
+        round,
+        Some(format!("round:{round}:tool:{}", call.id)),
+        ChatEventPayload::ToolCall(ToolCallEvent {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        }),
+    );
+}
+
+fn report_result(
+    events: &Events,
+    round: u32,
+    call_id: &str,
+    result: Option<&ToolResult>,
+    error: Option<&str>,
+) {
+    events.emit(
+        round,
+        Some(format!("round:{round}:tool:{call_id}")),
+        ChatEventPayload::ToolResult(ToolResultEvent {
+            id: call_id.to_string(),
+            result: result.cloned(),
+            error: error.map(str::to_string),
+        }),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::domain::llm::{
+        ChatResponse, ChatUsage, LlmModelInfo, LlmProvider, LlmToolDefinition,
+    };
+    use crate::domain::tools::{ToolScope, ToolName};
+    use crate::domain::turn::ChatTurnEvent;
+    use crate::testing::temp_dir;
+    use std::collections::{HashSet, VecDeque};
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    // ---------------------------------------------------------------- doubles
+
+    /// One scripted answer from the provider.
+    enum Step {
+        Reply(ChatStreamResult),
+        Fail(LlmError),
+        /// Streams text and *then* fails — the shape that must never be
+        /// retried, since half the round has already been reported.
+        StreamThenFail(&'static str, LlmError),
+    }
+
+    fn text(answer: &str) -> Step {
+        Step::Reply(ChatStreamResult {
+            text: answer.to_string(),
+            ..Default::default()
+        })
+    }
+
+    fn asks(calls: Vec<LlmToolCall>) -> Step {
+        Step::Reply(ChatStreamResult {
+            tool_calls: calls,
+            ..Default::default()
+        })
+    }
+
+    fn wants(id: &str, name: &str, arguments: &str) -> LlmToolCall {
+        LlmToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+        }
+    }
+
+    struct Scripted {
+        steps: Mutex<VecDeque<Step>>,
+        requests: Mutex<Vec<ChatRequest>>,
+    }
+
+    impl Scripted {
+        fn new(steps: Vec<Step>) -> Arc<Self> {
+            Arc::new(Self {
+                steps: Mutex::new(steps.into()),
+                requests: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn requests(&self) -> Vec<ChatRequest> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl LlmProvider for Scripted {
+        fn chat(&self, _: ChatRequest) -> Result<ChatResponse, LlmError> {
+            unreachable!("the loop only ever streams")
+        }
+
+        fn chat_stream(
+            &self,
+            request: ChatRequest,
+            on_delta: &dyn Fn(&str),
+            _: &dyn Fn(&str),
+            _: &dyn Fn(&str, &str, &str),
+            _: &dyn Fn() -> bool,
+        ) -> Result<ChatStreamResult, LlmError> {
+            self.requests.lock().unwrap().push(request);
+            let step = self
+                .steps
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| panic!("the loop asked for more rounds than the script has"));
+            match step {
+                Step::Reply(result) => {
+                    if !result.text.is_empty() {
+                        on_delta(&result.text);
+                    }
+                    Ok(result)
+                }
+                Step::Fail(error) => Err(error),
+                Step::StreamThenFail(chunk, error) => {
+                    on_delta(chunk);
+                    Err(error)
+                }
+            }
+        }
+
+        fn list_models(&self) -> Result<Vec<LlmModelInfo>, LlmError> {
+            unreachable!("the loop never lists models")
+        }
+    }
+
+    /// Everything a turn needs, with the pieces a test wants to reach back
+    /// into kept out here.
+    struct Harness {
+        provider: Arc<Scripted>,
+        session: LlmSession,
+        scope: ToolScope,
+        root: PathBuf,
+        events: ChatEventSink,
+        log: Arc<Mutex<Vec<ChatTurnEvent>>>,
+        approval: ApprovalPolicy,
+        cancel_after: Arc<Mutex<Option<usize>>>,
+        polls: Arc<Mutex<usize>>,
+        slept: Arc<Mutex<Vec<Duration>>>,
+    }
+
+    fn harness(label: &str, steps: Vec<Step>) -> Harness {
+        let root = temp_dir(label);
+        let provider = Scripted::new(steps);
+        let log: Arc<Mutex<Vec<ChatTurnEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = log.clone();
+        Harness {
+            session: LlmSession {
+                provider: provider.clone(),
+                provider_id: "test".to_string(),
+                model: "m".to_string(),
+                debug_logging: false,
+            },
+            provider,
+            scope: ToolScope::new(&root).expect("a scope over the temp root"),
+            root,
+            events: Arc::new(move |event| sink.lock().unwrap().push(event)),
+            log,
+            // Unattended by default: the approval gate has its own tests, and
+            // every other test would otherwise pause on its first write.
+            approval: ApprovalPolicy {
+                always_allowed: HashSet::new(),
+                skip_all: true,
+            },
+            cancel_after: Arc::new(Mutex::new(None)),
+            polls: Arc::new(Mutex::new(0)),
+            slept: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    impl Harness {
+        /// Reports "cancelled" from the `n`-th poll onwards, which is how a
+        /// test picks the checkpoint it wants to stop at.
+        fn cancel_at_poll(&self, n: usize) {
+            *self.cancel_after.lock().unwrap() = Some(n);
+        }
+
+        fn events(&self) -> Vec<ChatTurnEvent> {
+            self.log.lock().unwrap().clone()
+        }
+
+        fn run<T>(&self, f: impl FnOnce(&Turn) -> T) -> T {
+            let cancel_after = self.cancel_after.clone();
+            let polls = self.polls.clone();
+            let cancelled = move || {
+                let mut polls = polls.lock().unwrap();
+                *polls += 1;
+                matches!(*cancel_after.lock().unwrap(), Some(n) if *polls >= n)
+            };
+            let slept = self.slept.clone();
+            let sleep = move |d: Duration| slept.lock().unwrap().push(d);
+            let turn = Turn {
+                events: &self.events,
+                session: &self.session,
+                scope: &self.scope,
+                approval: &self.approval,
+                cancelled: &cancelled,
+                sleep: &sleep,
+            };
+            f(&turn)
+        }
+    }
+
+    fn payloads(events: &[ChatTurnEvent]) -> Vec<String> {
+        events
+            .iter()
+            .map(|e| match &e.event {
+                ChatEventPayload::Delta { .. } => "delta".to_string(),
+                ChatEventPayload::Reasoning { .. } => "reasoning".to_string(),
+                ChatEventPayload::Retrying { .. } => "retrying".to_string(),
+                ChatEventPayload::RoundStarted => "roundStarted".to_string(),
+                ChatEventPayload::RoundCompleted { .. } => "roundCompleted".to_string(),
+                ChatEventPayload::ToolCallDelta(_) => "toolCallDelta".to_string(),
+                ChatEventPayload::ToolCall(c) => format!("toolCall:{}", c.id),
+                ChatEventPayload::ToolResult(r) => format!("toolResult:{}", r.id),
+                ChatEventPayload::ContextUsage(_) => "contextUsage".to_string(),
+            })
+            .collect()
+    }
+
+    fn tool_contents(request: &ChatRequest) -> Vec<String> {
+        request
+            .messages
+            .iter()
+            .filter(|m| m.role == LlmRole::Tool)
+            .filter_map(|m| m.content.clone())
+            .collect()
+    }
+
 
     fn call(name: &str, arguments: &str) -> LlmToolCall {
         LlmToolCall {
@@ -254,5 +985,554 @@ mod tests {
             truncated_round_note(false, true, "no such file".to_string()),
             "no such file"
         );
+    }
+
+    // ------------------------------------------------------------- the loop
+
+    #[test]
+    fn a_turn_with_no_tool_calls_answers_and_stops() {
+        let h = harness("loop-plain", vec![text("done")]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![]));
+
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("expected Done");
+        };
+        assert_eq!(done.result.text, "done");
+        assert_eq!(h.provider.requests().len(), 1, "one round, one request");
+    }
+
+    /// The loop's actual job: a call runs, and what it produced goes back to
+    /// the model as the next request's history.
+    #[test]
+    fn a_tool_result_reaches_the_next_round() {
+        std::fs::write("/dev/null", "").ok();
+        let h = harness(
+            "loop-tool",
+            vec![
+                asks(vec![wants("c1", "createDirectory", r#"{"path":"src"}"#)]),
+                text("made it"),
+            ],
+        );
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("make src")], vec![]));
+
+        assert!(matches!(outcome.expect("finishes"), ChatStreamOutcome::Done(_)));
+        assert!(h.root.join("src").is_dir(), "the tool actually ran");
+
+        let second = &h.provider.requests()[1];
+        let results = tool_contents(second);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("directoryCreated"), "{}", results[0]);
+        // The assistant's own tool-call turn has to precede its results, or
+        // the provider sees answers to a question it was never shown.
+        let assistant = second
+            .messages
+            .iter()
+            .find(|m| m.role == LlmRole::Assistant)
+            .expect("the tool-call turn is in the history");
+        assert_eq!(assistant.tool_calls.len(), 1);
+    }
+
+    /// The order is the contract: a listener pairs a call with its result by
+    /// id, and orders everything by `seq`.
+    #[test]
+    fn events_are_numbered_in_order_and_pair_by_id() {
+        let h = harness(
+            "loop-events",
+            vec![
+                asks(vec![wants("c1", "createDirectory", r#"{"path":"a"}"#)]),
+                text("ok"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let events = h.events();
+        assert_eq!(
+            payloads(&events),
+            [
+                "roundStarted",
+                "roundCompleted",
+                "toolCall:c1",
+                "toolResult:c1",
+                "roundStarted",
+                "delta",
+                "roundCompleted",
+            ]
+        );
+        let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, (1..=events.len() as u64).collect::<Vec<_>>());
+        assert_eq!(events[0].round, 1);
+        assert_eq!(events.last().unwrap().round, 2);
+    }
+
+    // ------------------------------------------------------------- approval
+
+    fn asking() -> ApprovalPolicy {
+        ApprovalPolicy {
+            always_allowed: HashSet::new(),
+            skip_all: false,
+        }
+    }
+
+    /// Nothing in the round runs — not even the calls that needed no decision.
+    /// A half-executed round is a state nobody could describe to whoever
+    /// resumes it.
+    #[test]
+    fn a_risky_call_pauses_the_whole_round_with_nothing_run() {
+        let mut h = harness(
+            "loop-pause",
+            vec![asks(vec![
+                wants("l1", "listFiles", "{}"),
+                wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#),
+            ])],
+        );
+        h.approval = asking();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        let ChatStreamOutcome::PendingApproval(pending) = outcome.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        assert_eq!(
+            pending.calls.iter().map(|c| c.requires_confirmation).collect::<Vec<_>>(),
+            [false, true],
+            "both calls are carried, only the write needs an answer"
+        );
+        assert!(!h.root.join("a.rs").exists());
+        assert!(
+            !payloads(&h.events()).iter().any(|p| p.starts_with("toolCall:")),
+            "the harmless call did not run either — nothing in the round did"
+        );
+        assert_eq!(pending.round, 1);
+        assert!(pending.budget_used > 0, "a paused round is still charged");
+        assert!(
+            payloads(&h.events()).contains(&"roundCompleted".to_string()),
+            "a round that pauses has still reported what it said"
+        );
+    }
+
+    /// The registry has to cross the pause. Without it the write the user just
+    /// approved is refused for never having read the file — the pause itself
+    /// would be what broke it.
+    #[test]
+    fn a_read_from_before_the_pause_still_counts_after_it() {
+        std::fs::write(temp_dir("loop-seed").join("ignored"), "").ok();
+        let mut h = harness(
+            "loop-resume-reads",
+            vec![
+                asks(vec![wants("r1", "readFile", r#"{"path":"a.rs"}"#)]),
+                asks(vec![wants(
+                    "w1",
+                    "writeFile",
+                    r#"{"path":"a.rs","content":"new"}"#,
+                )]),
+                text("written"),
+            ],
+        );
+        h.approval = asking();
+        std::fs::write(h.root.join("a.rs"), "old").unwrap();
+
+        let paused = h.run(|turn| stream(turn, vec![LlmMessage::user("rewrite a.rs")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = paused.expect("pauses") else {
+            panic!("expected a pause");
+        };
+
+        let resumed = h.run(|turn| {
+            resume(
+                turn,
+                pending,
+                vec![ToolCallDecision {
+                    id: "w1".to_string(),
+                    approved: true,
+                    reason: None,
+                }],
+            )
+        });
+
+        assert!(matches!(resumed.expect("finishes"), ChatStreamOutcome::Done(_)));
+        assert_eq!(std::fs::read_to_string(h.root.join("a.rs")).unwrap(), "new");
+    }
+
+    /// A refusal is not a failure of the turn, and the reason is what stops
+    /// the model from trying the same call again.
+    #[test]
+    fn a_denied_call_hands_the_model_the_reason_and_the_turn_continues() {
+        let mut h = harness(
+            "loop-denied",
+            vec![
+                asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]),
+                text("understood"),
+            ],
+        );
+        h.approval = asking();
+
+        let paused = h.run(|turn| stream(turn, vec![LlmMessage::user("write it")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = paused.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        let resumed = h.run(|turn| {
+            resume(
+                turn,
+                pending,
+                vec![ToolCallDecision {
+                    id: "w1".to_string(),
+                    approved: false,
+                    reason: Some("use the existing helper".to_string()),
+                }],
+            )
+        });
+
+        assert!(matches!(resumed.expect("finishes"), ChatStreamOutcome::Done(_)));
+        assert!(!h.root.join("a.rs").exists(), "a denied call must not run");
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert!(told[0].contains("use the existing helper"), "{}", told[0]);
+    }
+
+    /// Pausing must not be a way to buy more budget: the resumed pass charges
+    /// the round again, exactly as `round` itself is counted twice.
+    #[test]
+    fn a_paused_round_is_charged_on_both_passes() {
+        let write = |id: &str| wants(id, "writeFile", r#"{"path":"a.rs","content":"x"}"#);
+        let mut h = harness(
+            "loop-budget",
+            vec![asks(vec![write("w1")]), asks(vec![write("w2")])],
+        );
+        h.approval = asking();
+        let weight = ToolName::WriteFile.loop_weight();
+
+        let ChatStreamOutcome::PendingApproval(first) = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect("pauses")
+        else {
+            panic!("expected a pause");
+        };
+        assert_eq!(first.budget_used, weight);
+
+        let approve = |id: &str| ToolCallDecision {
+            id: id.to_string(),
+            approved: true,
+            reason: None,
+        };
+        let ChatStreamOutcome::PendingApproval(second) = h
+            .run(|turn| resume(turn, first, vec![approve("w1")]))
+            .expect("pauses again")
+        else {
+            panic!("expected a second pause");
+        };
+
+        assert_eq!(
+            second.budget_used,
+            weight * 3,
+            "the resumed round is charged again, and then the new round"
+        );
+        assert_eq!(second.round, 3, "and the round counter moves the same way");
+    }
+
+    // ---------------------------------------------------------------- resume
+
+    #[test]
+    fn a_resume_missing_a_decision_is_refused() {
+        let h = harness("loop-resume-missing", vec![]);
+        let pending = PendingApproval {
+            history: vec![LlmMessage {
+                role: LlmRole::Assistant,
+                content: None,
+                tool_call_id: None,
+                tool_calls: vec![wants("w1", "writeFile", "{}")],
+            }],
+            round: 1,
+            budget_used: 2,
+            event_seq: 4,
+            calls: vec![PendingToolCall {
+                id: "w1".to_string(),
+                name: "writeFile".to_string(),
+                arguments: "{}".to_string(),
+                requires_confirmation: true,
+            }],
+            todos: vec![],
+            reads: ReadFiles::default(),
+        };
+
+        let err = h.run(|turn| resume(turn, pending, vec![])).expect_err("refused");
+        assert!(matches!(err, TurnError::Decision(_)), "{err}");
+    }
+
+    /// Tool results with no request in front of them are rejected by the
+    /// provider, far from the point where the mismatch could be explained.
+    #[test]
+    fn a_resume_whose_history_lost_the_tool_call_round_is_refused() {
+        let h = harness("loop-resume-history", vec![]);
+        let pending = PendingApproval {
+            history: vec![LlmMessage::user("go")],
+            round: 1,
+            budget_used: 0,
+            event_seq: 0,
+            calls: vec![],
+            todos: vec![],
+            reads: ReadFiles::default(),
+        };
+
+        let err = h.run(|turn| resume(turn, pending, vec![])).expect_err("refused");
+        assert!(matches!(err, TurnError::BadResume(_)), "{err}");
+    }
+
+    /// One turn, one stream of numbers: a listener that reconnects after the
+    /// pause cannot order anything if resuming starts again from zero.
+    #[test]
+    fn the_event_stream_continues_across_a_pause() {
+        let mut h = harness(
+            "loop-seq",
+            vec![
+                asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]),
+                text("ok"),
+            ],
+        );
+        h.approval = asking();
+
+        let paused = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = paused.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        let before = h.events().last().expect("events").seq;
+        assert_eq!(pending.event_seq, before);
+
+        let decisions = vec![ToolCallDecision {
+            id: "w1".to_string(),
+            approved: true,
+            reason: None,
+        }];
+        h.run(|turn| resume(turn, pending, decisions)).expect("finishes");
+
+        let seqs: Vec<u64> = h.events().iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
+    }
+
+    // ----------------------------------------------------------- cancelling
+
+    #[test]
+    fn a_stop_before_the_first_round_runs_nothing() {
+        let h = harness("loop-cancel-early", vec![]);
+        h.cancel_at_poll(1);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        assert!(matches!(outcome.expect("stops"), ChatStreamOutcome::Cancelled(_)));
+        assert!(h.provider.requests().is_empty(), "the model was never asked");
+    }
+
+    /// The point of the second checkpoint: a stop that lands as the round
+    /// finishes pre-empts the write that round asked for, not merely the
+    /// model's next sentence.
+    #[test]
+    fn a_stop_as_the_round_finishes_pre_empts_its_tool_calls() {
+        let h = harness(
+            "loop-cancel-mid",
+            vec![asks(vec![wants(
+                "w1",
+                "createDirectory",
+                r#"{"path":"never"}"#,
+            )])],
+        );
+        // Poll 1 is the top of the round; poll 2 is the provider's own
+        // cancellation callback; poll 3 is the checkpoint after it returns.
+        h.cancel_at_poll(3);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        assert!(matches!(outcome.expect("stops"), ChatStreamOutcome::Cancelled(_)));
+        assert!(!h.root.join("never").exists(), "the call was pre-empted");
+        assert!(
+            !payloads(&h.events()).iter().any(|p| p.starts_with("toolCall:")),
+            "and was never even announced"
+        );
+    }
+
+    // ------------------------------------------------------------- retrying
+
+    fn rate_limited(seconds: u64) -> LlmError {
+        LlmError::RateLimited {
+            retry_after_seconds: Some(seconds),
+            message: "slow down".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_rate_limited_round_waits_and_runs_again() {
+        let h = harness(
+            "loop-retry",
+            vec![Step::Fail(rate_limited(3)), text("second time lucky")],
+        );
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("expected Done");
+        };
+        assert_eq!(done.result.text, "second time lucky");
+        assert_eq!(h.provider.requests().len(), 2, "the same round, twice");
+        assert_eq!(
+            h.slept.lock().unwrap().iter().sum::<Duration>(),
+            Duration::from_secs(3),
+            "waited exactly as long as the server asked"
+        );
+        assert!(payloads(&h.events()).contains(&"retrying".to_string()));
+    }
+
+    /// The rule that makes retrying safe at all: half the round has already
+    /// reached the transcript, and sending the request again would append the
+    /// text twice.
+    #[test]
+    fn a_round_that_already_streamed_is_not_retried() {
+        let h = harness(
+            "loop-retry-unsafe",
+            vec![Step::StreamThenFail("half an answer", rate_limited(1))],
+        );
+
+        let err = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect_err("gives up");
+
+        assert!(matches!(err, TurnError::Provider(LlmError::RateLimited { .. })), "{err}");
+        assert_eq!(h.provider.requests().len(), 1, "asked once, never repeated");
+        assert!(h.slept.lock().unwrap().is_empty());
+    }
+
+    /// A refusal the provider meant is not retried at all.
+    #[test]
+    fn a_considered_refusal_ends_the_turn() {
+        let h = harness(
+            "loop-refusal",
+            vec![Step::Fail(LlmError::Http("http status 400: no such model".to_string()))],
+        );
+
+        let err = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect_err("fails");
+
+        assert!(matches!(err, TurnError::Provider(_)), "{err}");
+        assert_eq!(h.provider.requests().len(), 1);
+    }
+
+    #[test]
+    fn a_stop_during_a_retry_wait_takes_effect_inside_it() {
+        let h = harness("loop-retry-cancel", vec![Step::Fail(rate_limited(60))]);
+        // Past the round's own checkpoints, so the stop lands in the wait.
+        h.cancel_at_poll(4);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        assert!(matches!(outcome.expect("stops"), ChatStreamOutcome::Cancelled(_)));
+        assert!(
+            h.slept.lock().unwrap().iter().sum::<Duration>() < Duration::from_secs(60),
+            "the stop was not made to wait out the whole window"
+        );
+    }
+
+    // -------------------------------------------------------------- ceilings
+
+    /// A model that never stops asking for tools must not hold the turn open
+    /// forever.
+    #[test]
+    fn a_turn_that_never_finishes_is_cut_off() {
+        let steps = (0..MAX_TOOL_ITERATIONS + 1)
+            .map(|i| {
+                asks(vec![wants(
+                    &format!("c{i}"),
+                    "createDirectory",
+                    &format!(r#"{{"path":"d{i}"}}"#),
+                )])
+            })
+            .collect();
+        let h = harness("loop-ceiling", steps);
+
+        let err = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("loop forever")], vec![]))
+            .expect_err("is cut off");
+
+        assert!(matches!(err, TurnError::Exhausted { .. }), "{err}");
+        assert!(h.provider.requests().len() <= MAX_TOOL_ITERATIONS);
+    }
+
+    // ------------------------------------------------------- what the model reads
+
+    /// A call refused before it runs still has to be reported and answered,
+    /// or the model is left waiting for a result that never comes.
+    #[test]
+    fn a_call_refused_by_the_preflight_is_reported_as_a_tool_error() {
+        let h = harness(
+            "loop-preflight",
+            vec![
+                asks(vec![wants(
+                    "w1",
+                    "writeFile",
+                    r#"{"path":"../outside.rs","content":"x"}"#,
+                )]),
+                text("understood"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert_eq!(told.len(), 1);
+        assert!(told[0].starts_with("Error:"), "{}", told[0]);
+        let events = payloads(&h.events());
+        assert!(events.contains(&"toolCall:w1".to_string()));
+        assert!(events.contains(&"toolResult:w1".to_string()));
+    }
+
+    /// A listing goes to the model as a tree: a flat array of paths makes it
+    /// rebuild the directory structure from N separate strings.
+    #[test]
+    fn a_listing_reaches_the_model_as_a_tree() {
+        let h = harness(
+            "loop-listing",
+            vec![asks(vec![wants("l1", "listFiles", "{}")]), text("seen")],
+        );
+        std::fs::create_dir(h.root.join("src")).unwrap();
+        std::fs::write(h.root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("what is here")], vec![]))
+            .expect("finishes");
+
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert!(told[0].contains("main.rs"), "{}", told[0]);
+        assert!(!told[0].contains("\"isDir\""), "raw JSON, not a tree: {}", told[0]);
+    }
+
+    /// Token usage is reported once per round, and it is the whole context —
+    /// every request resends the history.
+    #[test]
+    fn usage_is_reported_for_the_round_that_produced_it() {
+        let h = harness(
+            "loop-usage",
+            vec![Step::Reply(ChatStreamResult {
+                text: "done".to_string(),
+                usage: Some(ChatUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 7,
+                    total_tokens: 107,
+                }),
+                ..Default::default()
+            })],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        assert!(payloads(&h.events()).contains(&"contextUsage".to_string()));
+    }
+
+    /// The model is offered the tools this build actually has, every round.
+    #[test]
+    fn every_request_carries_the_tool_schemas() {
+        let h = harness("loop-tools", vec![text("hi")]);
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let requests = h.provider.requests();
+        let offered: &[LlmToolDefinition] = &requests[0].tools;
+        assert_eq!(offered.len(), ToolName::ALL.len());
     }
 }

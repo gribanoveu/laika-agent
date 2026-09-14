@@ -738,13 +738,15 @@ pub struct FileDiffStats {
 /// the same arrangement the turn's todo list uses. It has to survive an
 /// approval pause, or every approved write would come back as "the file
 /// changed".
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadFiles {
     /// Keyed by root-relative path, the spelling every tool reports.
     seen: std::collections::HashMap<String, FileRead>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct FileRead {
     /// Of the whole file as it was on disk, not of the slice returned.
     hash: u64,
