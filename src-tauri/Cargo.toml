@@ -75,3 +75,6 @@ keyring = { version = "3", features = ["windows-native"] }
 # is the only way to reach it — see `infra::process_runner`.
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
