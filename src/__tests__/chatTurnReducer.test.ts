@@ -1,0 +1,295 @@
+import { describe, expect, test } from "bun:test";
+import {
+  acceptEvent,
+  acceptOutcome,
+  appendUserMessage,
+  clearApproval,
+  emptyTurn,
+  type Block,
+  type TurnState,
+} from "../lib/chatTurnReducer";
+import type { Checkpoint, TurnEvent } from "../lib/chat";
+
+// The reducer is where a stream that crossed a process boundary becomes a
+// transcript. Everything that can go wrong with such a stream — a repeat, an
+// early arrival, a lost delta — is a test here rather than a surprise in the
+// window.
+
+let seq = 0;
+const ev = (event: Omit<TurnEvent, "turnId" | "seq" | "round"> & { round?: number; seq?: number }) =>
+  ({
+    turnId: "turn-1",
+    seq: event.seq ?? ++seq,
+    round: event.round ?? 1,
+    ...event,
+  }) as TurnEvent;
+
+const run = (events: TurnEvent[], from: TurnState = emptyTurn()) =>
+  events.reduce(acceptEvent, from);
+
+const kinds = (state: TurnState) => state.blocks.map((b) => b.kind);
+const text = (state: TurnState, kind: Block["kind"]) =>
+  state.blocks.filter((b) => b.kind === kind).map((b) => (b as { text: string }).text);
+
+describe("prose", () => {
+  test("deltas build one paragraph per round", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "roundStarted" }),
+      ev({ type: "delta", payload: { delta: "Looking " } }),
+      ev({ type: "delta", payload: { delta: "at the tax path." } }),
+    ]);
+
+    expect(text(state, "message")).toEqual(["Looking at the tax path."]);
+  });
+
+  /// Two rounds' answers used to be concatenated mid-sentence, permanently,
+  /// because only a tool call could close a paragraph.
+  test("a second round starts its own paragraph", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "delta", payload: { delta: "first" }, round: 1 }),
+      ev({ type: "roundStarted", round: 2 }),
+      ev({ type: "delta", payload: { delta: "second" }, round: 2 }),
+    ]);
+
+    expect(text(state, "message")).toEqual(["first", "second"]);
+  });
+
+  /// The safety net: a delta lost on its way here is permanent once the
+  /// transcript is saved, so the round's own authoritative text wins.
+  test("the round's final text replaces what the deltas built", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "delta", payload: { delta: "half a sen" } }),
+      ev({ type: "roundCompleted", payload: { text: "half a sentence, whole again" } }),
+    ]);
+
+    expect(text(state, "message")).toEqual(["half a sentence, whole again"]);
+  });
+
+  test("a round that only called tools draws no empty paragraph", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "roundStarted" }),
+      ev({ type: "roundCompleted", payload: { text: "" } }),
+    ]);
+
+    expect(kinds(state)).toEqual([]);
+  });
+
+  test("thinking is kept apart from the answer", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "reasoning", payload: { delta: "hmm" } }),
+      ev({ type: "delta", payload: { delta: "answer" } }),
+    ]);
+
+    expect(text(state, "reasoning")).toEqual(["hmm"]);
+    expect(text(state, "message")).toEqual(["answer"]);
+  });
+});
+
+describe("tool calls", () => {
+  const call = { id: "c1", name: "readFile", arguments: '{"path":"a.rs"}' };
+
+  test("a call and its result are one block, paired by id", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCall", payload: call }),
+      ev({ type: "toolResult", payload: { id: "c1", result: { content: "x" } } }),
+    ]);
+
+    expect(state.blocks).toHaveLength(1);
+    const tool = state.blocks[0] as Extract<Block, { kind: "tool" }>;
+    expect(tool.name).toBe("readFile");
+    expect(tool.status).toBe("done");
+  });
+
+  test("arguments still arriving are replaced, not appended", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCallDelta", payload: { id: "c1", name: "writeFile", arguments: '{"pa' } }),
+      ev({
+        type: "toolCallDelta",
+        payload: { id: "c1", name: "writeFile", arguments: '{"path":"a.rs"}' },
+      }),
+    ]);
+
+    const tool = state.blocks[0] as Extract<Block, { kind: "tool" }>;
+    expect(tool.arguments).toBe('{"path":"a.rs"}');
+    expect(state.blocks).toHaveLength(1);
+  });
+
+  test("a failed call says so and carries the message the model got", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCall", payload: call }),
+      ev({ type: "toolResult", payload: { id: "c1", error: "Error: not found: a.rs" } }),
+    ]);
+
+    const tool = state.blocks[0] as Extract<Block, { kind: "tool" }>;
+    expect(tool.status).toBe("failed");
+    expect(tool.error).toContain("not found");
+  });
+
+  test("two calls in one round stay separate", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCall", payload: call }),
+      ev({ type: "toolCall", payload: { id: "c2", name: "grep", arguments: "{}" } }),
+      ev({ type: "toolResult", payload: { id: "c2", result: {} } }),
+    ]);
+
+    expect(state.blocks).toHaveLength(2);
+    expect((state.blocks[0] as { status: string }).status).toBe("running");
+    expect((state.blocks[1] as { status: string }).status).toBe("done");
+  });
+});
+
+describe("command output", () => {
+  /// It carries no sequence number at all — it is written from the runner's
+  /// reader threads, where the turn's cursor does not exist. Putting it through
+  /// the ordering would hold every chunk back forever.
+  test("arrives unordered and still lands on its call", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCall", payload: { id: "c1", name: "runCommand", arguments: "{}" } }),
+      ev({ type: "commandOutput", payload: { id: "c1", stream: "stdout", chunk: "BUILD " }, seq: 0 }),
+      ev({ type: "commandOutput", payload: { id: "c1", stream: "stdout", chunk: "OK\n" }, seq: 0 }),
+    ]);
+
+    const tool = state.blocks[0] as Extract<Block, { kind: "tool" }>;
+    expect(tool.output).toBe("BUILD OK\n");
+    expect(tool.status).toBe("running");
+  });
+
+  test("and does not disturb the ordering of everything else", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "toolCall", payload: { id: "c1", name: "runCommand", arguments: "{}" }, seq: 1 }),
+      ev({ type: "commandOutput", payload: { id: "c1", stream: "stdout", chunk: "x" }, seq: 0 }),
+      ev({ type: "toolResult", payload: { id: "c1", result: {} }, seq: 2 }),
+    ]);
+
+    expect((state.blocks[0] as { status: string }).status).toBe("done");
+    expect(state.lastSeq).toBe(2);
+  });
+});
+
+describe("a stream that crossed a process boundary", () => {
+  test("a repeated event changes nothing", () => {
+    seq = 0;
+    const first = ev({ type: "delta", payload: { delta: "hi" } });
+    const state = run([first, first, first]);
+
+    expect(text(state, "message")).toEqual(["hi"]);
+  });
+
+  /// A listener that reconnects mid-turn can see events out of order. Applying
+  /// them as they land would interleave the transcript.
+  test("an early event waits for the gap in front of it", () => {
+    seq = 0;
+    let state = run([ev({ type: "delta", payload: { delta: "one " }, seq: 1 })]);
+
+    state = acceptEvent(state, ev({ type: "delta", payload: { delta: "three" }, seq: 3 }));
+    expect(text(state, "message")).toEqual(["one "]);
+    expect(state.buffered).toHaveLength(1);
+
+    state = acceptEvent(state, ev({ type: "delta", payload: { delta: "two " }, seq: 2 }));
+    expect(text(state, "message")).toEqual(["one two three"]);
+    expect(state.buffered).toHaveLength(0);
+  });
+
+  test("a whole run of early events drains in order once the gap closes", () => {
+    seq = 0;
+    let state = emptyTurn();
+    for (const n of [4, 2, 3]) {
+      state = acceptEvent(state, ev({ type: "delta", payload: { delta: `${n}` }, seq: n }));
+    }
+    state = acceptEvent(state, ev({ type: "delta", payload: { delta: "1" }, seq: 1 }));
+
+    expect(text(state, "message")).toEqual(["1234"]);
+    expect(state.lastSeq).toBe(4);
+  });
+});
+
+describe("pausing", () => {
+  const checkpoint: Checkpoint = {
+    history: [],
+    round: 2,
+    budgetUsed: 4,
+    eventSeq: 9,
+    calls: [
+      { id: "w1", name: "writeFile", arguments: '{"path":"a.rs"}', requiresConfirmation: true },
+    ],
+    todos: [],
+    reads: {},
+  };
+
+  test("a pause adds the card and keeps the checkpoint to send back", () => {
+    const state = acceptOutcome(emptyTurn(), { status: "pendingApproval", value: checkpoint });
+
+    expect(state.status).toBe("awaitingApproval");
+    expect(kinds(state)).toEqual(["approval"]);
+    expect(state.checkpoint).toEqual(checkpoint);
+  });
+
+  test("answering it clears the card", () => {
+    let state = acceptOutcome(emptyTurn(), { status: "pendingApproval", value: checkpoint });
+    state = clearApproval(state);
+
+    expect(kinds(state)).toEqual([]);
+    expect(state.checkpoint).toBeNull();
+    expect(state.status).toBe("running");
+  });
+
+  test("an ending turn is done, a stopped one is cancelled", () => {
+    const result = { text: "", truncated: false, todos: [] };
+    expect(acceptOutcome(emptyTurn(), { status: "done", value: result }).status).toBe("done");
+    expect(acceptOutcome(emptyTurn(), { status: "cancelled", value: result }).status).toBe(
+      "cancelled",
+    );
+  });
+});
+
+describe("the rest of the turn's state", () => {
+  test("usage is the whole context, not a per-round statistic", () => {
+    seq = 0;
+    const state = run([
+      ev({
+        type: "contextUsage",
+        payload: { promptTokens: 16000, completionTokens: 200, totalTokens: 16200 },
+      }),
+    ]);
+
+    expect(state.usage?.totalTokens).toBe(16200);
+  });
+
+  /// A wait with no visible reason is indistinguishable from a hang.
+  test("a retry is visible while it waits and gone once the round restarts", () => {
+    seq = 0;
+    let state = run([
+      ev({ type: "retrying", payload: { attempt: 1, maxAttempts: 5, delaySeconds: 20 } }),
+    ]);
+    expect(state.retrying?.delaySeconds).toBe(20);
+
+    state = acceptEvent(state, ev({ type: "roundStarted" }));
+    expect(state.retrying).toBeNull();
+  });
+
+  test("a mid-turn note of the user's own shows in the transcript", () => {
+    seq = 0;
+    const state = run([
+      ev({ type: "steeringApplied", payload: { id: "n1", text: "use the helper" } }),
+    ]);
+
+    expect(kinds(state)).toEqual(["steer"]);
+  });
+
+  test("the user's own message opens the turn", () => {
+    const state = appendUserMessage(emptyTurn(), "fix the NPE");
+    expect(kinds(state)).toEqual(["user"]);
+    expect(state.status).toBe("running");
+  });
+});
