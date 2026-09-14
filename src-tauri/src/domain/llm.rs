@@ -185,6 +185,16 @@ pub struct LlmModelInfo {
 pub enum LlmError {
     #[error("provider error: {0}")]
     Provider(String),
+    /// The provider refused this request because of a rate limit, rather than
+    /// because of anything about the request. Its own variant because it is
+    /// the one failure that is worth trying again unchanged — see
+    /// `domain::llm_retry`. `retry_after_seconds` is the server's hint when it
+    /// sent a usable one.
+    #[error("rate limited by the provider: {message}")]
+    RateLimited {
+        retry_after_seconds: Option<u64>,
+        message: String,
+    },
     #[error("http error: {0}")]
     Http(String),
     #[error("tls configuration error: {0}")]

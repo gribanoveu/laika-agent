@@ -238,6 +238,7 @@ fn ok_or_status_error(
     if status.is_success() {
         return Ok(response);
     }
+    let headers = response.headers().clone();
     let body = response
         .body_mut()
         .read_to_string()
@@ -250,10 +251,33 @@ fn ok_or_status_error(
     } else {
         body
     };
+    // 429 is the one status worth trying again unchanged, so it gets its own
+    // variant rather than being recognised later by matching on the message.
+    if status.as_u16() == 429 {
+        return Err(LlmError::RateLimited {
+            retry_after_seconds: retry_after_seconds(&headers),
+            message: format!("http status 429: {body}"),
+        });
+    }
     Err(LlmError::Http(format!(
         "http status {}: {body}",
         status.as_u16()
     )))
+}
+
+/// `Retry-After` as the LLM gateways actually send it: a number of seconds.
+///
+/// The header also permits an HTTP date, which none of them use and which is
+/// deliberately not parsed — an unreadable hint reads as no hint, and the
+/// backoff covers that case anyway.
+fn retry_after_seconds(headers: &http::HeaderMap) -> Option<u64> {
+    headers
+        .get("retry-after")?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn header_value(value: &str) -> String {
@@ -817,7 +841,17 @@ mod tests {
     /// Serves one canned response over a real socket, so the streaming loop is
     /// exercised end to end rather than only its line parser.
     fn serve(status: &str, body: String) -> (String, std::thread::JoinHandle<()>) {
+        serve_with_headers(status, "", body)
+    }
+
+    /// `extra` is appended verbatim, each line CRLF-terminated by the caller.
+    fn serve_with_headers(
+        status: &str,
+        extra: &str,
+        body: String,
+    ) -> (String, std::thread::JoinHandle<()>) {
         let status = status.to_string();
+        let extra = extra.to_string();
         let listener = TcpListener::bind("127.0.0.1:0").expect("binds");
         let port = listener.local_addr().expect("addr").port();
         let handle = std::thread::spawn(move || {
@@ -829,7 +863,7 @@ mod tests {
             let mut buffer = [0u8; 4096];
             let _ = std::io::Read::read(&mut socket, &mut buffer);
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{body}",
                 body.len()
             );
             let _ = socket.write_all(response.as_bytes());
@@ -973,6 +1007,70 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("400"), "{message}");
         assert!(message.contains("not available to this key"), "{message}");
+    }
+
+    /// A refusal the turn loop may act on, rather than one more opaque
+    /// status: 429 is the only failure worth sending the same request again
+    /// for, and the server's own hint is the only reliable idea of when.
+    #[test]
+    fn a_rate_limited_request_carries_the_servers_retry_hint() {
+        let (url, server) = serve_with_headers(
+            "429 Too Many Requests",
+            "Retry-After: 30\r\n",
+            r#"{"error":{"message":"rate limit reached"}}"#.to_string(),
+        );
+
+        let err = provider(url)
+            .chat_stream(
+                ChatRequest { messages: vec![], tools: vec![], model: "m".into() },
+                &|_| {},
+                &|_| {},
+                &|_, _, _| {},
+                &|| false,
+            )
+            .expect_err("429");
+        server.join().ok();
+
+        let LlmError::RateLimited { retry_after_seconds, message } = err else {
+            panic!("expected a rate limit, got {err:?}");
+        };
+        assert_eq!(retry_after_seconds, Some(30));
+        assert!(message.contains("rate limit reached"), "{message}");
+    }
+
+    /// The header's other permitted form, which no gateway uses and which is
+    /// deliberately not parsed. It must read as "no hint" — not as zero, which
+    /// would send the retry straight back into the same refusal.
+    #[test]
+    fn a_hint_in_a_form_we_do_not_read_is_no_hint() {
+        let (url, server) = serve_with_headers(
+            "429 Too Many Requests",
+            "Retry-After: Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+            "{}".to_string(),
+        );
+
+        let err = provider(url).list_models().expect_err("429");
+        server.join().ok();
+
+        assert!(
+            matches!(err, LlmError::RateLimited { retry_after_seconds: None, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Plenty of gateways send no hint at all. That is not an error — the
+    /// backoff covers it — but it must not be mistaken for a hint of zero.
+    #[test]
+    fn a_rate_limit_without_a_hint_has_none() {
+        let (url, server) = serve("429 Too Many Requests", "{}".to_string());
+
+        let err = provider(url).list_models().expect_err("429");
+        server.join().ok();
+
+        assert!(
+            matches!(err, LlmError::RateLimited { retry_after_seconds: None, .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
