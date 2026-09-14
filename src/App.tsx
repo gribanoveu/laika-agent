@@ -9,6 +9,7 @@ import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { usePanelSizes } from "./hooks/usePanelSizes";
+import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import type { AsideTab, ChatSummary, Session, Turn } from "./types";
@@ -38,6 +39,7 @@ export default function App() {
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const toast = useToast();
+  const theme = useTheme();
   const panels = usePanelSizes({
     sidebar: {
       collapsed,
@@ -146,6 +148,23 @@ export default function App() {
         <div className="modal-field">
           <label>LLM provider</label>
           <input type="text" value="" placeholder="Not configured" readOnly />
+        </div>
+        <div className="modal-field">
+          <label>Theme</label>
+          <div className="segmented" role="radiogroup" aria-label="Theme">
+            {THEMES.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="radio"
+                aria-checked={theme.preference === name}
+                className={`segment${theme.preference === name ? " active" : ""}`}
+                onClick={() => theme.setPreference(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
         </div>
         <p className="modal-note">Settings are read-only until the backend commands land.</p>
       </Modal>

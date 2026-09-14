@@ -78,8 +78,8 @@
   border-radius: 50%;
   background: conic-gradient(
     from -90deg,
-    rgba(91, 157, 219, 0.8) var(--ring-deg, 0deg),
-    #333 var(--ring-deg, 0deg)
+    var(--accent) var(--ring-deg, 0deg),
+    var(--bg-active) var(--ring-deg, 0deg)
   );
   -webkit-mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
   mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
@@ -113,17 +113,17 @@
 }
 .bubble {
   background: var(--bg-bubble);
-  border: 1px solid #2b2b2b;
+  border: 1px solid var(--border-soft);
   border-radius: 9px;
   padding: 11px 13px;
   font-size: 13px;
   line-height: 1.55;
-  color: #dcdcdc;
+  color: var(--text);
 }
 .msg {
   font-size: 13px;
   line-height: 1.6;
-  color: #d2d2d2;
+  color: var(--text);
 }
 
 .tools {
@@ -180,7 +180,7 @@
   color: var(--text-faint);
 }
 .tool .chev {
-  color: #4f4f4f;
+  color: var(--text-faint);
   flex: none;
   transition: transform 0.15s;
 }
@@ -203,9 +203,9 @@
 .approval-card {
   margin: 6px 0 4px;
   padding: 7px 9px;
-  border: 1px solid rgba(212, 168, 83, 0.35);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
   border-radius: 7px;
-  background: rgba(212, 168, 83, 0.06);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
 }
 .approval-card.approved {
   border-color: var(--border-soft);

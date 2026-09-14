@@ -3,7 +3,7 @@
 .window {
   height: 100%;
   background: var(--bg-window);
-  border: 1px solid #242424;
+  border: 1px solid var(--window-border);
   border-radius: 12px;
   display: flex;
   flex-direction: column;

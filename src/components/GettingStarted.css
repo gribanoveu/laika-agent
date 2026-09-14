@@ -78,7 +78,7 @@
   border-radius: 50%;
   padding: 0;
   border: 0;
-  background: #3a3a3a;
+  background: var(--bg-active);
   cursor: pointer;
 }
 .gs-dot.active {

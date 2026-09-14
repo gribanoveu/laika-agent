@@ -1,25 +1,74 @@
+/*
+ * Theme tokens — the only place colours are defined.
+ *
+ * A theme is one block of custom properties keyed by `data-theme` on <html>.
+ * To add one: copy a block, rename the key, change the values; nothing in the
+ * components needs to know. `useTheme` writes the attribute, so "system" is
+ * resolved to a concrete theme rather than duplicated as a media query here.
+ *
+ * The surfaces form a deliberate ladder — app < window < panel < panel-soft <
+ * hover < active — with enough distance between the steps to stay readable on
+ * dim or low-contrast monitors.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  --bg-app: #08080a;
+  --bg-window: #16161a;
+  --bg-panel: #242429;
+  --bg-panel-soft: #2c2c33;
+  --bg-hover: #34343c;
+  --bg-active: #3f3f49;
+  --bg-bubble: #2e2e36;
+
+  --border: #3f3f4a;
+  --border-soft: #33333c;
+  /* Outline around the whole window: the dark themes need it to separate the
+     app from the desktop, a light one does not. */
+  --window-border: #3f3f4a;
+
+  --text: #f2f2f5;
+  --text-dim: #b8b8c2;
+  --text-faint: #8b8b97;
+
+  --accent: #6ba4e6;
+  --accent-contrast: #08080a;
+  --green: #62d29a;
+  --red: #ec8079;
+  --amber: #e0b35f;
+  --purple: #b39bff;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg-app: #c9c9d2;
+  --bg-window: #eeeef2;
+  --bg-panel: #ffffff;
+  --bg-panel-soft: #f4f4f8;
+  --bg-hover: #e8e8ef;
+  --bg-active: #dcdce5;
+  --bg-bubble: #f4f4f8;
+
+  --border: #cdcdd8;
+  --border-soft: #e1e1e9;
+  --window-border: transparent;
+
+  --text: #191920;
+  --text-dim: #55555f;
+  --text-faint: #767683;
+
+  --accent: #2f6fb8;
+  --accent-contrast: #ffffff;
+  --green: #1f8f5c;
+  --red: #c2453d;
+  --amber: #8c650f;
+  --purple: #6146c9;
+
+  color-scheme: light;
+}
+
 :root {
-  --bg-app: #0a0a0a;
-  --bg-window: #161616;
-  --bg-panel: #1c1c1c;
-  --bg-panel-soft: #1f1f1f;
-  --bg-hover: #262626;
-  --bg-active: #2d2d2d;
-  --bg-bubble: #232323;
-
-  --border: #2a2a2a;
-  --border-soft: #242424;
-
-  --text: #e6e6e6;
-  --text-dim: #9a9a9a;
-  --text-faint: #6d6d6d;
-
-  --accent: #5b9ddb;
-  --green: #57c98a;
-  --red: #e0736c;
-  --amber: #d4a853;
-  --purple: #a78bfa;
-
   --radius: 12px;
   --font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -45,7 +94,7 @@ body {
   /* Transparent OS window — the rounded .window paints the app background. */
   background: transparent;
   /* Desktop chrome doesn't select: a stray drag must not highlight the UI.
-     Content worth copying opts back in via .selectable below. */
+     Content worth copying opts back in below. */
   -webkit-user-select: none;
   user-select: none;
   color: var(--text);
@@ -72,7 +121,7 @@ textarea,
   width: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2e2e2e;
+  background: var(--bg-active);
   border-radius: 4px;
 }
 
@@ -89,7 +138,7 @@ textarea,
 }
 .btn-primary {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--accent-contrast);
   font-weight: 500;
 }
 .btn-primary:hover {
@@ -103,7 +152,7 @@ textarea,
 .btn-ghost {
   background: none;
   color: var(--text-dim);
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--border);
 }
 .btn-ghost:hover {
   background: var(--bg-hover);

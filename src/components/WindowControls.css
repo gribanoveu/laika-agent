@@ -15,6 +15,7 @@
   display: grid;
   place-items: center;
 }
+/* macOS traffic-light colours are the platform's, not the theme's. */
 .window-controls .dot.r {
   background: #ff5f57;
 }
