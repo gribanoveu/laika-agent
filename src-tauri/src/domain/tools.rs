@@ -480,12 +480,14 @@ fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
 #[serde(tag = "tool", content = "args", rename_all = "camelCase")]
 pub enum ToolCall {
     ReadFile(ReadFileArgs),
+    Grep(GrepArgs),
 }
 
 impl ToolCall {
     pub fn name(&self) -> ToolName {
         match self {
             ToolCall::ReadFile(_) => ToolName::ReadFile,
+            ToolCall::Grep(_) => ToolName::Grep,
         }
     }
 
@@ -514,6 +516,15 @@ pub enum ToolResult {
         end_line: u32,
         total_lines: u32,
     },
+    /// `truncated` means "there are more hits than these" — the cap was
+    /// reached with matching still to do. A search that quietly stopped at a
+    /// limit reads to the model as an exhaustive answer, which is the one
+    /// thing `grep` is for.
+    #[serde(rename_all = "camelCase")]
+    GrepResults {
+        matches: Vec<GrepMatch>,
+        truncated: bool,
+    },
 }
 
 /// `readFile` arguments.
@@ -529,4 +540,45 @@ pub struct ReadFileArgs {
     /// 1-indexed, inclusive. `None` reads through the end.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
     pub end_line: Option<u32>,
+}
+
+/// `grep` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepArgs {
+    /// Rust `regex` syntax — no backreferences, no lookaround.
+    pub pattern: String,
+    /// A file or subdirectory to search under, relative to the scope root.
+    /// `None`, `""` or `"."` searches everything.
+    pub path: Option<String>,
+    /// Glob over the file *name* only, not the path.
+    pub glob: Option<String>,
+    /// Default false — an exact, case-sensitive match unless asked otherwise.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub case_insensitive: Option<bool>,
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_usize")]
+    pub max_results: Option<usize>,
+    /// Lines of context around each hit. `None`/`0` returns the matching line
+    /// alone. Exists for the model: without it every "what does this line
+    /// actually do" costs a follow-up `readFile` round trip.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_usize")]
+    pub context_lines: Option<usize>,
+}
+
+/// One line hit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepMatch {
+    /// Relative to the scope root, `/`-separated — the same spelling
+    /// `readFile` takes, so a hit round-trips without editing.
+    pub path: String,
+    /// 1-indexed.
+    pub line: u32,
+    pub text: String,
+    /// Lines before the hit, oldest first. Omitted from the wire form when
+    /// empty, so a plain search's shape is unchanged by the feature existing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
 }

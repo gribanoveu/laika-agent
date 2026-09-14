@@ -93,13 +93,15 @@ mod tests {
     }
 
     fn unwrap_file(result: ToolResult) -> (String, u32, u32, u32) {
-        let ToolResult::File {
-            content,
-            start_line,
-            end_line,
-            total_lines,
-        } = result;
-        (content, start_line, end_line, total_lines)
+        match result {
+            ToolResult::File {
+                content,
+                start_line,
+                end_line,
+                total_lines,
+            } => (content, start_line, end_line, total_lines),
+            other => panic!("expected a file read, got {other:?}"),
+        }
     }
 
     /// A whole-file read hands back exactly what is on disk. Rebuilding it from

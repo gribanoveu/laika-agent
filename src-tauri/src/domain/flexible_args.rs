@@ -48,6 +48,14 @@ where
     opt_uint(deserializer, u32::MAX as u64).map(|v| v.map(|n| n as u32))
 }
 
+/// `Option<usize>` counterpart of [`opt_u32`].
+pub fn opt_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    opt_uint(deserializer, usize::MAX as u64).map(|v| v.map(|n| n as usize))
+}
+
 /// `Option<bool>` that also accepts `"true"`/`"false"`/`"yes"`/`"no"`/`1`/`0`,
 /// in any case.
 pub fn opt_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>

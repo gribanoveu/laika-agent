@@ -11,10 +11,12 @@
 
 use crate::domain::tools::{ToolCall, ToolError, ToolResult, ToolScope};
 
+pub mod grep;
 pub mod read_file;
 
 pub fn execute_tool(scope: &ToolScope, call: &ToolCall) -> Result<ToolResult, ToolError> {
     match call {
         ToolCall::ReadFile(args) => read_file::read_file(scope, args),
+        ToolCall::Grep(args) => grep::grep(scope, args),
     }
 }
