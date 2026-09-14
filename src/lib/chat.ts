@@ -164,3 +164,73 @@ export async function onTurnEvent(
     if (payload.turnId === turnId) handler(payload);
   });
 }
+
+// ---------------------------------------------------- provider configuration
+
+export type ProviderConfig = {
+  id: string;
+  baseUrl: string;
+  model?: string | null;
+  trustedCertPem?: string | null;
+  requestHeaders?: Record<string, string>;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  reasoningEffort?: string | null;
+};
+
+/** A provider as the window sees it: the configuration, plus whether a key is stored. */
+export type ProviderView = ProviderConfig & { hasApiKey: boolean };
+
+export type LlmSettings = {
+  providers: ProviderView[];
+  activeProviderId: string | null;
+  debugLogging: boolean;
+};
+
+/** What a turn still needs before it can start. Asked before sending, not discovered by failing. */
+export type Readiness = { workspace: string | null; provider: string | null; hasKey: boolean };
+
+export async function llmSettings(): Promise<LlmSettings> {
+  if (!inTauri()) return { providers: [], activeProviderId: null, debugLogging: false };
+  return invoke<LlmSettings>("llm_settings_get");
+}
+
+export async function saveProvider(provider: ProviderConfig): Promise<void> {
+  requireBackend();
+  return invoke<void>("llm_provider_save", { provider });
+}
+
+export async function removeProvider(id: string): Promise<void> {
+  requireBackend();
+  return invoke<void>("llm_provider_remove", { id });
+}
+
+/**
+ * Sends the key to be sealed. There is no command that reads one back — an
+ * empty string deletes the stored one.
+ */
+export async function saveApiKey(id: string, key: string): Promise<void> {
+  requireBackend();
+  return invoke<void>("llm_api_key_save", { id, key });
+}
+
+export async function setActiveProvider(id: string | null): Promise<void> {
+  requireBackend();
+  return invoke<void>("llm_active_provider_set", { id });
+}
+
+export async function setDebugLogging(enabled: boolean): Promise<void> {
+  requireBackend();
+  return invoke<void>("llm_debug_logging_set", { enabled });
+}
+
+/** A live call, so it is also what proves the URL and the key are both right. */
+export async function listModels(id?: string): Promise<string[]> {
+  requireBackend();
+  return invoke<string[]>("llm_models_list", { id: id ?? null });
+}
+
+export async function readiness(): Promise<Readiness> {
+  if (!inTauri()) return { workspace: null, provider: null, hasKey: false };
+  return invoke<Readiness>("agent_readiness");
+}

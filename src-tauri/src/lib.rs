@@ -23,6 +23,14 @@ pub fn run() {
             commands::chat::chat_cancel_steer,
             commands::chat::approval_always_allow,
             commands::chat::approval_set_unattended,
+            commands::settings::llm_settings_get,
+            commands::settings::llm_provider_save,
+            commands::settings::llm_provider_remove,
+            commands::settings::llm_api_key_save,
+            commands::settings::llm_active_provider_set,
+            commands::settings::llm_debug_logging_set,
+            commands::settings::llm_models_list,
+            commands::settings::agent_readiness,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

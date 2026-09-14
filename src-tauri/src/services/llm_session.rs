@@ -78,6 +78,60 @@ pub fn effective_model(
     Ok(model)
 }
 
+/// Every configured provider, in the order the user added them.
+pub fn list_providers() -> Result<Vec<ProviderConfig>, SettingsError> {
+    Ok(settings_store::load()?.llm.providers)
+}
+
+/// Adds a provider, or replaces the one with the same id in place.
+///
+/// In place, rather than remove-and-append: an edit must not move the entry to
+/// the end of a list the user arranged, and the first entry is what an
+/// unpinned setup uses.
+pub fn save_provider(config: ProviderConfig) -> Result<(), SettingsError> {
+    let mut settings = settings_store::load()?;
+    match settings
+        .llm
+        .providers
+        .iter_mut()
+        .find(|p| p.id == config.id)
+    {
+        Some(existing) => *existing = config,
+        None => settings.llm.providers.push(config),
+    }
+    settings_store::save(&settings)
+}
+
+/// Removes a provider and the key sealed under its id.
+///
+/// The key goes with it: an id that is later reused for a different endpoint
+/// would otherwise inherit a credential the user thought they had deleted.
+pub fn remove_provider(id: &str) -> Result<(), SettingsError> {
+    let mut settings = settings_store::load()?;
+    settings.llm.providers.retain(|p| p.id != id);
+    if settings.llm.active_provider_id.as_deref() == Some(id) {
+        settings.llm.active_provider_id = None;
+    }
+    settings_store::save(&settings)?;
+    // Best effort: settings are already written, and a key left behind is
+    // unreachable rather than dangerous.
+    let _ = llm_credentials_store::delete_api_key(id);
+    Ok(())
+}
+
+/// Pins which provider a turn uses. `None` falls back to the first configured.
+pub fn set_active_provider(id: Option<String>) -> Result<(), SettingsError> {
+    let mut settings = settings_store::load()?;
+    settings.llm.active_provider_id = id;
+    settings_store::save(&settings)
+}
+
+pub fn set_debug_logging(enabled: bool) -> Result<(), SettingsError> {
+    let mut settings = settings_store::load()?;
+    settings.llm.debug_logging = enabled;
+    settings_store::save(&settings)
+}
+
 /// Stores `model` as `provider_id`'s pin, leaving its other fields alone.
 pub fn pin_model(provider_id: &str, model: &str) -> Result<(), SettingsError> {
     let mut settings = settings_store::load()?;
@@ -256,6 +310,86 @@ mod tests {
             let stored = settings_store::load().unwrap();
             assert_eq!(stored.llm.providers.len(), 1);
             assert_eq!(stored.llm.provider("local").unwrap().model.as_deref(), Some("qwen"));
+        });
+    }
+
+    // ------------------------------------------------------ managing providers
+
+    #[test]
+    fn a_provider_is_added_once_and_edited_in_place() {
+        with_app_dir("providers-upsert", || {
+            save_provider(provider("local", None)).unwrap();
+            save_provider(provider("openai", Some("gpt"))).unwrap();
+            save_provider(provider("local", Some("qwen"))).unwrap();
+
+            let providers = list_providers().unwrap();
+            assert_eq!(
+                providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+                ["local", "openai"],
+                "an edit must not move the entry to the end of a list the user arranged"
+            );
+            assert_eq!(providers[0].model.as_deref(), Some("qwen"));
+        });
+    }
+
+    /// An id reused later for a different endpoint would otherwise inherit a
+    /// credential the user believed they had deleted.
+    #[test]
+    fn removing_a_provider_takes_its_key_with_it() {
+        with_app_dir("providers-remove", || {
+            save_provider(provider("local", Some("qwen"))).unwrap();
+            llm_credentials_store::save_api_key("local", "sk-secret").unwrap();
+
+            remove_provider("local").unwrap();
+
+            assert!(list_providers().unwrap().is_empty());
+            assert!(!llm_credentials_store::has_api_key("local"));
+        });
+    }
+
+    /// Otherwise the pin points at nothing and every turn refuses to start,
+    /// with no obvious way for the user to see why.
+    #[test]
+    fn removing_the_active_provider_clears_the_pin() {
+        with_app_dir("providers-remove-active", || {
+            save_provider(provider("local", Some("qwen"))).unwrap();
+            save_provider(provider("openai", Some("gpt"))).unwrap();
+            set_active_provider(Some("local".to_string())).unwrap();
+
+            remove_provider("local").unwrap();
+
+            let settings = settings_store::load().unwrap().llm;
+            assert_eq!(settings.active_provider_id, None);
+            assert_eq!(settings.active().unwrap().id, "openai", "and the other one takes over");
+        });
+    }
+
+    #[test]
+    fn the_active_provider_and_the_debug_flag_are_remembered() {
+        with_app_dir("providers-flags", || {
+            save_provider(provider("local", Some("qwen"))).unwrap();
+            set_active_provider(Some("local".to_string())).unwrap();
+            set_debug_logging(true).unwrap();
+
+            let settings = settings_store::load().unwrap().llm;
+            assert_eq!(settings.active_provider_id.as_deref(), Some("local"));
+            assert!(settings.debug_logging);
+        });
+    }
+
+    /// Editing a provider must not silently disarm the log the user turned on,
+    /// or arm one they did not.
+    #[test]
+    fn saving_a_provider_leaves_the_other_settings_alone() {
+        with_app_dir("providers-preserve", || {
+            set_debug_logging(true).unwrap();
+            set_active_provider(Some("local".to_string())).unwrap();
+
+            save_provider(provider("local", Some("qwen"))).unwrap();
+
+            let settings = settings_store::load().unwrap().llm;
+            assert!(settings.debug_logging);
+            assert_eq!(settings.active_provider_id.as_deref(), Some("local"));
         });
     }
 }

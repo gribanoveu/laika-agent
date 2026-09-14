@@ -1,0 +1,19 @@
+/* The provider block and the appearance settings below it are different
+   subjects, and the note between them read as a caption for the theme picker
+   until a line separated the two. */
+.provider-settings {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.provider-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+/* A refusal from the backend, in the place the eye is already looking. */
+.provider-error {
+  color: var(--red);
+}

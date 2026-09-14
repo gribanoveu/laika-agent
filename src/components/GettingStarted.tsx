@@ -8,19 +8,19 @@ const KEY = "atlas-cli-getting-started-skipped";
 const CARDS: { title: string; text: string; action: string; tab: AsideTab | null }[] = [
   {
     title: "Configure git",
-    text: "Настройте git, чтобы коммитить изменения из чата.",
+    text: "Set up git so changes made in the chat can be committed.",
     action: "Configure git →",
     tab: null,
   },
   {
     title: "Connect MCP",
-    text: "Подключите MCP-серверы для docs, git и автоматизации.",
+    text: "Connect MCP servers for docs, git and whatever else the agent should reach.",
     action: "Open MCP settings →",
     tab: "mcp",
   },
   {
     title: "Stage and commit",
-    text: "Перенесите файлы в staged и создайте коммит в правой панели.",
+    text: "Stage what the agent changed and commit it from the panel on the right.",
     action: "Open Changes panel →",
     tab: "changes",
   },

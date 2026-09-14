@@ -4,11 +4,13 @@ import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
 import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
+import { ProviderSettings } from "./components/ProviderSettings";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useAgentTurn } from "./hooks/useAgentTurn";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
+import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
@@ -43,6 +45,7 @@ export default function App() {
   const toast = useToast();
   const workspace = useWorkspace();
   const agent = useAgentTurn();
+  const llm = useLlmSettings();
   const theme = useTheme();
   const panels = usePanelSizes({
     sidebar: {
@@ -166,18 +169,15 @@ export default function App() {
           </button>
         }
       >
-        <div className="modal-field">
-          <label>Git user.name</label>
-          <input type="text" value="" placeholder="Not configured" readOnly />
-        </div>
-        <div className="modal-field">
-          <label>Git user.email</label>
-          <input type="text" value="" placeholder="Not configured" readOnly />
-        </div>
-        <div className="modal-field">
-          <label>LLM provider</label>
-          <input type="text" value="" placeholder="Not configured" readOnly />
-        </div>
+        <ProviderSettings
+          settings={llm.settings}
+          busy={llm.busy}
+          error={llm.error}
+          onSave={llm.save}
+          onRemove={llm.remove}
+          onSelect={llm.select}
+          onDebugLogging={llm.debugLogging}
+        />
         <div className="modal-field">
           <label>Theme</label>
           <div className="segmented" role="radiogroup" aria-label="Theme">
@@ -195,7 +195,6 @@ export default function App() {
             ))}
           </div>
         </div>
-        <p className="modal-note">Settings are read-only until the backend commands land.</p>
       </Modal>
 
       <Modal
