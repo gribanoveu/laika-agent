@@ -467,3 +467,66 @@ fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
         None => format!("no task with id: {id}"),
     }
 }
+
+/// A parsed, validated call the model asked for.
+///
+/// Adjacently tagged (`{"tool": "readFile", "args": {…}}`) rather than a set
+/// of functions, which buys one place to check permissions, one place to
+/// serialize at the model boundary, one place to log and redact, and a wire
+/// shape a test can pin. Adding a tool is a variant here, a variant in
+/// [`ToolResult`], a module under `services::ai_tools::tools`, and an arm in
+/// the dispatcher — nowhere else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "args", rename_all = "camelCase")]
+pub enum ToolCall {
+    ReadFile(ReadFileArgs),
+}
+
+impl ToolCall {
+    pub fn name(&self) -> ToolName {
+        match self {
+            ToolCall::ReadFile(_) => ToolName::ReadFile,
+        }
+    }
+
+    /// Whether *this* call needs a human before it runs — the verdict
+    /// [`ApprovalPolicy::requires_approval`] takes.
+    ///
+    /// Every tool so far answers from its identity alone. `runCommand` will be
+    /// the first to answer from its arguments, which is why this is a method on
+    /// the call rather than a lookup on the name.
+    pub fn is_risky(&self) -> bool {
+        self.name().is_mutating()
+    }
+}
+
+/// What a settled call gives back to the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum ToolResult {
+    #[serde(rename_all = "camelCase")]
+    File {
+        content: String,
+        /// 1-indexed and inclusive — the range actually returned after
+        /// clamping, not necessarily the one asked for. Both are `0` for an
+        /// empty file: there is no line 1 to claim.
+        start_line: u32,
+        end_line: u32,
+        total_lines: u32,
+    },
+}
+
+/// `readFile` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFileArgs {
+    /// Path relative to the scope root.
+    pub path: String,
+    /// 1-indexed, inclusive. `None` reads from the start. Out-of-range values
+    /// are clamped rather than rejected.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub start_line: Option<u32>,
+    /// 1-indexed, inclusive. `None` reads through the end.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub end_line: Option<u32>,
+}
