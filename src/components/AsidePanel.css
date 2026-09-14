@@ -173,8 +173,3 @@
   background: var(--bg-hover);
 }
 
-@media (max-width: 960px) {
-  .aside {
-    display: none;
-  }
-}

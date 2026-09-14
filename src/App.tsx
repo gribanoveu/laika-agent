@@ -7,6 +7,7 @@ import { Modal } from "./components/Modal";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
+import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
@@ -49,6 +50,11 @@ export default function App() {
       expand: () => setAsideCollapsed(false),
     },
   });
+
+  // Narrow window: both panels fall back to their rails instead of one squeezing
+  // the chat and the other disappearing.
+  useNarrowCollapse("(max-width: 760px)", setCollapsed);
+  useNarrowCollapse("(max-width: 900px)", setAsideCollapsed);
 
   const openTab = (next: AsideTab) => {
     setTab(next);
