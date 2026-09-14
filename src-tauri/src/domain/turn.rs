@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::command_exec::OutputStream;
 use crate::domain::llm::{ChatStreamResult, ChatUsage, LlmMessage};
 use crate::domain::tools::{ReadFiles, Task, ToolResult};
 
@@ -243,6 +244,18 @@ pub enum ChatEventPayload {
     /// contract rather than an accident.
     ToolCall(ToolCallEvent),
     ToolResult(ToolResultEvent),
+    /// A line of a running command's output, as it is produced.
+    ///
+    /// Unlike every other event here this one carries `seq: 0`: it is written
+    /// from the command's own reader threads, where the loop's cursor is not
+    /// available. Ordering it against the rest of the stream is neither
+    /// possible nor needed — it belongs to the call named by `id`, and the
+    /// call's result is still the authoritative text.
+    CommandOutput {
+        id: String,
+        stream: OutputStream,
+        chunk: String,
+    },
     /// Token usage as of the round that just finished. Since every request
     /// resends the whole history, this is the authoritative context size, not
     /// a per-round statistic.

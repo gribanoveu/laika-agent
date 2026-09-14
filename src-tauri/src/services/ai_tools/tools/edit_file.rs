@@ -159,7 +159,7 @@ pub(super) fn definition() -> LlmToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::{ReadFileArgs, ToolCall};
+    use crate::domain::tools::{ReadFileArgs, ToolCall, ToolDeps};
     use crate::services::ai_tools::tools::{execute_tool, read_file::read_file};
     use crate::testing::temp_dir;
     use std::path::{Path, PathBuf};
@@ -422,7 +422,7 @@ mod tests {
 
         let (scope, root, mut reads) = fixture("edit-dispatch", "x\n");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new(), &ToolDeps::default()),
             Ok(ToolResult::FileEdited { .. })
         ));
         assert_eq!(on_disk(&root), "y\n");

@@ -18,7 +18,7 @@
 
 use crate::domain::llm::LlmToolDefinition;
 use crate::domain::tools::{
-    ReadFiles, Task, ToolCall, ToolError, ToolName, ToolResult, ToolScope,
+    ReadFiles, Task, ToolCall, ToolDeps, ToolError, ToolName, ToolResult, ToolScope,
 };
 
 pub mod create_directory;
@@ -32,6 +32,7 @@ pub mod move_path;
 pub mod todo;
 pub mod write_file;
 pub mod read_file;
+pub mod run_command;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -55,6 +56,7 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::DeleteDirectory, delete_directory::definition),
     (ToolName::Move, move_path::definition),
     (ToolName::Todo, todo::definition),
+    (ToolName::RunCommand, run_command::definition),
 ];
 
 /// What the model is offered for a turn.
@@ -74,6 +76,7 @@ pub fn execute_tool(
     call: &ToolCall,
     reads: &mut ReadFiles,
     todos: &mut Vec<Task>,
+    deps: &ToolDeps,
 ) -> Result<ToolResult, ToolError> {
     match call {
         ToolCall::ReadFile(args) => read_file::read_file(scope, args, reads),
@@ -89,6 +92,7 @@ pub fn execute_tool(
         ToolCall::GitStatus => git::git_status(scope),
         ToolCall::GitDiff(args) => git::git_diff(scope, args),
         ToolCall::GitBlame(args) => git::git_blame(scope, args),
+        ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
     }
 }
 
@@ -229,6 +233,14 @@ mod definition_tests {
                     path: path(),
                     scope: Some("staged".to_string()),
                     commit: Some("HEAD~1".to_string()),
+                })],
+            ),
+            ToolName::RunCommand => (
+                r#"{"command":"cargo test"}"#,
+                vec![ToolCall::RunCommand(crate::domain::command_exec::CommandRequest {
+                    command: "cargo test".to_string(),
+                    cwd: Some("crate".to_string()),
+                    timeout_seconds: Some(30),
                 })],
             ),
             ToolName::GitBlame => (

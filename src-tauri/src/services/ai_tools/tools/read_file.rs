@@ -122,7 +122,7 @@ pub(super) fn definition() -> LlmToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::{ReadFiles, ToolCall};
+    use crate::domain::tools::{ReadFiles, ToolCall, ToolDeps};
     use crate::services::ai_tools::tools::execute_tool;
     use crate::testing::temp_dir;
     use std::path::PathBuf;
@@ -281,7 +281,7 @@ mod tests {
         let json = r#"{"tool": "readFile", "args": {"path": "file.txt", "startLine": "2", "endLine": "3"}}"#;
         let call: ToolCall = serde_json::from_str(json).expect("quoted numbers parse");
 
-        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new()).unwrap());
+        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new(), &ToolDeps::default()).unwrap());
 
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end), (2, 3));

@@ -249,7 +249,7 @@ pub(super) fn definition() -> LlmToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::{ReadFiles, ToolCall};
+    use crate::domain::tools::{ReadFiles, ToolCall, ToolDeps};
     use crate::services::ai_tools::tools::execute_tool;
     use crate::testing::temp_dir;
 
@@ -503,7 +503,7 @@ mod tests {
         let (scope, root) = fixture("grep-dispatch");
         write(&root, "a.txt", "todo\n");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new()),
+            execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new(), &ToolDeps::default()),
             Ok(ToolResult::GrepResults { .. })
         ));
     }

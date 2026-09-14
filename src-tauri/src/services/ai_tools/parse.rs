@@ -30,6 +30,7 @@ pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
         "todo" => ToolCall::Todo(args(call)?),
         "gitDiff" => ToolCall::GitDiff(args(call)?),
         "gitBlame" => ToolCall::GitBlame(args(call)?),
+        "runCommand" => ToolCall::RunCommand(args(call)?),
         // No arguments, so nothing to deserialize — and nothing for a model to
         // get wrong. Whatever it sent alongside is ignored rather than refused.
         "gitStatus" => ToolCall::GitStatus,
@@ -52,6 +53,7 @@ pub fn preflight_tool_call(
     // Containment, checked here as well as inside each tool. The duplication is
     // the point: this runs before approval, the tool's own check runs before
     // the disk.
+    let command_cwd: [&str; 1];
     let paths: &[&str] = match &parsed {
         ToolCall::WriteFile(a) => &[&a.path],
         ToolCall::EditFile(a) => &[&a.path],
@@ -59,6 +61,15 @@ pub fn preflight_tool_call(
         ToolCall::CreateDirectory(a) => &[&a.path],
         ToolCall::DeleteDirectory(a) => &[&a.path],
         ToolCall::Move(a) => &[&a.path, &a.new_path],
+        // The working directory only. What the command line then names is
+        // beyond any check here — see `domain::command_exec`.
+        ToolCall::RunCommand(request) => match &request.cwd {
+            Some(cwd) if !cwd.is_empty() && cwd != "." => {
+                command_cwd = [cwd.as_str()];
+                &command_cwd
+            }
+            _ => &[],
+        },
         _ => &[],
     };
     for path in paths {

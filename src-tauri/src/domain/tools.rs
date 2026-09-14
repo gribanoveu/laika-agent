@@ -35,6 +35,7 @@ pub enum ToolName {
     Todo,
     GitDiff,
     GitBlame,
+    RunCommand,
     GitStatus,
 }
 
@@ -55,6 +56,7 @@ impl ToolName {
         ToolName::GitDiff,
         ToolName::GitBlame,
         ToolName::GitStatus,
+        ToolName::RunCommand,
     ];
 
     /// The name the model calls this tool by. Must match what `Serialize`
@@ -73,6 +75,7 @@ impl ToolName {
             ToolName::Todo => "todo",
             ToolName::GitDiff => "gitDiff",
             ToolName::GitBlame => "gitBlame",
+            ToolName::RunCommand => "runCommand",
             ToolName::GitStatus => "gitStatus",
         }
     }
@@ -99,6 +102,12 @@ impl ToolName {
                 | ToolName::CreateDirectory
                 | ToolName::DeleteDirectory
                 | ToolName::Move
+                // Every command is treated as mutating, because a command
+                // line is not a tool name: `ls` and `rm -rf /` are the same
+                // call with different arguments. Narrowing that back down is a
+                // question about the command line, and it is asked in
+                // `services::ai_tools::command_risk`, not here.
+                | ToolName::RunCommand
         )
     }
 
@@ -126,6 +135,10 @@ impl ToolName {
             // `include::`/`xref:` references in other documents; that part is
             // not ported, so the cost went with it.
             ToolName::Move => 1,
+            // The only tool whose cost is unbounded: a build, a test suite,
+            // a download. Weighted so a turn cannot spend itself entirely on
+            // re-running things.
+            ToolName::RunCommand => 5,
         }
     }
 }
@@ -167,7 +180,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            13,
+            14,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -201,7 +214,10 @@ mod tests {
 
     #[test]
     fn unknown_wire_name_is_rejected() {
-        assert_eq!(ToolName::from_wire_name("runCommand"), None);
+        // This used to name `runCommand`, which the stage-two tool then made
+        // real — a reminder that "a name we will never have" is a guess with a
+        // shelf life.
+        assert_eq!(ToolName::from_wire_name("summonDragon"), None);
         assert_eq!(ToolName::from_wire_name(""), None);
         assert_eq!(ToolName::from_wire_name("ReadFile"), None, "case matters");
     }
@@ -230,6 +246,9 @@ mod tests {
                 ToolName::DeleteFile,
                 ToolName::CreateDirectory,
                 ToolName::DeleteDirectory,
+                // Not a writing tool by shape, and mutating all the same: the
+                // tool name says nothing about what the command line does.
+                ToolName::RunCommand,
                 ToolName::Move,
             ])
         );
@@ -383,6 +402,21 @@ impl ToolScope {
     }
 }
 
+/// What a tool needs from the environment, beyond the workspace it acts on.
+///
+/// Empty until now, which is why the dispatcher took no such argument: every
+/// tool so far needed a path and nothing else. `runCommand` needs a shell and
+/// somewhere to send output as it arrives, and threading those through the one
+/// dispatcher keeps the tool boundary where it is.
+#[derive(Clone, Default)]
+pub struct ToolDeps {
+    pub shell: crate::domain::command_exec::Shell,
+    /// Where a running command's output goes as it is produced. `None`
+    /// collects it and reports it only at the end, which is what a test wants
+    /// and what a turn must not do.
+    pub output: Option<crate::domain::command_exec::CommandSink>,
+}
+
 /// Why a tool call could not be carried out.
 ///
 /// Data all the way to the boundary, per `AGENTS.md`: the string form exists
@@ -469,6 +503,10 @@ pub enum ToolError {
     /// tool boundary.
     #[error("git error: {0}")]
     Git(String),
+    /// The command never started, or could not be read. A command that started
+    /// and failed is not this — that is a result with a non-zero exit code.
+    #[error("{0}")]
+    Command(String),
 }
 
 fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
@@ -505,6 +543,7 @@ pub enum ToolCall {
     GitStatus,
     GitDiff(GitDiffArgs),
     GitBlame(GitBlameArgs),
+    RunCommand(crate::domain::command_exec::CommandRequest),
 }
 
 impl ToolCall {
@@ -523,6 +562,7 @@ impl ToolCall {
             ToolCall::GitStatus => ToolName::GitStatus,
             ToolCall::GitDiff(_) => ToolName::GitDiff,
             ToolCall::GitBlame(_) => ToolName::GitBlame,
+            ToolCall::RunCommand(_) => ToolName::RunCommand,
         }
     }
 
@@ -618,6 +658,9 @@ pub enum ToolResult {
         hunks: Vec<BlameHunk>,
         truncated: bool,
     },
+    /// A command that ran. "Ran" is not "succeeded": the exit code is the
+    /// answer, and a failing build is a perfectly good result.
+    CommandRan(crate::domain::command_exec::CommandOutput),
 }
 
 /// `readFile` arguments.

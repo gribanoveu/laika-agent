@@ -9,7 +9,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::domain::llm::{
@@ -17,7 +17,10 @@ use crate::domain::llm::{
     sanitize_tool_call_arguments,
 };
 use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
-use crate::domain::tools::{ApprovalPolicy, ReadFiles, Task, ToolName, ToolResult, ToolScope};
+use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
+use crate::domain::tools::{
+    ApprovalPolicy, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
+};
 use crate::domain::turn::{
     ChatDone, ChatEventPayload, ChatEventSink, ChatStreamOutcome, ChatTurnEvent, DecisionError,
     PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision, ToolCallEvent,
@@ -145,6 +148,9 @@ pub struct Turn<'a> {
     /// Called in one-second slices while waiting to retry, so a stop takes
     /// effect during the wait rather than after it.
     pub sleep: &'a dyn Fn(Duration),
+    /// Which shell runs a command line. A setting, not a search of `PATH` —
+    /// see `domain::command_exec`.
+    pub shell: &'a Shell,
     /// Takes whatever the user has typed since it was last called. Draining
     /// rather than reading is deliberate: a note handed to the model must
     /// leave the queue in the same step, or a round that is retried or
@@ -504,7 +510,20 @@ fn run(
                 Some(d) if !d.approved => Err(denial(d)),
                 _ => parse_tool_call(call)
                     .and_then(|parsed| {
-                        execute_tool(turn.scope, &parsed, &mut state.reads, &mut state.todos)
+                        // Built per call, because the id is what pairs a line
+                        // of output with the call that produced it — a round
+                        // may have started more than one.
+                        let deps = ToolDeps {
+                            shell: turn.shell.clone(),
+                            output: Some(command_output_sink(turn.events, round, &call.id)),
+                        };
+                        execute_tool(
+                            turn.scope,
+                            &parsed,
+                            &mut state.reads,
+                            &mut state.todos,
+                            &deps,
+                        )
                     })
                     .map_err(|e| format!("Error: {e}")),
             };
@@ -535,6 +554,31 @@ fn run(
             state.history.push(tool_message(&call.id, content));
         }
     }
+}
+
+/// Turns a command's output into turn events as it arrives.
+///
+/// Deliberately not routed through [`Events`]: that cursor is owned by the
+/// loop's own thread, and output arrives on the runner's reader threads. These
+/// events carry no sequence number of their own and are ordered by the call
+/// they belong to, which is what a listener uses to append them to the right
+/// card. The call's `ToolResult` remains the authoritative text.
+fn command_output_sink(events: &ChatEventSink, round: u32, call_id: &str) -> CommandSink {
+    let events = events.clone();
+    let target_id = format!("round:{round}:tool:{call_id}");
+    let call_id = call_id.to_string();
+    Arc::new(move |event: CommandEvent| {
+        events(ChatTurnEvent {
+            seq: 0,
+            round,
+            target_id: Some(target_id.clone()),
+            event: ChatEventPayload::CommandOutput {
+                id: call_id.clone(),
+                stream: event.stream,
+                chunk: event.chunk,
+            },
+        });
+    })
 }
 
 /// Adds queued notes to the conversation and says so, one event per note, so
@@ -926,6 +970,7 @@ mod tests {
             };
             let slept = self.slept.clone();
             let sleep = move |d: Duration| slept.lock().unwrap().push(d);
+            let shell = Shell::default();
             let queue = self.steering.clone();
             let take_steering = move || queue.take();
             let turn = Turn {
@@ -936,6 +981,7 @@ mod tests {
                 cancelled: &cancelled,
                 sleep: &sleep,
                 take_steering: &take_steering,
+                shell: &shell,
             };
             f(&turn)
         }
@@ -955,6 +1001,7 @@ mod tests {
                 ChatEventPayload::ToolResult(r) => format!("toolResult:{}", r.id),
                 ChatEventPayload::ContextUsage(_) => "contextUsage".to_string(),
                 ChatEventPayload::SteeringApplied { id, .. } => format!("steering:{id}"),
+                ChatEventPayload::CommandOutput { id, .. } => format!("commandOutput:{id}"),
             })
             .collect()
     }
@@ -1894,5 +1941,102 @@ mod tests {
         };
         assert_eq!(std::fs::read_to_string(h.root.join("a.rs")).unwrap(), "new");
         assert_eq!(done.todos.len(), 2, "and the checklist comes out with it");
+    }
+
+    // ---------------------------------------------------- running a command
+
+    /// Scenario S-1, the reason stage two exists: the agent runs the tests,
+    /// reads the failure, fixes the code, and runs them again. Nothing about
+    /// it is mocked except the model's side of the conversation.
+    #[test]
+    fn the_agent_runs_a_failing_test_fixes_the_code_and_runs_it_again() {
+        let h = harness(
+            "s1",
+            vec![
+                asks(vec![wants("c1", "runCommand", r#"{"command":"sh check.sh"}"#)]),
+                asks(vec![wants("r1", "readFile", r#"{"path":"answer.txt"}"#)]),
+                asks(vec![wants(
+                    "e1",
+                    "editFile",
+                    r#"{"path":"answer.txt","edits":[{"old":"41","new":"42"}]}"#,
+                )]),
+                asks(vec![wants("c2", "runCommand", r#"{"command":"sh check.sh"}"#)]),
+                text("fixed: the answer was 41, it is now 42"),
+            ],
+        );
+        std::fs::write(
+            h.root.join("check.sh"),
+            "if [ \"$(cat answer.txt)\" = \"42\" ]; then echo PASS; else echo \"FAIL: expected 42, got $(cat answer.txt)\"; exit 1; fi\n",
+        )
+        .unwrap();
+        std::fs::write(h.root.join("answer.txt"), "41").unwrap();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("make the test pass")], vec![]));
+
+        assert!(matches!(outcome.expect("finishes"), ChatStreamOutcome::Done(_)));
+        assert_eq!(std::fs::read_to_string(h.root.join("answer.txt")).unwrap(), "42");
+
+        let rounds = h.provider.requests();
+        // What the model was told after the first run: the failure, in full.
+        let first_run = tool_contents(&rounds[1]).pop().expect("the run was reported");
+        assert!(first_run.contains("expected 42, got 41"), "{first_run}");
+        assert!(first_run.contains("\"exitCode\":1"), "{first_run}");
+        // And after the second: the pass.
+        let second_run = tool_contents(rounds.last().unwrap()).pop().expect("reported");
+        assert!(second_run.contains("PASS"), "{second_run}");
+        assert!(second_run.contains("\"exitCode\":0"), "{second_run}");
+    }
+
+    /// Output reaches the UI while the command is still running, tagged with
+    /// the call it belongs to — otherwise a two-minute build is two minutes of
+    /// nothing.
+    #[test]
+    fn command_output_is_reported_as_it_is_produced() {
+        let h = harness(
+            "cmd-stream",
+            vec![
+                asks(vec![wants(
+                    "c1",
+                    "runCommand",
+                    r#"{"command":"echo working; echo trouble >&2"}"#,
+                )]),
+                text("done"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let chunks: Vec<(String, String)> = h
+            .events()
+            .into_iter()
+            .filter_map(|e| match e.event {
+                ChatEventPayload::CommandOutput { id, chunk, .. } => Some((id, chunk)),
+                _ => None,
+            })
+            .collect();
+        assert!(!chunks.is_empty(), "nothing was reported while it ran");
+        assert!(chunks.iter().all(|(id, _)| id == "c1"), "tagged by call");
+        let text: String = chunks.iter().map(|(_, chunk)| chunk.clone()).collect();
+        assert!(text.contains("working") && text.contains("trouble"), "{text}");
+    }
+
+    /// A command line is not a tool name: `ls` and `rm -rf /` are the same
+    /// call. Until the command itself is examined, every one of them asks.
+    #[test]
+    fn a_command_needs_approval_like_any_other_change() {
+        let mut h = harness(
+            "cmd-approval",
+            vec![asks(vec![wants("c1", "runCommand", r#"{"command":"rm -rf ."}"#)])],
+        );
+        h.approval = asking();
+        std::fs::write(h.root.join("keep.txt"), "x").unwrap();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("clean up")], vec![]));
+
+        let ChatStreamOutcome::PendingApproval(pending) = outcome.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        assert!(pending.calls[0].requires_confirmation);
+        assert!(h.root.join("keep.txt").exists(), "nothing ran");
     }
 }

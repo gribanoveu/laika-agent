@@ -71,7 +71,7 @@ pub(super) fn definition() -> LlmToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::tools::{ReadFileArgs, ReadFiles, ToolCall};
+    use crate::domain::tools::{ReadFileArgs, ReadFiles, ToolCall, ToolDeps};
     use crate::services::ai_tools::tools::{execute_tool, read_file::read_file};
     use crate::testing::temp_dir;
     use std::path::PathBuf;
@@ -188,7 +188,7 @@ mod tests {
         write(&root, "a.txt", "x\n");
         agent_reads(&scope, &mut reads, "a.txt", None);
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new(), &ToolDeps::default()),
             Ok(ToolResult::FileDeleted { .. })
         ));
         assert!(!root.join("a.txt").exists());
