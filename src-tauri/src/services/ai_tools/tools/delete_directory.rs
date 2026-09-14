@@ -7,6 +7,7 @@
 //! sees the path before anything happens. The non-recursive default is the
 //! other half — an over-broad path costs one refusal rather than a tree.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{DeleteDirectoryArgs, ToolError, ToolResult, ToolScope};
@@ -41,6 +42,34 @@ pub fn delete_directory(
     }
 
     Ok(ToolResult::DirectoryDeleted { path: relative })
+}
+
+/// What the model is told `deleteDirectory` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "deleteDirectory".to_string(),
+        description: "Delete a directory. Without `recursive` a directory with contents is refused, so a path that turned out broader than you meant costs one refusal instead of a tree."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory path relative to the workspace root. The workspace root itself cannot be deleted."
+                },
+                "recursive": {
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "description": "Default false. True deletes the directory and everything under it. Prefer listing it first."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

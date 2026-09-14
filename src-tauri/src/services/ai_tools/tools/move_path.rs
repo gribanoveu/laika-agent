@@ -9,6 +9,7 @@
 //! No read-registry check: a move destroys nothing. The destination must be
 //! free, so there is nothing to overwrite, and the source keeps its content.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{MoveArgs, ToolError, ToolResult, ToolScope};
@@ -33,6 +34,32 @@ pub fn move_path(scope: &ToolScope, args: &MoveArgs) -> Result<ToolResult, ToolE
         from: relative_to_root(scope, &from)?,
         to: relative_to_root(scope, &to)?,
     })
+}
+
+/// What the model is told `move` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "move".to_string(),
+        description: "Move or rename a file or directory. Nothing else is updated: imports, includes and links that named the old path keep naming it, and fixing them is your job — grep for the old path after moving."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Existing path, relative to the workspace root."
+                },
+                "newPath": {
+                    "type": "string",
+                    "description": "Destination path, relative to the workspace root. Refused if something is already there."
+                }
+            },
+            "required": [
+                "path",
+                "newPath"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 //! whole-file requirement applies here too — a partial read is no basis for
 //! removing the parts that were never seen.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{
@@ -44,6 +45,27 @@ pub fn delete_file(
         path: relative,
         diff: text_diff::diff_stats(&old, ""),
     })
+}
+
+/// What the model is told `deleteFile` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "deleteFile".to_string(),
+        description: "Delete one file. Refused unless this turn has read the file whole — deleting what you have not seen is how work disappears unnoticed. Returns the diff of what was removed, so the content is still in the transcript if it turns out to have been needed."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the workspace root."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

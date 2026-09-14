@@ -13,6 +13,7 @@
 //! into another model call, with that cost and that variance. A failed anchor
 //! is already a precise, actionable error; the model can widen it and retry.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{
@@ -110,6 +111,49 @@ fn find_unique(content: &str, old: &str) -> Result<(usize, usize), ToolError> {
         return Err(ToolError::EditTextAmbiguous(old.to_string(), count));
     }
     Ok((start, start + old.len()))
+}
+
+/// What the model is told `editFile` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "editFile".to_string(),
+        description: "Replace exact passages in an existing file. The preferred way to change code: it touches only what you name. Each edit's `old` must appear **exactly once** in the file as it is now — include the surrounding lines needed to make it unique. If any anchor is missing, ambiguous or overlaps another edit, the whole call is refused and nothing is written, so a failed edit never leaves the file half-changed. All edits are matched against the file's original content, so one edit's replacement can never become another's anchor. The file must already exist and have been read this turn."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the workspace root."
+                },
+                "edits": {
+                    "type": "array",
+                    "description": "Applied together, all or nothing.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old": {
+                                "type": "string",
+                                "description": "The exact text to replace, including indentation and line breaks, unique within the file."
+                            },
+                            "new": {
+                                "type": "string",
+                                "description": "What to put in its place. Empty string deletes the passage."
+                            }
+                        },
+                        "required": [
+                            "old",
+                            "new"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "path",
+                "edits"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

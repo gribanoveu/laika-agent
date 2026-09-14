@@ -10,6 +10,7 @@
 //! deliberately never applied to the repository itself: a repo's own `test/`
 //! directory is exactly what someone may be asking about.
 
+use crate::domain::llm::LlmToolDefinition;
 use crate::domain::tools::{ListFilesArgs, ToolError, ToolFileEntry, ToolResult, ToolScope};
 use crate::infra::workspace_scanner;
 
@@ -130,6 +131,43 @@ fn render_children(node: &Node, prefix: &str, out: &mut String) {
             let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
             render_children(child, &child_prefix, out);
         }
+    }
+}
+
+/// What the model is told `listFiles` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "listFiles".to_string(),
+        description: "List the files and directories under a path, as a tree. Ignored files (.gitignore, and .git itself) are never listed. Use it to learn a project's shape before reading; use grep when you already know what to look for."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Subdirectory relative to the workspace root. Omit or \\\".\\\" lists the root."
+                },
+                "depth": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 0,
+                    "description": "Levels below `path`: `path` itself is 0, its direct children 1. Omit for unlimited. Start shallow on an unfamiliar repository."
+                },
+                "pattern": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Glob over each entry's file *name*, never its full path, so \\\"*.rs\\\" matches at any depth. Directories are listed regardless — this narrows which files come back, not the structure you can navigate."
+                }
+            },
+            "required": []
+        }),
     }
 }
 

@@ -6,6 +6,7 @@
 //! read the old content, write, return the diff — plus the guard that Atlas
 //! did not have.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{
@@ -58,6 +59,32 @@ pub fn write_file(
         path: relative,
         diff: text_diff::diff_stats(&old, &args.content),
     })
+}
+
+/// What the model is told `writeFile` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "writeFile".to_string(),
+        description: "Create a file, or replace an existing one whole. To change part of a file, use editFile: rewriting a whole file to alter a few lines costs context and risks losing everything you did not repeat. Refused if the file exists and this turn has not read it whole, or if it changed on disk since that read — read it again and reconcile rather than overwriting someone's work. Returns the line diff of what actually landed."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the workspace root. Parent directories must already exist — use createDirectory first."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The file's complete new content. Everything not included here is gone."
+                }
+            },
+            "required": [
+                "path",
+                "content"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! Alfa Atlas also scaffolded one from a `restEndpoint` template. That was its
 //! documentation product showing through and is not ported.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{CreateDirectoryArgs, ToolError, ToolResult, ToolScope};
@@ -24,6 +25,27 @@ pub fn create_directory(
     Ok(ToolResult::DirectoryCreated {
         path: relative_to_root(scope, &path)?,
     })
+}
+
+/// What the model is told `createDirectory` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "createDirectory".to_string(),
+        description: "Create a directory, including any missing parents. Creating one that already exists is not an error."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory path relative to the workspace root."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

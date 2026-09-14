@@ -11,6 +11,7 @@
 //! boundary in both directions — reported relative to the scope root like every
 //! other tool, resolved relative to the repository for git itself.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 use std::path::Path;
 
@@ -333,6 +334,97 @@ fn blame_error(path: &str, err: git2::Error) -> ToolError {
         ));
     }
     git_error(err)
+}
+
+/// What the model is told `gitStatus` is for.
+pub(super) fn status_definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "gitStatus".to_string(),
+        description: "What has changed in the working tree: modified, added, deleted, renamed, conflicted and untracked paths, plus the current branch. Read-only — this tool never stages, commits or pushes anything."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+    }
+}
+
+/// What the model is told `gitDiff` is for.
+pub(super) fn diff_definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "gitDiff".to_string(),
+        description: "The diff for one path. Read-only. Use it to see your own uncommitted work, or what a particular commit did."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File or directory relative to the workspace root."
+                },
+                "scope": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "enum": [
+                        "unstaged",
+                        "staged",
+                        null
+                    ],
+                    "description": "\\\"unstaged\\\" (default) is the working tree against the index; \\\"staged\\\" is the index against HEAD. Ignored when `commit` is given."
+                },
+                "commit": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "A commit hash or ref. When given, diffs that commit against its parent."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
+    }
+}
+
+/// What the model is told `gitBlame` is for.
+pub(super) fn blame_definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "gitBlame".to_string(),
+        description: "Who last changed each line of a file, and in which commit. Read-only. Use it to find the change that introduced a line, and the message explaining why — then read that commit with gitDiff."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the workspace root."
+                },
+                "startLine": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 1,
+                    "description": "1-indexed first line, inclusive. Omit for the whole file — prefer a range, blame of a large file is long."
+                },
+                "endLine": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 1,
+                    "description": "1-indexed last line, inclusive."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@
 //! the scope root and nothing else — a coding agent has to read source files,
 //! build manifests, lockfiles and dotfiles alike.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::tools::{ReadFileArgs, ReadFiles, ToolError, ToolResult, ToolScope};
@@ -78,6 +79,43 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
         start_line: start,
         end_line: end,
         total_lines,
+    }
+}
+
+/// What the model is told `readFile` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "readFile".to_string(),
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is clamped, not rejected. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the workspace root."
+                },
+                "startLine": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 1,
+                    "description": "1-indexed first line to return, inclusive. Omit to start at the beginning."
+                },
+                "endLine": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 1,
+                    "description": "1-indexed last line to return, inclusive. Omit to read to the end. Prefer a range over the whole file when only part of it matters — but read the whole file before writing it, since a partial read does not unlock a write."
+                }
+            },
+            "required": [
+                "path"
+            ]
+        }),
     }
 }
 

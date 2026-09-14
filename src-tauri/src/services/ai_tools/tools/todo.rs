@@ -7,6 +7,7 @@
 //! There is no read operation on purpose. The current checklist is part of the
 //! model's context already; a tool call to look at it would be a wasted round.
 
+use crate::domain::llm::LlmToolDefinition;
 use crate::domain::tools::{Task, TodoArgs, TodoStatus, ToolError, ToolResult};
 
 /// A checklist longer than this is not a plan, it is a different conversation.
@@ -99,6 +100,67 @@ fn advance(mut tasks: Vec<Task>) -> Vec<Task> {
         next.status = TodoStatus::InProgress;
     }
     tasks
+}
+
+/// What the model is told `todo` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "todo".to_string(),
+        description: "Keep the checklist for a request that takes several steps (three or more). One tool, two operations chosen with `op`. `write` appends new task titles to the end of the list — it never replaces it; the runtime assigns ids and activates the first task when the list was empty. `update` changes one task to `completed` or `cancelled`; those are the only statuses you may set, and the runtime activates the next task by itself. Omit `id` to mean the task you are on, which is what almost every update means and cannot name the wrong one. There is no read operation — the current list comes back from every call. Do not use it for a one- or two-step request."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": [
+                        "write",
+                        "update"
+                    ],
+                    "description": "\\\"write\\\" to append tasks, \\\"update\\\" to change one."
+                },
+                "tasks": {
+                    "type": [
+                        "array",
+                        "null"
+                    ],
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Only for op \\\"write\\\": task titles to append, each a short imperative phrase."
+                },
+                "id": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Only for op \\\"update\\\": which task to change, exactly as the list spells it. Omit it to change the active task."
+                },
+                "status": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "enum": [
+                        "completed",
+                        "cancelled",
+                        null
+                    ],
+                    "description": "Only for op \\\"update\\\". Use \\\"cancelled\\\" when a task turned out unnecessary, with a note saying why."
+                },
+                "note": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Only for op \\\"update\\\": a short result for a completed task, or the reason for a cancelled one."
+                }
+            },
+            "required": [
+                "op"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]

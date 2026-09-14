@@ -6,6 +6,7 @@
 //! here, so it is one module; the split earns its keep again the day the UI
 //! grows its own search.
 
+use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -185,6 +186,64 @@ fn truncate(line: &str) -> String {
     }
     let kept: String = line.chars().take(LINE_MAX_CHARS).collect();
     format!("{kept}…")
+}
+
+/// What the model is told `grep` is for.
+pub(super) fn definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "grep".to_string(),
+        description: "Search file contents by regular expression. Use it when you know what the code says; use listFiles when you know where it lives. Results carry the path and line number in the spelling readFile takes, so a hit can be read without editing the path."
+            .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Rust `regex` syntax: no backreferences and no lookaround. Escape regex metacharacters to search for them literally."
+                },
+                "path": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "A file or subdirectory to search under, relative to the workspace root. Omit, \\\".\\\" or \\\"\\\" searches everything."
+                },
+                "glob": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Glob over the file *name* only, never the path — \\\"*.rs\\\" matches at any depth."
+                },
+                "caseInsensitive": {
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "description": "Default false: an exact, case-sensitive match."
+                },
+                "maxResults": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 1,
+                    "description": "Cap on the number of matches. The result says whether it was reached, so a capped search is never mistaken for an exhaustive one."
+                },
+                "contextLines": {
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "minimum": 0,
+                    "description": "Lines of context around each hit. Omit or 0 returns the matching line alone; 2-3 usually answers \\\"what does this line do\\\" without a follow-up readFile."
+                }
+            },
+            "required": [
+                "pattern"
+            ]
+        }),
+    }
 }
 
 #[cfg(test)]
