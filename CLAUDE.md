@@ -9,33 +9,49 @@ Architecture, layering rules, IPC conventions, error handling and UI rules live 
 
 What follows is only what `AGENTS.md` does not cover.
 
+## This repository is mid-port
+
+The agent core is being ported here from Alfa Atlas
+(`/Users/eugene/Downloads/docflow-tauri/docflow`) one feature at a time.
+[`docs/06-port-plan.md`](docs/06-port-plan.md) is the running checklist: what is in,
+what is next, and — for each ported module — what had to change and what must not be
+lost. Read it before adding backend code, and update it when a feature lands.
+
+Until the port reaches stage 3, `src/mock/data.ts` stands in for the backend and there
+are no `#[tauri::command]`s.
+
 ## Tests
 
 Frontend tests run on **Bun's own runner** (not vitest/jest), from `src/__tests__/`:
 
 ```bash
-bun test                                    # all frontend tests (~135 files)
-bun test src/__tests__/useGitWorkflow.test.ts   # one file
-bun test -t "conflict"                      # one test by name pattern
+bun test                                  # all frontend tests
+bun test src/__tests__/Dropdown.test.tsx  # one file
+bun test -t "Escape"                      # one test by name pattern
 ```
 
 `bunfig.toml` preloads `src/__tests__/setup/happydom.ts`, which registers the DOM
 globals and auto-unmounts after each test. A test that renders components works
 only through `bun test` — running the file with `bun run` gives it no DOM.
+`tsconfig.json` excludes `src/__tests__/**`: Bun type-checks those itself, and `tsc`
+does not know `bun:test`.
 
-Rust tests are inline `#[cfg(test)] mod tests` blocks (~150 of them) plus
-`services/tests_asciidoc_coordinator.rs`:
+Rust tests are inline `#[cfg(test)] mod tests` blocks, ported together with the code
+they cover:
 
 ```bash
-cd src-tauri && cargo test                  # all
-cd src-tauri && cargo test git_ops          # by name substring
+cd src-tauri && cargo test              # all
+cd src-tauri && cargo test resolve      # by name substring
 ```
 
 ## Checks before done
 
 ```bash
-bun run tsc --noEmit
-cd src-tauri && cargo check
+bun run tsc --noEmit && bun test
+```
+
+```bash
+cd src-tauri && cargo check && cargo test
 ```
 
 ## Dev server
@@ -49,10 +65,7 @@ picking another, and `tauri dev` then fails with a blank window.
 
 ## Build notes
 
-- `scripts/clean-build-cache.sh` reclaims Rust target space; `scripts/build-embedding-model.py`
-  prepares the local embedding model.
-
-## Where things are documented
-
-| Path | Contents |
-| `app.config.json` | Version and help links surfaced in the app UI |
+- `scripts/clean-build-cache.sh` reclaims Rust target space.
+- `scripts/embedding-model.md` describes the bundled local embedding model. Neither the
+  model nor its build script is in this repository yet — both arrive with the index
+  layer (stage 5 of the port plan).

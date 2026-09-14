@@ -1,0 +1,3 @@
+[test]
+# Gives `bun test` a DOM. See the preloaded file for why.
+preload = ["./src/__tests__/setup/happydom.ts"]
