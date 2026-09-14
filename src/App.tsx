@@ -7,19 +7,19 @@ import { Modal } from "./components/Modal";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
+import { useAgentTurn } from "./hooks/useAgentTurn";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
+import { useWorkspace } from "./hooks/useWorkspace";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
-import type { AsideTab, ChatSummary, Session, Turn } from "./types";
+import type { AsideTab, ChatSummary } from "./types";
 import "./App.css";
 
-// Nothing is wired to the backend yet. These are the seams: each one becomes a
-// hook calling a typed wrapper from src/lib/ once the command behind it exists.
-const session: Session | null = null;
+// The chat list waits on the store that would hold it (stage 3, F-3.8); the
+// conversation itself is live.
 const chats: ChatSummary[] = [];
-const turns: Turn[] = [];
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
 // titlebar contract, driven explicitly so clicks on the controls stay clicks.
@@ -38,7 +38,11 @@ export default function App() {
   const [tab, setTab] = useState<AsideTab>("changes");
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openFolder, setOpenFolder] = useState(false);
+  const [folderPath, setFolderPath] = useState("");
   const toast = useToast();
+  const workspace = useWorkspace();
+  const agent = useAgentTurn();
   const theme = useTheme();
   const panels = usePanelSizes({
     sidebar: {
@@ -63,7 +67,26 @@ export default function App() {
     setAsideCollapsed(false);
   };
 
-  const newChat = () => toast.show("Starting a chat is not wired yet");
+  // Nothing to tell the backend: it keeps no conversation of its own, so
+  // forgetting this one here is the whole of starting over.
+  const newChat = () => agent.reset();
+
+  const send = (text: string) => {
+    if (!workspace.path) {
+      setOpenFolder(true);
+      return;
+    }
+    agent.send(text);
+  };
+
+  const chooseFolder = async () => {
+    if (await workspace.open(folderPath)) {
+      setOpenFolder(false);
+      setFolderPath("");
+    } else if (workspace.error) {
+      toast.show(workspace.error);
+    }
+  };
 
   return (
     <div
@@ -78,14 +101,14 @@ export default function App() {
       <div className="titlebar" onMouseDown={dragOrMaximize}>
         <WindowControls />
         <span className="titlebar-title">
-          atlas-cli{session && <span> · {session.repo}</span>}
+          atlas-cli{workspace.path && <span> · {workspace.path.split("/").pop()}</span>}
         </span>
       </div>
 
       <div className="body">
         <Sidebar
           chats={chats}
-          repo={session?.repo ?? null}
+          repo={workspace.path}
           activeChat={activeChat}
           onSelectChat={setActiveChat}
           onNewChat={newChat}
@@ -102,13 +125,19 @@ export default function App() {
 
         <main className="main">
           <ChatPanel
-            session={session}
-            turns={turns}
-            onPickBranch={() => toast.show("Branch picker is not wired yet")}
-            onOpenRepo={() => toast.show("Opening a repository is not wired yet")}
+            workspace={workspace.path}
+            turn={agent.turn}
+            usage={agent.turn.usage}
+            onDecide={agent.decide}
+            onOpenRepo={() => setOpenFolder(true)}
             onNewChat={newChat}
           />
-          <Composer onNotify={toast.show} />
+          <Composer
+            onSend={send}
+            onStop={agent.cancel}
+            running={agent.turn.status === "running"}
+            onNotify={toast.show}
+          />
         </main>
 
         <PanelResizeHandle
@@ -167,6 +196,41 @@ export default function App() {
           </div>
         </div>
         <p className="modal-note">Settings are read-only until the backend commands land.</p>
+      </Modal>
+
+      <Modal
+        title="Open folder"
+        open={openFolder}
+        onClose={() => setOpenFolder(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => setOpenFolder(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" type="button" onClick={chooseFolder}>
+              Open
+            </button>
+          </>
+        }
+      >
+        <div className="modal-field">
+          <label>Folder</label>
+          {/* A typed path until the file-dialog plugin lands: the app draws its
+              own dialogs, and a native `prompt()` would arrive looking like a
+              different program. */}
+          <input
+            type="text"
+            value={folderPath}
+            placeholder="/path/to/project"
+            autoFocus
+            onChange={(e) => setFolderPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && chooseFolder()}
+          />
+        </div>
+        <p className="modal-note">
+          The agent reads and writes inside this folder. A command it runs is not
+          confined to it — that is what the approval prompts are for.
+        </p>
       </Modal>
 
       <Toast message={toast.message} />

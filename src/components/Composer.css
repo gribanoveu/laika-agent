@@ -47,3 +47,13 @@
   background: var(--bg-hover);
   color: var(--accent);
 }
+
+/* The send button while a turn runs. Same place, same size — only stopping is
+   worth doing there, and a send button that does nothing is worse than none. */
+.composer .send.stop {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.composer .send.stop:hover {
+  background: var(--bg-hover);
+}

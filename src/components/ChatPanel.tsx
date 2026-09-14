@@ -1,140 +1,250 @@
 import { useState } from "react";
-import { ChevronRight, FileText, GitBranch, Pencil, Search, TerminalSquare } from "lucide-react";
+import {
+  ChevronRight,
+  FileText,
+  FolderTree,
+  GitBranch,
+  ListTodo,
+  Pencil,
+  Search,
+  Terminal,
+  TerminalSquare,
+  Trash2,
+} from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
-import { isApproval, type Approval, type Session, type ToolCall, type Turn } from "../types";
+import { describeTool } from "../lib/describeTool";
+import type { Block, TurnState } from "../lib/chatTurnReducer";
+import type { ChatUsage, ToolCallDecision } from "../lib/chat";
 import "./ChatPanel.css";
 
-const TOOL_ICON = {
+const TOOL_ICON: Record<string, typeof FileText> = {
   Read: FileText,
   Grep: Search,
+  List: FolderTree,
+  Write: Pencil,
   Edit: Pencil,
+  Delete: Trash2,
+  Mkdir: FolderTree,
+  Move: FolderTree,
+  Todo: ListTodo,
   Bash: TerminalSquare,
-} as const;
+  Status: GitBranch,
+  Diff: GitBranch,
+  Blame: GitBranch,
+};
 
-const compact = (n: number) => `${Math.round(n / 1000)}k`;
+const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
 
-function ToolRow({ call }: { call: ToolCall }) {
+function ToolRow({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const [open, setOpen] = useState(false);
-  const Icon = TOOL_ICON[call.name];
+  const shown = describeTool(block);
+  const Icon = TOOL_ICON[shown.name] ?? Terminal;
+
   return (
-    <div className={`tool-item${open ? " open" : ""}`}>
-      <button className="tool" type="button" onClick={() => setOpen((v) => !v)}>
+    <div className={`tool-item${open ? " open" : ""} ${block.status}`}>
+      <button
+        className="tool"
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={!shown.detail}
+      >
         <span className="ico">
           <Icon size={13} />
         </span>
-        <span className="name">{call.name}</span>
-        <span className="arg">{call.arg}</span>
-        {call.meta && <span className="meta">{call.meta}</span>}
-        {call.stat && (
-          <span className="meta mono">
-            <span className="add">+{call.stat.add}</span>{" "}
-            <span className={call.stat.del ? "del" : "zero"}>-{call.stat.del}</span>
-          </span>
-        )}
-        <ChevronRight className="chev" size={12} />
+        <span className="name">{shown.name}</span>
+        <span className="arg">{shown.arg}</span>
+        {shown.meta && <span className="meta">{shown.meta}</span>}
+        {shown.detail && <ChevronRight className="chev" size={12} />}
       </button>
-      {open && <pre className="tool-detail">{call.detail}</pre>}
+      {open && shown.detail && <pre className="tool-detail">{shown.detail}</pre>}
     </div>
   );
 }
 
-function ApprovalCard({ approval }: { approval: Approval }) {
+function ApprovalCard({
+  block,
+  onDecide,
+}: {
+  block: Extract<Block, { kind: "approval" }>;
+  onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const asked = block.calls.filter((call) => call.requiresConfirmation);
+  const answer = (approved: boolean, always: string[] = []) =>
+    onDecide(
+      asked.map((call) => ({
+        id: call.id,
+        approved,
+        reason: approved || !reason.trim() ? null : reason.trim(),
+      })),
+      always,
+    );
+
   return (
-    <div className={`approval-card${approval.approved ? " approved" : ""}`}>
+    <div className="approval-card">
       <div className="approval-label">
-        {approval.approved ? "Approved" : "Approval required"} · {approval.tool}
+        Approval required · {asked.map((call) => describeTool({ ...emptyTool, ...call }).name).join(", ")}
       </div>
-      <div className="approval-cmd">{approval.command}</div>
-      {!approval.approved && (
-        <div className="approval-actions">
-          <button className="btn btn-primary" type="button">
-            Allow
-          </button>
-          <button className="btn btn-ghost" type="button">
-            Deny
-          </button>
+      {asked.map((call) => (
+        <div className="approval-cmd" key={call.id}>
+          {describeTool({ ...emptyTool, ...call }).arg}
         </div>
-      )}
+      ))}
+      <input
+        className="approval-reason"
+        type="text"
+        placeholder="Why not? (optional — the agent is told)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <div className="approval-actions">
+        <button className="btn btn-primary" type="button" onClick={() => answer(true)}>
+          Allow
+        </button>
+        <button
+          className="btn btn-ghost"
+          type="button"
+          onClick={() => answer(true, asked.map((call) => call.name))}
+        >
+          Always
+        </button>
+        <button className="btn btn-ghost" type="button" onClick={() => answer(false)}>
+          Deny
+        </button>
+      </div>
     </div>
   );
+}
+
+/** A pending call has no result yet, and `describeTool` reads the same shape either way. */
+const emptyTool = {
+  kind: "tool" as const,
+  round: 0,
+  status: "running" as const,
+  output: "",
+};
+
+/**
+ * The flat block stream, grouped the way the prototype draws it: a user bubble
+ * opens a turn, and everything until the next one belongs to the agent.
+ */
+function group(blocks: Block[]): { role: "user" | "agent"; blocks: Block[] }[] {
+  const groups: { role: "user" | "agent"; blocks: Block[] }[] = [];
+  for (const block of blocks) {
+    const role = block.kind === "user" || block.kind === "steer" ? "user" : "agent";
+    const last = groups[groups.length - 1];
+    if (!last || last.role !== role || block.kind === "user") {
+      groups.push({ role, blocks: [block] });
+    } else {
+      last.blocks.push(block);
+    }
+  }
+  return groups;
 }
 
 type Props = {
-  session: Session | null;
-  turns: Turn[];
-  onPickBranch: () => void;
+  workspace: string | null;
+  turn: TurnState;
+  usage: ChatUsage | null;
+  onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
   onOpenRepo: () => void;
   onNewChat: () => void;
 };
 
-export function ChatPanel({ session, turns, onPickBranch, onOpenRepo, onNewChat }: Props) {
-  const context = session?.context;
-  const percent = context ? Math.round((context.used / context.limit) * 100) : 0;
+export function ChatPanel({ workspace, turn, usage, onDecide, onOpenRepo, onNewChat }: Props) {
+  const groups = group(turn.blocks);
+  const name = workspace?.split("/").filter(Boolean).pop() ?? null;
 
   return (
     <section className="chat-panel">
       <header className="chat-head">
         <div>
-          <h1>{session?.title ?? "New session"}</h1>
-          {session && (
-            <button className="branch" type="button" title="Switch branch" onClick={onPickBranch}>
+          <h1>{name ?? "New session"}</h1>
+          {workspace && (
+            <span className="branch" title={workspace}>
               <GitBranch size={11} />
-              {session.branch}
-            </button>
+              {workspace}
+            </span>
           )}
         </div>
         <div className="head-right">
-          {session && <time className="head-time">{session.updatedAt}</time>}
-          {context && (
+          {turn.retrying && (
+            <span className="head-time" title="The provider refused; waiting before trying again">
+              retrying in {turn.retrying.delaySeconds}s ({turn.retrying.attempt}/
+              {turn.retrying.maxAttempts})
+            </span>
+          )}
+          {usage && (
             <div
               className="context-meter"
-              title={`Context: ${compact(context.used)} / ${compact(context.limit)}`}
+              title={`Context: ${compact(usage.totalTokens)} tokens in the last request`}
             >
-              <span
-                className="context-ring"
-                role="img"
-                aria-label={`${percent}% context used`}
-                style={{ "--ring-deg": `${percent * 3.6}deg` } as React.CSSProperties}
-              />
               <span className="context-meter-val">
-                <span className="used">{compact(context.used)}</span>
-                <span className="sep">/</span>
-                {compact(context.limit)}
+                <span className="used">{compact(usage.totalTokens)}</span>
               </span>
             </div>
           )}
         </div>
       </header>
 
-      <div className={`thread${turns.length === 0 ? " thread-empty" : ""}`}>
-        {turns.length === 0 ? (
-          <ChatEmptyState session={session} onOpenRepo={onOpenRepo} onNewChat={onNewChat} />
+      <div className={`thread${groups.length === 0 ? " thread-empty" : ""}`}>
+        {groups.length === 0 ? (
+          <ChatEmptyState workspace={workspace} onOpenRepo={onOpenRepo} onNewChat={onNewChat} />
         ) : (
-          turns.map((turn) => (
-            <div className="turn" key={turn.id}>
-              <div className={`role${turn.role === "agent" ? " agent" : ""}`}>
-                {turn.role === "agent" ? "Agent" : "You"}
+          groups.map((turnGroup, index) => (
+            <div className="turn" key={index}>
+              <div className={`role${turnGroup.role === "agent" ? " agent" : ""}`}>
+                {turnGroup.role === "agent" ? "Agent" : "You"}
               </div>
-              {turn.role === "user" ? (
-                <div className="bubble">{turn.text}</div>
-              ) : (
-                <p className="msg">{turn.text}</p>
-              )}
-              {turn.tools && (
-                <div className="tools">
-                  {turn.tools.map((item) =>
-                    isApproval(item) ? (
-                      <ApprovalCard key={item.id} approval={item} />
-                    ) : (
-                      <ToolRow key={item.id} call={item} />
-                    ),
-                  )}
-                </div>
-              )}
+              {turnGroup.blocks.map((block) => renderBlock(block, onDecide))}
             </div>
           ))
         )}
       </div>
     </section>
   );
+}
+
+function renderBlock(
+  block: Block,
+  onDecide: (decisions: ToolCallDecision[], always: string[]) => void,
+) {
+  switch (block.kind) {
+    case "user":
+      return (
+        <div className="bubble" key={block.id}>
+          {block.text}
+        </div>
+      );
+    case "steer":
+      return (
+        <div className="bubble steer" key={block.id} title="Sent while the agent was working">
+          {block.text}
+        </div>
+      );
+    case "message":
+      return (
+        <p className="msg" key={block.id}>
+          {block.text}
+        </p>
+      );
+    case "reasoning":
+      return (
+        <p className="msg reasoning" key={block.id}>
+          {block.text}
+        </p>
+      );
+    case "tool":
+      return (
+        <div className="tools" key={block.id}>
+          <ToolRow block={block} />
+        </div>
+      );
+    case "approval":
+      return (
+        <div className="tools" key={block.id}>
+          <ApprovalCard block={block} onDecide={onDecide} />
+        </div>
+      );
+  }
 }

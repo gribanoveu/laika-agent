@@ -1,32 +1,8 @@
 export type ChatSummary = { id: string; title: string };
 
-export type Session = {
-  repo: string;
-  branch: string;
-  title: string;
-  updatedAt: string;
-  context: { used: number; limit: number };
-};
-
-export type ToolCall = {
-  id: string;
-  name: "Read" | "Grep" | "Edit" | "Bash";
-  arg: string;
-  meta?: string;
-  stat?: { add: number; del: number };
-  detail: string;
-};
-
-export type Approval = { id: string; tool: string; command: string; approved: boolean };
-
-export type Turn = {
-  id: string;
-  role: "user" | "agent";
-  text: string;
-  tools?: (ToolCall | Approval)[];
-};
-
-export const isApproval = (t: ToolCall | Approval): t is Approval => "command" in t;
+// The transcript's own types live in `lib/chatTurnReducer.ts`, beside the code
+// that builds them. What stays here is what the panels around the chat are
+// still drawn from.
 
 export type ChangedFile = { name: string; add: number; del: number };
 

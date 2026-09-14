@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Paperclip, SendHorizontal, ShieldCheck } from "lucide-react";
+import { Paperclip, SendHorizontal, Square, ShieldCheck } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import "./Composer.css";
 
@@ -12,7 +12,15 @@ const MODES = [
 ];
 const MODELS: { value: string }[] = [];
 
-export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
+type Props = {
+  /** Sends the box. While a turn is running the same box steers it instead. */
+  onSend: (text: string) => void;
+  onStop: () => void;
+  running: boolean;
+  onNotify: (msg: string) => void;
+};
+
+export function Composer({ onSend, onStop, running, onNotify }: Props) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState(MODES[0].value);
   const [model, setModel] = useState<string | null>(null);
@@ -27,7 +35,7 @@ export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
 
   const send = () => {
     if (!text.trim()) return;
-    onNotify("Sending is not wired yet");
+    onSend(text);
     setText("");
     requestAnimationFrame(grow);
   };
@@ -37,7 +45,7 @@ export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
       <textarea
         ref={area}
         rows={2}
-        placeholder="Describe you task..."
+        placeholder={running ? "Add something while it works…" : "Describe you task..."}
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -78,9 +86,18 @@ export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
           emptyLabel="No models configured"
           onPick={setModel}
         />
-        <button className="send" type="button" title="Send" onClick={send}>
-          <SendHorizontal size={16} />
-        </button>
+        {/* One button, two jobs: while a turn runs the only thing worth doing
+            with it is stopping — and a send button that does nothing during a
+            turn is worse than no button. */}
+        {running ? (
+          <button className="send stop" type="button" title="Stop" onClick={onStop}>
+            <Square size={14} />
+          </button>
+        ) : (
+          <button className="send" type="button" title="Send" onClick={send}>
+            <SendHorizontal size={16} />
+          </button>
+        )}
       </div>
     </section>
   );
