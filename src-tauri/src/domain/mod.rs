@@ -4,3 +4,4 @@ pub mod llm;
 pub mod turn;
 pub mod settings;
 pub mod llm_retry;
+pub mod command_exec;
