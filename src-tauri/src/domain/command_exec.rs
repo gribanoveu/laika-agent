@@ -69,6 +69,40 @@ impl CommandRequest {
     }
 }
 
+/// Which shell runs the command line, and how it is told to.
+///
+/// A setting rather than a search of `PATH`, for the reason in the module
+/// doc. The defaults are only defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Shell {
+    pub program: String,
+    /// Everything before the command line itself — `["-c"]`, `["/C"]`.
+    pub args: Vec<String>,
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        #[cfg(unix)]
+        {
+            Self {
+                // `sh`, not the user's login shell: a command that works here
+                // works for everyone on the project, which is not true of a
+                // line that quietly depends on someone's zsh functions.
+                program: "/bin/sh".to_string(),
+                args: vec!["-c".to_string()],
+            }
+        }
+        #[cfg(windows)]
+        {
+            Self {
+                program: "cmd.exe".to_string(),
+                args: vec!["/C".to_string()],
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OutputStream {

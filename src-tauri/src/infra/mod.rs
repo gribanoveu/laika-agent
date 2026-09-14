@@ -7,3 +7,4 @@ pub mod app_dir;
 pub mod settings_store;
 pub mod llm_credentials_store;
 pub mod llm_debug_log;
+pub mod process_runner;

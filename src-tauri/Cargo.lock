@@ -248,6 +248,7 @@ dependencies = [
  "http",
  "ignore",
  "keyring",
+ "libc",
  "rand",
  "regex",
  "secrecy",

@@ -1,0 +1,398 @@
+//! Starting a command, reading what it says, and making sure it is dead.
+//!
+//! ## Killing the tree, not the child
+//!
+//! `Child::kill()` signals exactly one process. A shell command is almost never
+//! one process: `cargo test` spawns compilers and test binaries, and
+//! `sh -c 'server & sleep 30'` leaves the server running after the shell it was
+//! started from is gone. A timeout that kills only the direct child therefore
+//! *looks* like it worked — the call returns — while the work it was supposed
+//! to stop keeps running, holding the port, the lock, or the CPU.
+//!
+//! So the child is started in its own process group and the whole group is
+//! signalled. That is what the grandchild test checks, and it is the one test
+//! in this suite that has to wait in real time.
+//!
+//! ## Reading output
+//!
+//! Both streams are read by their own threads, because a command that fills the
+//! pipe it is not being read from blocks forever, and because the model should
+//! see a long build progressing rather than nothing until the end. Output is
+//! read as bytes, not as lines of text: a compiler is free to emit a byte
+//! sequence that is not UTF-8, and a reader that errors on it would lose the
+//! whole run over one character.
+
+use std::io::Read;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::domain::command_exec::{
+    CommandError, CommandEvent, CommandOutput, CommandRequest, CommandSink, OutputStream,
+    MAX_OUTPUT_CHARS, Shell, truncate_output,
+};
+
+/// How often the child is checked while waiting. Short enough that a timeout
+/// is accurate to a blink, long enough not to spin a core.
+const POLL: Duration = Duration::from_millis(25);
+
+/// Runs `request` to completion, to its timeout, or to a failure to start.
+///
+/// `cwd` is absolute and must already have been checked against whatever
+/// boundary the caller keeps — this layer does not resolve paths. See
+/// `domain::command_exec`'s module doc for why that boundary is thinner here
+/// than for every other tool.
+pub fn run(
+    shell: &Shell,
+    request: &CommandRequest,
+    cwd: &Path,
+    events: Option<&CommandSink>,
+) -> Result<CommandOutput, CommandError> {
+    if !cwd.is_dir() {
+        return Err(CommandError::Cwd(format!(
+            "{} is not a directory",
+            cwd.display()
+        )));
+    }
+
+    let mut command = Command::new(&shell.program);
+    command
+        .args(&shell.args)
+        .arg(&request.command)
+        .current_dir(cwd)
+        // A command that waits for input nobody is going to type must fail at
+        // once rather than hold the turn until the timeout.
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    set_process_group(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| CommandError::NotStarted(format!("{}: {e}", shell.program)))?;
+
+    let stdout = collect(child.stdout.take(), OutputStream::Stdout, events.cloned());
+    let stderr = collect(child.stderr.take(), OutputStream::Stderr, events.cloned());
+
+    let deadline = Instant::now() + request.timeout();
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Killed even though it exited by itself. A command is allowed
+                // to leave something running — `sh -c 'server & exit 0'` — and
+                // that something inherited the write end of these pipes, so
+                // the readers below would wait for *it* to finish, with the
+                // timeout already behind us. A background process that outlives
+                // its turn is CA-4.5 and is not this tool; here it is a call
+                // that never returns.
+                kill_tree(&mut child);
+                break Some(status);
+            }
+            Ok(None) => {}
+            Err(e) => return Err(CommandError::Io(e.to_string())),
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            kill_tree(&mut child);
+            // Reaped so the process does not linger as a zombie; whatever it
+            // exited with is not an answer to anything now.
+            let _ = child.wait();
+            break None;
+        }
+        thread::sleep(POLL);
+    };
+
+    // After the kill either way, so the readers see EOF and finish instead of
+    // holding the call open for as long as whatever inherited the pipe runs.
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+
+    let (stdout, stdout_cut) = truncate_output(&stdout, MAX_OUTPUT_CHARS);
+    let (stderr, stderr_cut) = truncate_output(&stderr, MAX_OUTPUT_CHARS);
+
+    Ok(CommandOutput {
+        stdout,
+        stderr,
+        exit_code: status.and_then(|s| s.code()),
+        timed_out,
+        truncated: stdout_cut || stderr_cut,
+    })
+}
+
+/// Reads one stream to EOF on its own thread, reporting as it goes.
+fn collect(
+    pipe: Option<impl Read + Send + 'static>,
+    stream: OutputStream,
+    events: Option<CommandSink>,
+) -> thread::JoinHandle<String> {
+    thread::spawn(move || {
+        let Some(mut pipe) = pipe else {
+            return String::new();
+        };
+        let collected = Arc::new(Mutex::new(String::new()));
+        let mut buffer = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    // Lossy on purpose: a chunk boundary can fall inside a
+                    // multi-byte character, and losing one character is better
+                    // than losing the run.
+                    let chunk = String::from_utf8_lossy(&buffer[..n]).into_owned();
+                    collected.lock().expect("not shared across a panic").push_str(&chunk);
+                    if let Some(events) = &events {
+                        events(CommandEvent { stream, chunk });
+                    }
+                }
+            }
+        }
+        let out = collected.lock().expect("not shared across a panic").clone();
+        out
+    })
+}
+
+#[cfg(unix)]
+fn set_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // 0 means "a new group led by the child", so its own children join it and
+    // one signal reaches all of them.
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn set_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn kill_tree(child: &mut Child) {
+    // Negative pid addresses the group. The child leads its own group (see
+    // `set_process_group`), so this is the group and nothing outside it.
+    let pid = child.id() as i32;
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_tree(child: &mut Child) {
+    // `taskkill /T` walks the process tree at the moment it runs, so a
+    // grandchild whose parent has already exited is not found — a job object
+    // would catch those too. Written this way deliberately: an untested
+    // `windows-sys` job object is a worse answer than a documented ceiling,
+    // and this is the upgrade path when Windows is a supported target
+    // (05-gaps §5.4).
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::temp_dir;
+
+    fn ask(command: &str, timeout_seconds: Option<u32>) -> CommandRequest {
+        CommandRequest {
+            command: command.to_string(),
+            cwd: None,
+            timeout_seconds,
+        }
+    }
+
+    fn run_in(dir: &Path, command: &str) -> CommandOutput {
+        run(&Shell::default(), &ask(command, Some(10)), dir, None).expect("runs")
+    }
+
+    #[test]
+    fn a_command_reports_its_output_and_its_code() {
+        let dir = temp_dir("run-basic");
+        let out = run_in(&dir, "echo hello");
+
+        assert_eq!(out.stdout.trim(), "hello");
+        assert_eq!(out.exit_code, Some(0));
+        assert!(out.succeeded());
+        assert!(!out.timed_out);
+    }
+
+    /// A command that started and failed is a result, not an error: the
+    /// non-zero code is the answer the model asked for.
+    #[test]
+    fn a_failing_command_is_a_result() {
+        let out = run_in(&temp_dir("run-failing"), "exit 3");
+        assert_eq!(out.exit_code, Some(3));
+        assert!(!out.succeeded());
+    }
+
+    #[test]
+    fn the_two_streams_stay_apart() {
+        let out = run_in(&temp_dir("run-streams"), "echo out; echo err >&2");
+        assert_eq!(out.stdout.trim(), "out");
+        assert_eq!(out.stderr.trim(), "err");
+    }
+
+    #[test]
+    fn the_command_runs_where_it_was_told_to() {
+        let dir = temp_dir("run-cwd");
+        std::fs::write(dir.join("marker.txt"), "x").unwrap();
+        let out = run_in(&dir, "ls");
+        assert!(out.stdout.contains("marker.txt"), "{}", out.stdout);
+    }
+
+    #[test]
+    fn a_missing_directory_is_refused_before_anything_starts() {
+        let missing = temp_dir("run-cwd-missing").join("gone");
+        let err = run(&Shell::default(), &ask("echo hi", None), &missing, None)
+            .expect_err("no such directory");
+        assert!(matches!(err, CommandError::Cwd(_)), "{err}");
+    }
+
+    #[test]
+    fn a_shell_that_does_not_exist_says_so() {
+        let shell = Shell {
+            program: "/nonexistent/shell".to_string(),
+            args: vec!["-c".to_string()],
+        };
+        let err = run(&shell, &ask("echo hi", None), &temp_dir("run-no-shell"), None)
+            .expect_err("no such shell");
+        assert!(matches!(err, CommandError::NotStarted(_)), "{err}");
+    }
+
+    /// Nothing is ever going to type an answer. Waiting for one until the
+    /// timeout wastes the turn on a command that can only fail.
+    #[test]
+    fn a_command_waiting_for_input_ends_at_once() {
+        let before = Instant::now();
+        // `&&`, not `;`: with stdin closed `read` fails, and what is under
+        // test is that it fails at once instead of waiting for a line.
+        let out = run_in(&temp_dir("run-stdin"), "read line && echo \"got $line\"");
+        assert!(before.elapsed() < Duration::from_secs(5), "it waited");
+        assert!(!out.stdout.contains("got"), "{}", out.stdout);
+    }
+
+    #[test]
+    fn output_is_streamed_as_it_arrives() {
+        let seen: Arc<Mutex<Vec<CommandEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = seen.clone();
+        let sink: CommandSink = Arc::new(move |event| {
+            sink_events.lock().unwrap().push(event);
+        });
+
+        let out = run(
+            &Shell::default(),
+            &ask("echo one; echo two >&2", Some(10)),
+            &temp_dir("run-stream"),
+            Some(&sink),
+        )
+        .expect("runs");
+
+        let seen = seen.lock().unwrap();
+        let text: String = seen.iter().map(|e| e.chunk.clone()).collect();
+        assert!(text.contains("one") && text.contains("two"), "{text}");
+        assert!(
+            seen.iter().any(|e| e.stream == OutputStream::Stderr),
+            "the stream each chunk came from is part of the report"
+        );
+        assert_eq!(out.stdout.trim(), "one");
+    }
+
+    #[test]
+    fn a_flood_of_output_is_cut_and_says_so() {
+        let out = run_in(
+            &temp_dir("run-flood"),
+            "for i in $(seq 1 20000); do echo \"line $i of noise\"; done",
+        );
+        assert!(out.truncated);
+        assert!(out.stdout.contains("omitted"), "the cut is marked");
+        assert!(out.stdout.contains("line 1 of noise"), "the beginning survives");
+        assert!(out.stdout.contains("line 20000 of noise"), "and so does the end");
+    }
+
+    /// Output that is not valid UTF-8 must cost one character, not the run.
+    #[test]
+    fn output_that_is_not_text_does_not_lose_the_run() {
+        let out = run_in(&temp_dir("run-binary"), "printf 'a\\xff\\xfeb'; exit 0");
+        assert_eq!(out.exit_code, Some(0));
+        assert!(out.stdout.contains('a') && out.stdout.contains('b'), "{:?}", out.stdout);
+    }
+
+    #[test]
+    fn a_command_that_runs_too_long_is_stopped() {
+        let out = run(
+            &Shell::default(),
+            &ask("sleep 30", Some(1)),
+            &temp_dir("run-timeout"),
+            None,
+        )
+        .expect("returns rather than hanging");
+
+        assert!(out.timed_out);
+        assert_eq!(out.exit_code, None, "killed, not exited");
+        assert!(!out.succeeded(), "silence is not success");
+    }
+
+    /// A command may exit while something it started is still running, and
+    /// that something inherited the pipes. Waiting for *it* to finish would
+    /// hold the call open long past the timeout — indefinitely, for a daemon —
+    /// and the timeout has already been left behind at that point.
+    ///
+    /// Found by a mutation run: with the group kill removed, the timeout tests
+    /// took thirty seconds instead of one, which is the same mechanism seen
+    /// from the other side.
+    #[test]
+    fn a_command_that_leaves_something_running_still_returns() {
+        let before = Instant::now();
+        let out = run(
+            &Shell::default(),
+            &ask("( sleep 30 ) & exit 0", Some(20)),
+            &temp_dir("run-daemon"),
+            None,
+        )
+        .expect("returns");
+
+        assert!(
+            before.elapsed() < Duration::from_secs(5),
+            "waited {:?} for a process the command left behind",
+            before.elapsed()
+        );
+        assert_eq!(out.exit_code, Some(0));
+        assert!(!out.timed_out, "it exited on its own");
+    }
+
+    /// The reason the process group exists. `Child::kill()` would end the
+    /// shell and leave `sleep` running, and the call would report success at
+    /// stopping something that is still going.
+    ///
+    /// The one test here that waits in real time: the grandchild has to be
+    /// given its chance to write before the absence of the file means
+    /// anything.
+    #[test]
+    fn a_timeout_kills_the_grandchildren_too() {
+        let dir = temp_dir("run-tree");
+        let marker = dir.join("survivor.txt");
+        let command = format!(
+            "( sleep 2; echo alive > {} ) & sleep 30",
+            marker.display()
+        );
+
+        let out = run(
+            &Shell::default(),
+            &ask(&command, Some(1)),
+            &dir,
+            None,
+        )
+        .expect("returns");
+        assert!(out.timed_out);
+
+        thread::sleep(Duration::from_secs(3));
+        assert!(
+            !marker.exists(),
+            "the grandchild outlived the kill and wrote {}",
+            marker.display()
+        );
+    }
+}
