@@ -91,6 +91,11 @@
   overscroll-behavior: contain;
   padding: 16px 18px 24px;
 }
+/* The empty state centres itself in the full height instead of scrolling. */
+.thread-empty {
+  overflow: hidden;
+  padding: 0;
+}
 
 .turn {
   margin-bottom: 18px;

@@ -1,12 +1,11 @@
 import { useState } from "react";
 import type { ChangedFile } from "../types";
-import { UNSTAGED } from "../mock/data";
 
 const byName = (a: ChangedFile, b: ChangedFile) => a.name.localeCompare(b.name);
 
-/** Staging area state. Swap the initial list for a git status wrapper later. */
+/** Staging area state. Seed both lists from a git status wrapper once it exists. */
 export function useStaging() {
-  const [unstaged, setUnstaged] = useState<ChangedFile[]>(UNSTAGED);
+  const [unstaged, setUnstaged] = useState<ChangedFile[]>([]);
   const [staged, setStaged] = useState<ChangedFile[]>([]);
 
   const move = (name: string, from: ChangedFile[], to: ChangedFile[]) => {
@@ -36,9 +35,6 @@ export function useStaging() {
     stageAll() {
       setStaged((s) => [...s, ...unstaged].sort(byName));
       setUnstaged([]);
-    },
-    clearStaged() {
-      setStaged([]);
     },
   };
 }

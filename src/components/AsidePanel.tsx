@@ -9,18 +9,23 @@ import {
 } from "lucide-react";
 import { ContextPanel } from "./ContextPanel";
 import { ItemList } from "./ItemList";
-import { LAST_COMMAND, MCP_SERVERS, RULES, SKILLS, WORKSPACE_FILES } from "../mock/data";
-import type { AsideTab } from "../types";
+import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
-const TABS: { id: AsideTab; label: string; icon: typeof Table2; badge?: "ok" | "warn" }[] = [
+const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
   { id: "context", label: "Context", icon: Table2 },
-  { id: "mcp", label: "MCP", icon: Plug, badge: "warn" },
+  { id: "mcp", label: "MCP", icon: Plug },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "rules", label: "Rules", icon: BookText },
   { id: "files", label: "Files", icon: FolderClosed },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
 ];
+
+// Each list is filled by its own command wrapper once that command exists.
+const MCP_SERVERS: PanelItem[] = [];
+const SKILLS: PanelItem[] = [];
+const RULES: PanelItem[] = [];
+const WORKSPACE_FILES: string[] = [];
 
 type Props = {
   tab: AsideTab;
@@ -37,7 +42,7 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
         <button
           className="aside-toggle"
           type="button"
-          title="Свернуть панель"
+          title="Collapse panel"
           onClick={onToggleCollapse}
         >
           <PanelRight size={15} />
@@ -59,7 +64,7 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
       </div>
 
       <div className="aside-rail" aria-hidden={!collapsed}>
-        {TABS.map(({ id, label, icon: Icon, badge }) => (
+        {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -71,7 +76,6 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
             }}
           >
             <Icon size={16} />
-            {badge && <span className={`badge ${badge}`} />}
           </button>
         ))}
       </div>
@@ -84,6 +88,7 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
               label="Connected servers"
               count={String(MCP_SERVERS.length)}
               items={MCP_SERVERS}
+              emptyLabel="No MCP servers connected."
               addLabel="Add MCP server"
               onAdd={() => onNotify("MCP setup is not wired yet")}
             />
@@ -91,26 +96,36 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
           {tab === "skills" && (
             <ItemList
               label="Active skills"
-              count={`${SKILLS.filter((s) => s.enabled).length} / 12`}
+              count={String(SKILLS.length)}
               items={SKILLS}
+              emptyLabel="No skills installed."
               addLabel="Install skill"
               onAdd={() => onNotify("Skill install is not wired yet")}
             />
           )}
           {tab === "rules" && (
-            <ItemList label="Project rules" count={String(RULES.length)} items={RULES} />
+            <ItemList
+              label="Project rules"
+              count={String(RULES.length)}
+              items={RULES}
+              emptyLabel="No rule files found."
+            />
           )}
           {tab === "files" && (
             <div className="panel-section">
               <div className="section-label">
                 <span>Workspace</span>
-                <span className="count">847 files</span>
+                <span className="count">{WORKSPACE_FILES.length}</span>
               </div>
-              {WORKSPACE_FILES.map((path) => (
-                <div className="file" key={path}>
-                  <span>{path}</span>
-                </div>
-              ))}
+              {WORKSPACE_FILES.length === 0 ? (
+                <div className="empty">No workspace indexed.</div>
+              ) : (
+                WORKSPACE_FILES.map((path) => (
+                  <div className="file" key={path}>
+                    <span>{path}</span>
+                  </div>
+                ))
+              )}
             </div>
           )}
           {tab === "terminal" && (
@@ -118,13 +133,7 @@ export function AsidePanel({ tab, onTabChange, collapsed, onToggleCollapse, onNo
               <div className="section-label">
                 <span>Last command</span>
               </div>
-              <div className="terminal-out">
-                <span className="cmd">$ {LAST_COMMAND.cmd}</span>
-                {LAST_COMMAND.lines.map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-                <div className="ok">{LAST_COMMAND.result}</div>
-              </div>
+              <div className="empty">Nothing has run yet.</div>
             </div>
           )}
         </div>

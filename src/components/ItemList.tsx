@@ -71,17 +71,19 @@ type Props = {
   label: string;
   count: string;
   items: PanelItem[];
+  emptyLabel: string;
   addLabel?: string;
   onAdd?: () => void;
 };
 
-export function ItemList({ label, count, items, addLabel, onAdd }: Props) {
+export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd }: Props) {
   return (
     <div className="panel-section">
       <div className="section-label">
         <span>{label}</span>
         <span className="count">{count}</span>
       </div>
+      {items.length === 0 && <div className="empty">{emptyLabel}</div>}
       {items.map((item) => (
         <Item key={item.id} item={item} />
       ))}

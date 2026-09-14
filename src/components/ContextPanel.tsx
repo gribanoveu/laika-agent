@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
-import { DIFFS, GENERATED_COMMIT_MESSAGE, SESSION } from "../mock/data";
 import type { ChangedFile } from "../types";
 import "./ContextPanel.css";
 
@@ -40,32 +39,10 @@ function StageRow({
 }
 
 export function ContextPanel({ onNotify }: Props) {
-  const { unstaged, staged, stage, unstage, stageAll, clearStaged } = useStaging();
-  const [diff, setDiff] = useState<string | null>(null);
+  const { unstaged, staged, stage, unstage, stageAll } = useStaging();
   const [message, setMessage] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [committed, setCommitted] = useState<{ hash: string; subject: string } | null>(null);
 
   const canCommit = staged.length > 0 && message.trim().length > 0;
-
-  const generate = () => {
-    setGenerating(true);
-    setCommitted(null);
-    // ponytail: fake latency stands in for the LLM call; replace with the invoke wrapper.
-    setTimeout(() => {
-      setMessage(GENERATED_COMMIT_MESSAGE);
-      setGenerating(false);
-    }, 700);
-  };
-
-  const commit = () => {
-    if (!canCommit) return;
-    setCommitted({ hash: "a3f9c2e", subject: message.trim().split("\n")[0] });
-    clearStaged();
-    setMessage("");
-    setDiff(null);
-    onNotify("Commit created");
-  };
 
   return (
     <>
@@ -84,27 +61,10 @@ export function ContextPanel({ onNotify }: Props) {
             file={f}
             staged={false}
             onToggle={() => stage(f.name)}
-            onShowDiff={() => setDiff(f.name)}
+            onShowDiff={() => onNotify("Diff view is not wired yet")}
           />
         ))}
         {unstaged.length === 0 && <div className="stage-empty">No unstaged changes</div>}
-        {diff && DIFFS[diff] && (
-          <div>
-            <div className="diff-preview-head">
-              <span className="diff-preview-name">{diff}</span>
-              <button className="link-btn" type="button" onClick={() => setDiff(null)}>
-                Close
-              </button>
-            </div>
-            <pre className="diff-preview">
-              {DIFFS[diff].split("\n").map((line, i) => (
-                <div key={i} className={line.startsWith("+") ? "ln-add" : line.startsWith("-") ? "ln-del" : ""}>
-                  {line}
-                </div>
-              ))}
-            </pre>
-          </div>
-        )}
       </div>
 
       <div className="panel-section">
@@ -118,7 +78,7 @@ export function ContextPanel({ onNotify }: Props) {
             file={f}
             staged
             onToggle={() => unstage(f.name)}
-            onShowDiff={() => setDiff(f.name)}
+            onShowDiff={() => onNotify("Diff view is not wired yet")}
           />
         ))}
         {staged.length === 0 && <div className="stage-empty">Stage files to commit</div>}
@@ -137,31 +97,22 @@ export function ContextPanel({ onNotify }: Props) {
         />
         <div className="commit-actions">
           <button
-            className={`btn btn-ghost${generating ? " loading" : ""}`}
+            className="btn btn-ghost"
             type="button"
-            disabled={staged.length === 0 || generating}
-            onClick={generate}
+            disabled={staged.length === 0}
+            onClick={() => onNotify("Message generation is not wired yet")}
           >
             <Sparkles size={13} />
             Generate description
           </button>
-          <button className="btn btn-primary" type="button" disabled={!canCommit} onClick={commit}>
+          <button
+            className="btn btn-primary"
+            type="button"
+            disabled={!canCommit}
+            onClick={() => onNotify("Commit is not wired yet")}
+          >
             Commit
           </button>
-        </div>
-        <div className="commit-status">
-          {committed && (
-            <>
-              Committed {committed.hash} · {committed.subject}
-              <button
-                className="push-link"
-                type="button"
-                onClick={() => onNotify(`Pushed to origin/${SESSION.branch}`)}
-              >
-                Push
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -170,7 +121,7 @@ export function ContextPanel({ onNotify }: Props) {
           <span>Session context</span>
         </div>
         <div className="empty" style={{ paddingTop: 0 }}>
-          Branch <code className="mono">{SESSION.branch}</code>, repo root indexed.
+          No repository open.
         </div>
       </div>
     </>

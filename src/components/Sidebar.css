@@ -117,6 +117,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding: 10px 0;
 }
 
 .user-wrap {
@@ -148,7 +149,16 @@
   flex: 1;
   text-align: left;
 }
-.window.collapsed .user .meta {
+/* Collapsed rail: the avatar button becomes a square icon like the ones above it. */
+.window.collapsed .user {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+.window.collapsed .user .meta,
+.window.collapsed .user .chev {
   display: none;
 }
 .user .chev {

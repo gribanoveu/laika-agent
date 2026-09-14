@@ -1,9 +1,30 @@
 import { useState } from "react";
-import { ONBOARDING } from "../mock/data";
 import type { AsideTab } from "../types";
 import "./GettingStarted.css";
 
 const KEY = "atlas-cli-getting-started-skipped";
+
+// Onboarding copy is UI text, not backend data — it lives with the component.
+const CARDS: { title: string; text: string; action: string; tab: AsideTab | null }[] = [
+  {
+    title: "Configure git",
+    text: "Настройте git, чтобы коммитить изменения из чата.",
+    action: "Configure git →",
+    tab: null,
+  },
+  {
+    title: "Connect MCP",
+    text: "Подключите MCP-серверы для docs, git и автоматизации.",
+    action: "Open MCP settings →",
+    tab: "mcp",
+  },
+  {
+    title: "Stage and commit",
+    text: "Перенесите файлы в staged и создайте коммит в правой панели.",
+    action: "Open Context panel →",
+    tab: "context",
+  },
+];
 
 export function GettingStarted({ onAction }: { onAction: (tab: AsideTab) => void }) {
   const [index, setIndex] = useState(0);
@@ -11,8 +32,8 @@ export function GettingStarted({ onAction }: { onAction: (tab: AsideTab) => void
 
   if (skipped) return null;
 
-  const card = ONBOARDING[index];
-  const last = index === ONBOARDING.length - 1;
+  const card = CARDS[index];
+  const last = index === CARDS.length - 1;
 
   const dismiss = () => {
     setSkipped(true);
@@ -40,7 +61,7 @@ export function GettingStarted({ onAction }: { onAction: (tab: AsideTab) => void
       </div>
       <div className="gs-foot">
         <div className="gs-dots">
-          {ONBOARDING.map((_, i) => (
+          {CARDS.map((_, i) => (
             <button
               key={i}
               type="button"

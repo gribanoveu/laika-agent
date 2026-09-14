@@ -1,13 +1,21 @@
 import { useRef, useState } from "react";
 import { Paperclip, SendHorizontal, ShieldCheck } from "lucide-react";
 import { Dropdown } from "./Dropdown";
-import { MODELS, MODES } from "../mock/data";
 import "./Composer.css";
+
+// Permission modes are UI behaviour, not backend data. Models come from the
+// provider config once that command exists — empty until then.
+const MODES = [
+  { value: "Auto", hint: "default" },
+  { value: "Ask", hint: "confirm" },
+  { value: "Manual", hint: "step" },
+];
+const MODELS: { value: string }[] = [];
 
 export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<string>(MODES[0]);
-  const [model, setModel] = useState(MODELS[0]);
+  const [mode, setMode] = useState(MODES[0].value);
+  const [model, setModel] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
 
   const grow = () => {
@@ -43,11 +51,11 @@ export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
         }}
       />
       <div className="composer-bar">
-        <button className="iconbtn" type="button" title="Прикрепить">
+        <button className="iconbtn" type="button" title="Attach">
           <Paperclip size={15} />
         </button>
         <Dropdown
-          title="Режим разрешений"
+          title="Permission mode"
           label={
             <span className="mode-label">
               <ShieldCheck size={13} />
@@ -55,25 +63,22 @@ export function Composer({ onNotify }: { onNotify: (msg: string) => void }) {
             </span>
           }
           value={mode}
-          options={[
-            { value: "Auto", hint: "default" },
-            { value: "Ask", hint: "confirm" },
-            { value: "Manual", hint: "step" },
-          ]}
+          options={MODES}
           onPick={(v) => {
             setMode(v);
             if (v === "Ask") onNotify("Ask mode — agent will request approval");
           }}
         />
         <Dropdown
-          title="Модель"
+          title="Model"
           mono
-          label={model}
-          value={model}
-          options={MODELS.map((value) => ({ value }))}
+          label={model ?? "no model"}
+          value={model ?? ""}
+          options={MODELS}
+          emptyLabel="No models configured"
           onPick={setModel}
         />
-        <button className="send" type="button" title="Отправить" onClick={send}>
+        <button className="send" type="button" title="Send" onClick={send}>
           <SendHorizontal size={16} />
         </button>
       </div>

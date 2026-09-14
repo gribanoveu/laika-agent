@@ -8,9 +8,14 @@ import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
-import { CHATS, SESSION } from "./mock/data";
-import type { AsideTab } from "./types";
+import type { AsideTab, ChatSummary, Session, Turn } from "./types";
 import "./App.css";
+
+// Nothing is wired to the backend yet. These are the seams: each one becomes a
+// hook calling a typed wrapper from src/lib/ once the command behind it exists.
+const session: Session | null = null;
+const chats: ChatSummary[] = [];
+const turns: Turn[] = [];
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
 // titlebar contract, driven explicitly so clicks on the controls stay clicks.
@@ -27,7 +32,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("context");
-  const [activeChat, setActiveChat] = useState(CHATS[0].id);
+  const [activeChat, setActiveChat] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const toast = useToast();
 
@@ -36,6 +41,8 @@ export default function App() {
     setAsideCollapsed(false);
   };
 
+  const newChat = () => toast.show("Starting a chat is not wired yet");
+
   return (
     <div
       className={`window${collapsed ? " collapsed" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}
@@ -43,21 +50,30 @@ export default function App() {
       <div className="titlebar" onMouseDown={dragOrMaximize}>
         <WindowControls />
         <span className="titlebar-title">
-          atlas-cli · <span>{SESSION.repo}</span>
+          atlas-cli{session && <span> · {session.repo}</span>}
         </span>
       </div>
 
       <div className="body">
         <Sidebar
+          chats={chats}
+          repo={session?.repo ?? null}
           activeChat={activeChat}
           onSelectChat={setActiveChat}
+          onNewChat={newChat}
           onToggleCollapse={() => setCollapsed((v) => !v)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOnboardingAction={openTab}
         />
 
         <main className="main">
-          <ChatPanel onPickBranch={() => toast.show("Branch picker is not wired yet")} />
+          <ChatPanel
+            session={session}
+            turns={turns}
+            onPickBranch={() => toast.show("Branch picker is not wired yet")}
+            onOpenRepo={() => toast.show("Opening a repository is not wired yet")}
+            onNewChat={newChat}
+          />
           <Composer onNotify={toast.show} />
         </main>
 
@@ -82,17 +98,17 @@ export default function App() {
       >
         <div className="modal-field">
           <label>Git user.name</label>
-          <input type="text" value="Eugene" readOnly />
+          <input type="text" value="" placeholder="Not configured" readOnly />
         </div>
         <div className="modal-field">
           <label>Git user.email</label>
-          <input type="text" value="eugene@example.com" readOnly />
+          <input type="text" value="" placeholder="Not configured" readOnly />
         </div>
         <div className="modal-field">
           <label>LLM provider</label>
-          <input type="text" value="OpenRouter" readOnly />
+          <input type="text" value="" placeholder="Not configured" readOnly />
         </div>
-        <p className="modal-note">Skeleton — поля появятся после настроек в backend.</p>
+        <p className="modal-note">Settings are read-only until the backend commands land.</p>
       </Modal>
 
       <Toast message={toast.message} />

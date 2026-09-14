@@ -11,10 +11,11 @@ type Props = {
   value: string;
   onPick: (value: string) => void;
   mono?: boolean;
+  emptyLabel?: string;
 };
 
 /** Trigger + role="listbox" menu — the app draws its own dropdowns, never <select>. */
-export function Dropdown({ label, title, options, value, onPick, mono }: Props) {
+export function Dropdown({ label, title, options, value, onPick, mono, emptyLabel }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -49,6 +50,9 @@ export function Dropdown({ label, title, options, value, onPick, mono }: Props) 
       </button>
       {open && (
         <div className="dropdown-menu" role="listbox">
+          {options.length === 0 && (
+            <div className="dropdown-empty">{emptyLabel ?? "Nothing here yet"}</div>
+          )}
           {options.map((opt) => (
             <button
               key={opt.value}

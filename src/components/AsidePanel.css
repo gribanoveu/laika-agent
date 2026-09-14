@@ -113,18 +113,6 @@
   color: var(--accent);
   background: var(--bg-active);
 }
-.rail-btn .badge {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--green);
-}
-.rail-btn .badge.warn {
-  background: var(--amber);
-}
 
 .aside-body {
   flex: 1;
@@ -176,24 +164,6 @@
 }
 .file:hover {
   background: var(--bg-hover);
-}
-
-.terminal-out {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.65;
-  color: var(--text-dim);
-  padding: 8px;
-  background: var(--bg-panel-soft);
-  border-radius: 8px;
-  border: 1px solid var(--border-soft);
-}
-.terminal-out .ok {
-  color: var(--green);
-  margin-top: 8px;
-}
-.terminal-out .cmd {
-  color: var(--accent);
 }
 
 @media (max-width: 960px) {

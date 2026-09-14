@@ -13,21 +13,26 @@ import {
   UserRound,
 } from "lucide-react";
 import { GettingStarted } from "./GettingStarted";
-import { CHATS, SESSION } from "../mock/data";
-import type { AsideTab } from "../types";
+import type { AsideTab, ChatSummary } from "../types";
 import "./Sidebar.css";
 
 type Props = {
-  activeChat: string;
+  chats: ChatSummary[];
+  repo: string | null;
+  activeChat: string | null;
   onSelectChat: (id: string) => void;
+  onNewChat: () => void;
   onToggleCollapse: () => void;
   onOpenSettings: () => void;
   onOnboardingAction: (tab: AsideTab) => void;
 };
 
 export function Sidebar({
+  chats,
+  repo,
   activeChat,
   onSelectChat,
+  onNewChat,
   onToggleCollapse,
   onOpenSettings,
   onOnboardingAction,
@@ -52,34 +57,38 @@ export function Sidebar({
   return (
     <nav className="sidebar">
       <div className="sidebar-top">
-        <button className="newchat" type="button">
+        <button className="newchat" type="button" onClick={onNewChat}>
           <Plus size={14} />
           <span className="label">New chat</span>
         </button>
-        <button className="iconbtn" type="button" title="Сортировка">
+        <button className="iconbtn" type="button" title="Sort">
           <SlidersHorizontal size={15} />
         </button>
-        <button className="iconbtn" type="button" title="Свернуть панель" onClick={onToggleCollapse}>
+        <button className="iconbtn" type="button" title="Collapse panel" onClick={onToggleCollapse}>
           <PanelLeft size={15} />
         </button>
       </div>
 
       <div className="group">
         <div className="group-head">
-          <span>{SESSION.repo}</span>
+          <span>{repo ?? "No workspace"}</span>
           <ChevronUp size={12} />
         </div>
-        {CHATS.map((chat) => (
-          <button
-            key={chat.id}
-            type="button"
-            className={`chat${chat.id === activeChat ? " active" : ""}`}
-            onClick={() => onSelectChat(chat.id)}
-          >
-            <MessageSquare size={14} />
-            <span>{chat.title}</span>
-          </button>
-        ))}
+        {chats.length === 0 ? (
+          <div className="empty">No chats yet.</div>
+        ) : (
+          chats.map((chat) => (
+            <button
+              key={chat.id}
+              type="button"
+              className={`chat${chat.id === activeChat ? " active" : ""}`}
+              onClick={() => onSelectChat(chat.id)}
+            >
+              <MessageSquare size={14} />
+              <span>{chat.title}</span>
+            </button>
+          ))
+        )}
       </div>
 
       <div className="sidebar-bottom">
@@ -93,7 +102,7 @@ export function Sidebar({
             onClick={() => setMenuOpen((v) => !v)}
           >
             <UserRound size={16} />
-            <span className="meta">Eugene</span>
+            <span className="meta">Account</span>
             <ChevronRight className="chev" size={12} />
           </button>
           {menuOpen && (

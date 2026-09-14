@@ -1,5 +1,13 @@
 export type ChatSummary = { id: string; title: string };
 
+export type Session = {
+  repo: string;
+  branch: string;
+  title: string;
+  updatedAt: string;
+  context: { used: number; limit: number };
+};
+
 export type ToolCall = {
   id: string;
   name: "Read" | "Grep" | "Edit" | "Bash";
