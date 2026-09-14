@@ -245,6 +245,7 @@ dependencies = [
  "dirs 7.0.0",
  "git2",
  "globset",
+ "http",
  "ignore",
  "keyring",
  "rand",
@@ -259,6 +260,7 @@ dependencies = [
  "tauri-plugin-opener",
  "thiserror 2.0.20",
  "ureq",
+ "uuid",
  "zeroize",
 ]
 
