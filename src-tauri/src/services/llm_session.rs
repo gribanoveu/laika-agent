@@ -1,0 +1,261 @@
+//! Everything one LLM call needs, resolved in one place: which provider, its
+//! key, a client built from both, and the model to send.
+//!
+//! The sequence is short but has to be identical everywhere — a caller that
+//! resolves the provider but forgets the model pin, or reads the key from the
+//! wrong id, fails in a way that looks like a provider outage.
+
+use std::sync::Arc;
+
+use crate::domain::llm::{LlmError, LlmProvider};
+use crate::domain::settings::{ProviderConfig, SettingsError};
+use crate::infra::{llm_credentials_store, llm_providers, settings_store};
+
+pub struct LlmSession {
+    pub provider: Arc<dyn LlmProvider>,
+    /// Kept for the debug log and, later, rate-limit accounting: both are
+    /// keyed by provider, and the client itself no longer knows which id it
+    /// was built from.
+    pub provider_id: String,
+    pub model: String,
+    /// Read here rather than at each call site so the turn loop cannot use a
+    /// stale copy of the flag mid-turn.
+    pub debug_logging: bool,
+}
+
+/// The session for `provider_id`, or for the active provider when `None`.
+///
+/// Deliberately builds a fresh client per call rather than caching one: a
+/// client is an HTTP agent and a handful of strings, a turn resolves once and
+/// then reuses it for every round, and a cache keyed on the configuration is
+/// the thing that later serves a rotated key from a stale entry.
+pub fn resolve(provider_id: Option<&str>) -> Result<LlmSession, LlmError> {
+    let settings = settings_store::load().map_err(settings_error)?.llm;
+    let config = match provider_id {
+        Some(id) => settings
+            .provider(id)
+            .ok_or_else(|| LlmError::Message(format!("no provider is configured with id \"{id}\"")))?,
+        None => settings
+            .active()
+            .ok_or_else(|| LlmError::Message("no LLM provider is configured".to_string()))?,
+    };
+
+    let api_key = llm_credentials_store::get_api_key(&config.id);
+    let provider: Arc<dyn LlmProvider> = Arc::from(llm_providers::provider_for(config, api_key)?);
+    let model = effective_model(config, provider.as_ref())?;
+
+    Ok(LlmSession {
+        provider,
+        provider_id: config.id.clone(),
+        model,
+        debug_logging: settings.debug_logging,
+    })
+}
+
+/// The model to send: the pin when there is one, otherwise whatever the
+/// provider lists first — which is then written back as the pin.
+///
+/// Writing it back is the point. Without a pin, "the first model" is a
+/// property of the provider's catalogue on the day, so a project's answers
+/// would start coming from a different model without anything having changed
+/// on this side.
+pub fn effective_model(
+    config: &ProviderConfig,
+    provider: &dyn LlmProvider,
+) -> Result<String, LlmError> {
+    if let Some(model) = &config.model {
+        return Ok(model.clone());
+    }
+    let model = provider
+        .list_models()?
+        .into_iter()
+        .next()
+        .map(|m| m.id)
+        .ok_or_else(|| {
+            LlmError::Provider(format!("provider \"{}\" lists no models", config.id))
+        })?;
+    pin_model(&config.id, &model).map_err(settings_error)?;
+    Ok(model)
+}
+
+/// Stores `model` as `provider_id`'s pin, leaving its other fields alone.
+pub fn pin_model(provider_id: &str, model: &str) -> Result<(), SettingsError> {
+    let mut settings = settings_store::load()?;
+    let Some(config) = settings.llm.providers.iter_mut().find(|p| p.id == provider_id) else {
+        // Nothing to pin it to. Adding an entry here would invent a provider
+        // with no endpoint, which every later lookup would then have to
+        // special-case.
+        return Ok(());
+    };
+    config.model = Some(model.to_string());
+    settings_store::save(&settings)
+}
+
+fn settings_error(e: SettingsError) -> LlmError {
+    LlmError::Message(e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::llm::{ChatRequest, ChatResponse, ChatStreamResult, LlmModelInfo};
+    use crate::domain::settings::{AppSettings, LlmSettings};
+    use crate::infra::llm_credentials_store;
+    use crate::testing::with_app_dir;
+
+    /// A provider that answers `list_models` and nothing else — enough for
+    /// everything resolution does without a network.
+    struct Catalogue(Vec<&'static str>);
+
+    impl LlmProvider for Catalogue {
+        fn chat(&self, _: ChatRequest) -> Result<ChatResponse, LlmError> {
+            unreachable!("resolution never sends a completion")
+        }
+
+        fn chat_stream(
+            &self,
+            _: ChatRequest,
+            _: &dyn Fn(&str),
+            _: &dyn Fn(&str),
+            _: &dyn Fn(&str, &str, &str),
+            _: &dyn Fn() -> bool,
+        ) -> Result<ChatStreamResult, LlmError> {
+            unreachable!("resolution never streams")
+        }
+
+        fn list_models(&self) -> Result<Vec<LlmModelInfo>, LlmError> {
+            Ok(self
+                .0
+                .iter()
+                .map(|id| LlmModelInfo { id: id.to_string() })
+                .collect())
+        }
+    }
+
+    fn configure(providers: Vec<ProviderConfig>, active: Option<&str>) {
+        settings_store::save(&AppSettings {
+            llm: LlmSettings {
+                active_provider_id: active.map(|s| s.to_string()),
+                providers,
+                debug_logging: false,
+            },
+        })
+        .unwrap();
+    }
+
+    fn provider(id: &str, model: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            id: id.to_string(),
+            base_url: format!("https://{id}.example/v1"),
+            model: model.map(|s| s.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn nothing_configured_says_so_rather_than_failing_obscurely() {
+        with_app_dir("session-empty", || {
+            let Err(err) = resolve(None) else { panic!("expected an error") };
+            assert!(err.to_string().contains("no LLM provider"), "{err}");
+        });
+    }
+
+    #[test]
+    fn an_unknown_id_names_the_id() {
+        with_app_dir("session-unknown", || {
+            configure(vec![provider("local", Some("qwen"))], None);
+            let Err(err) = resolve(Some("openai")) else { panic!("expected an error") };
+            assert!(err.to_string().contains("openai"), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_configured_provider_without_a_key_does_not_resolve() {
+        with_app_dir("session-keyless", || {
+            configure(vec![provider("local", Some("qwen"))], None);
+            let Err(err) = resolve(None) else { panic!("expected an error") };
+            assert!(err.to_string().contains("API key"), "{err}");
+        });
+    }
+
+    #[test]
+    fn resolution_uses_the_pinned_model_and_the_key_of_that_provider() {
+        with_app_dir("session-resolve", || {
+            configure(
+                vec![provider("local", Some("qwen")), provider("openai", Some("gpt"))],
+                Some("openai"),
+            );
+            llm_credentials_store::save_api_key("openai", "sk-openai").unwrap();
+
+            let session = resolve(None).expect("resolves the active provider");
+            assert_eq!(session.provider_id, "openai");
+            assert_eq!(session.model, "gpt");
+        });
+    }
+
+    #[test]
+    fn the_debug_flag_comes_from_settings() {
+        with_app_dir("session-debug-flag", || {
+            configure(vec![provider("local", Some("qwen"))], None);
+            let mut settings = settings_store::load().unwrap();
+            settings.llm.debug_logging = true;
+            settings_store::save(&settings).unwrap();
+            llm_credentials_store::save_api_key("local", "sk").unwrap();
+
+            assert!(resolve(None).unwrap().debug_logging);
+        });
+    }
+
+    /// Without the write-back, every turn would take whatever the catalogue
+    /// happened to list first that day.
+    #[test]
+    fn an_unpinned_model_is_discovered_once_and_then_pinned() {
+        with_app_dir("session-pin", || {
+            configure(vec![provider("local", None)], None);
+
+            let model = effective_model(&provider("local", None), &Catalogue(vec!["a", "b"]))
+                .expect("discovers a model");
+            assert_eq!(model, "a");
+
+            let stored = settings_store::load().unwrap();
+            assert_eq!(stored.llm.provider("local").unwrap().model.as_deref(), Some("a"));
+        });
+    }
+
+    #[test]
+    fn a_pinned_model_is_used_without_asking_the_provider() {
+        with_app_dir("session-pinned", || {
+            configure(vec![provider("local", Some("qwen"))], None);
+
+            let model =
+                effective_model(&provider("local", Some("qwen")), &Catalogue(vec![])).unwrap();
+            assert_eq!(model, "qwen");
+        });
+    }
+
+    #[test]
+    fn a_provider_with_an_empty_catalogue_is_an_error_not_an_empty_model() {
+        with_app_dir("session-no-models", || {
+            configure(vec![provider("local", None)], None);
+
+            let err = effective_model(&provider("local", None), &Catalogue(vec![]))
+                .expect_err("no models");
+            assert!(err.to_string().contains("no models"), "{err}");
+        });
+    }
+
+    /// Pinning against an id that is not in settings must not conjure an
+    /// entry with no endpoint.
+    #[test]
+    fn pinning_an_unconfigured_provider_changes_nothing() {
+        with_app_dir("session-pin-unknown", || {
+            configure(vec![provider("local", Some("qwen"))], None);
+
+            pin_model("gone", "whatever").unwrap();
+
+            let stored = settings_store::load().unwrap();
+            assert_eq!(stored.llm.providers.len(), 1);
+            assert_eq!(stored.llm.provider("local").unwrap().model.as_deref(), Some("qwen"));
+        });
+    }
+}

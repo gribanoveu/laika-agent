@@ -33,7 +33,6 @@
 //! fresh start.
 
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use aes_gcm::aead::OsRng;
@@ -76,6 +75,14 @@ pub fn resolve() -> Result<MasterKey, String> {
     let key = load_or_create()?;
     *cache = Some(*key);
     Ok(key)
+}
+
+/// A master key that resolves, for a suite that only needs sealed storage to
+/// work. Which keychain a test doubles, and how it misbehaves, stays this
+/// module's own business — see `crate::testing::with_app_dir`.
+#[cfg(test)]
+pub(crate) fn install_working_keychain_for_tests() {
+    tests::install_double(tests::Mode::Working);
 }
 
 fn load_or_create() -> Result<MasterKey, String> {
@@ -200,17 +207,7 @@ fn record(store: KeyStore) {
     }
 }
 
-#[cfg(not(test))]
-fn app_dir() -> Result<PathBuf, String> {
-    dirs::home_dir()
-        .map(|home| home.join(".atlas-desktop"))
-        .ok_or_else(|| "no home directory".to_string())
-}
-
-#[cfg(test)]
-fn app_dir() -> Result<PathBuf, String> {
-    tests::app_dir_override()
-}
+use crate::infra::app_dir::dir as app_dir;
 
 /// The keychain, or an in-process double under test.
 ///
@@ -257,6 +254,7 @@ use tests::backend;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infra::app_dir;
     use crate::testing::temp_dir;
     use std::collections::HashMap;
     use std::sync::MutexGuard;
@@ -280,15 +278,11 @@ mod tests {
     }
 
     struct TestState {
-        dir: PathBuf,
         mode: Mode,
         store: HashMap<String, Vec<u8>>,
     }
 
     static STATE: Mutex<Option<TestState>> = Mutex::new(None);
-    /// These tests share the key cache, the doubled keychain and the app
-    /// directory, so they run one at a time.
-    static SERIAL: Mutex<()> = Mutex::new(());
 
     pub(crate) mod backend {
         use super::STATE;
@@ -322,21 +316,25 @@ mod tests {
         }
     }
 
-    pub(super) fn app_dir_override() -> Result<PathBuf, String> {
-        Ok(STATE.lock().expect("state").as_ref().expect("state").dir.clone())
+    /// Installs a fresh app directory and doubled keychain, and clears the
+    /// cached key. Returns the guard that serialises against every other test
+    /// using the app directory, in this module and outside it.
+    fn setup(label: &str, mode: Mode) -> MutexGuard<'static, ()> {
+        let guard = app_dir::test_support::lock();
+        app_dir::test_support::install(temp_dir(label));
+        install_double(mode);
+        guard
     }
 
-    /// Installs a fresh app directory and doubled keychain, and clears the
-    /// cached key. Returns the serialising guard.
-    fn setup(label: &str, mode: Mode) -> MutexGuard<'static, ()> {
-        let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    /// Installs the doubled keychain on its own, for a suite that already
+    /// holds the app-directory lock and only needs a key that resolves —
+    /// see `crate::testing::with_app_dir`.
+    pub(crate) fn install_double(mode: Mode) {
         *STATE.lock().expect("state") = Some(TestState {
-            dir: temp_dir(label),
             mode,
             store: HashMap::new(),
         });
         *CACHE.lock().expect("cache") = None;
-        guard
     }
 
     fn set_mode(mode: Mode) {
@@ -355,7 +353,7 @@ mod tests {
         assert_eq!(*first, *second);
         assert_eq!(recorded(), Some(KeyStore::Keychain));
         assert!(
-            !app_dir_override().unwrap().join(KEY_FILE).exists(),
+            !app_dir().unwrap().join(KEY_FILE).exists(),
             "a usable keychain must not leave the key on disk"
         );
     }
@@ -373,7 +371,7 @@ mod tests {
 
         assert_eq!(*first, *second, "the key survived, so it went to the file");
         assert_eq!(recorded(), Some(KeyStore::File));
-        assert!(app_dir_override().unwrap().join(KEY_FILE).exists());
+        assert!(app_dir().unwrap().join(KEY_FILE).exists());
     }
 
     /// The data-loss guard. The key is in the keychain, the keychain refuses to
@@ -414,7 +412,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let path = app_dir_override().unwrap().join(KEY_FILE);
+            let path = app_dir().unwrap().join(KEY_FILE);
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600, "the fallback key is readable by others");
         }
@@ -426,7 +424,7 @@ mod tests {
     fn a_damaged_fallback_file_is_an_error_not_a_fresh_start() {
         let _serial = setup("mk-damaged", Mode::Mock);
         resolve().expect("writes the fallback");
-        let path = app_dir_override().unwrap().join(KEY_FILE);
+        let path = app_dir().unwrap().join(KEY_FILE);
         fs::write(&path, b"too short").expect("writable");
         *CACHE.lock().unwrap() = None;
 
