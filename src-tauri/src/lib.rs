@@ -9,6 +9,21 @@ pub mod services;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // One resident piece of state, shared by every command that has to
+        // reach a turn while it runs. `Arc` because a turn runs on a blocking
+        // thread that outlives the command call that started it.
+        .manage(std::sync::Arc::new(commands::chat::AgentState::default()))
+        .invoke_handler(tauri::generate_handler![
+            commands::chat::workspace_open,
+            commands::chat::workspace_current,
+            commands::chat::chat_start,
+            commands::chat::chat_resume,
+            commands::chat::chat_cancel,
+            commands::chat::chat_steer,
+            commands::chat::chat_cancel_steer,
+            commands::chat::approval_always_allow,
+            commands::chat::approval_set_unattended,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

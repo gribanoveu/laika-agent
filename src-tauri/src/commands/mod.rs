@@ -5,4 +5,5 @@
 //! wire, calls one service, and flattens the error to a string — the one place
 //! stringly-typed errors are the right answer.
 
+pub mod chat;
 pub mod chat_events;
