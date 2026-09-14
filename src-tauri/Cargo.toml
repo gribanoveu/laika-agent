@@ -32,6 +32,11 @@ similar = "3.2.0"
 git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 serde_path_to_error = "0.1.20"
+aes-gcm = "0.10"
+zeroize = "1"
+rand = "0.8"
+dirs = "7.0.0"
+keyring = "3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -41,3 +46,21 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Platform keychain backends in keyring 3.x are opt-in features. Without one
+# the crate compiles to an in-memory mock whose writes return Ok(()) and
+# evaporate at process exit — a store that only pretends to work. The base
+# declaration above stays so an unsupported platform still builds, and
+# `infra::master_key` detects the mock at runtime and goes to the file fallback
+# honestly instead of losing the key silently.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+# `sync-secret-service`: a blocking Secret Service client over dbus, since
+# there is no free async context here. `crypto-rust` encrypts the dbus
+# transport itself without depending on the system OpenSSL.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
