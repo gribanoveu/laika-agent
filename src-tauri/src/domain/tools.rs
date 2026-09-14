@@ -12,8 +12,10 @@
 //! unattended, what a call costs the loop, and the wire names the model uses.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// A tool's identity, known from the wire name alone — before its arguments
 /// are parsed, and without borrowing them. That is what lets it key the
@@ -274,5 +276,207 @@ mod tests {
         for &tool in ToolName::ALL {
             assert!(!policy.requires_approval(tool, false), "{tool:?}");
         }
+    }
+
+    /// Hoist this out of the test module when a second file needs it.
+    fn temp_dir(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after the epoch")
+            .as_nanos();
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("atlas-tools-{label}-{nanos}-{n}"));
+        std::fs::create_dir_all(&dir).expect("temp dir is creatable");
+        dir
+    }
+
+    /// The whole point of resolving the root once: a boundary still holding a
+    /// `..`, or an unresolved symlink, is not a boundary. `/var` really is a
+    /// symlink to `/private/var` on macOS, so this bites on a plain temp path.
+    #[test]
+    fn new_canonicalizes_the_root() {
+        let dir = temp_dir("canonical");
+        std::fs::create_dir_all(dir.join("nested")).expect("subdirectory is creatable");
+
+        let scope = ToolScope::new(&dir.join("nested").join("..")).expect("root resolves");
+
+        assert_eq!(scope.root(), dir.canonicalize().expect("dir resolves"));
+        assert!(!scope.root().to_string_lossy().contains(".."));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A root that cannot be resolved must fail loudly rather than degrade into
+    /// an unconstrained one.
+    #[test]
+    fn new_rejects_a_missing_root() {
+        let missing = temp_dir("missing").join("no-such-directory");
+        assert!(matches!(
+            ToolScope::new(&missing),
+            Err(ToolError::NotFound(_))
+        ));
+    }
+
+    /// An empty checklist is the case that actually happened: the model tried
+    /// to complete a task on a list it never created. "no task with id: x" is a
+    /// dead end; the message has to name the way out.
+    #[test]
+    fn task_not_found_names_the_way_out_when_the_list_is_empty() {
+        let err = ToolError::TaskNotFound {
+            id: "t1".into(),
+            available: Some(Vec::new()),
+        };
+        let message = err.to_string();
+        assert!(message.contains("checklist is empty"), "{message}");
+        assert!(message.contains(r#"op "write""#), "{message}");
+    }
+
+    #[test]
+    fn task_not_found_lists_the_real_ids_when_they_are_known() {
+        let err = ToolError::TaskNotFound {
+            id: "t9".into(),
+            available: Some(vec!["t1".into(), "t2".into()]),
+        };
+        assert_eq!(err.to_string(), "no task with id: t9 — current ids: t1, t2");
+    }
+
+    /// `None` means "the caller does not know the list", which must not be
+    /// reported as "the list is empty" — opposite advice from the same message.
+    #[test]
+    fn task_not_found_claims_nothing_when_the_list_is_unknown() {
+        let err = ToolError::TaskNotFound {
+            id: "t9".into(),
+            available: None,
+        };
+        assert_eq!(err.to_string(), "no task with id: t9");
+    }
+
+    /// The count is the actionable half: it tells the model the anchor was too
+    /// short, rather than leaving it to guess why an exact match was refused.
+    #[test]
+    fn ambiguous_edit_reports_how_many_times_it_matched() {
+        let err = ToolError::EditTextAmbiguous("}\n".into(), 14);
+        assert!(err.to_string().contains("matched 14 times"), "{err}");
+    }
+}
+
+/// The filesystem boundary a tool call executes against.
+///
+/// In Alfa Atlas this carried seven fields: a mode, three roots, a search
+/// filter prefix, the tool allowlist, and external `@deps` roots. Six of them
+/// existed to express "the model may read the whole repository but may only
+/// write inside the documentation subtree" — a distinction a coding agent does
+/// not have. What is left is the one thing that was always doing the work.
+///
+/// Constructed once per session so every tool resolves against an already
+/// canonical root: a boundary compared against a path with `..` or a symlink
+/// still in it is not a boundary.
+#[derive(Debug, Clone)]
+pub struct ToolScope {
+    root: PathBuf,
+}
+
+impl ToolScope {
+    /// Canonicalizes `root`. Fails if it does not exist — an access boundary
+    /// that cannot be resolved must not silently become "anywhere".
+    pub fn new(root: &Path) -> Result<Self, ToolError> {
+        let root = root.canonicalize().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ToolError::NotFound(root.display().to_string()),
+            _ => ToolError::Io(e),
+        })?;
+        Ok(Self { root })
+    }
+
+    /// The canonical root. Every path a tool touches has to resolve under it —
+    /// enforced in one place, `services::ai_tools::resolve`, rather than by
+    /// each tool remembering to check.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+/// Why a tool call could not be carried out.
+///
+/// Data all the way to the boundary, per `AGENTS.md`: the string form exists
+/// only because the model reads it. Every message is addressed to the model and
+/// says what to do differently, not merely what went wrong.
+#[derive(Debug, Error)]
+pub enum ToolError {
+    #[error("path escapes tool root: {0}")]
+    PathEscape(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("not a file: {0}")]
+    NotAFile(String),
+    #[error("io error: {0}")]
+    Io(#[source] std::io::Error),
+    /// A `listFiles` `pattern` that does not compile as a glob.
+    #[error("invalid glob pattern: {0}")]
+    InvalidPattern(String),
+    /// An `editFile` edit's `old` text appears nowhere in the file.
+    #[error("edit text not found: {0}")]
+    EditTextNotFound(String),
+    /// An `editFile` edit's `old` text appears more than once — which
+    /// occurrence was meant is unknowable, so nothing is written. `.1` is the
+    /// match count, so the model learns how much more context to include.
+    #[error("edit text is not unique — matched {1} times: {0}")]
+    EditTextAmbiguous(String, usize),
+    /// Two edits in one call matched overlapping regions of the original
+    /// content: applying both would be order-dependent or would corrupt one of
+    /// them, so the whole call is rejected.
+    #[error("edits overlap in the same region of the file")]
+    EditsOverlap,
+    /// `deleteDirectory` without `recursive` against a directory with contents.
+    #[error("directory is not empty: {0}")]
+    DirectoryNotEmpty(String),
+    /// A `move` whose destination exists. Nothing is overwritten — the check
+    /// happens before the rename, not after.
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
+    /// A wire name matching no known tool.
+    #[error("unknown tool: {0}")]
+    UnknownTool(String),
+    /// Arguments that did not deserialize into the struct their tool expects.
+    ///
+    /// `reason` is JSON-path-annotated (`edits[1]: missing field \`old\``)
+    /// rather than a byte offset into the raw JSON. The failure this exists for
+    /// is a model getting one field name wrong deep inside an array argument:
+    /// "line 1 column 7275" does not tell it which element to fix, a path does.
+    #[error("invalid arguments for {tool}: {reason}")]
+    InvalidArguments { tool: String, reason: String },
+    /// A `todo write` whose new titles would push the list past its maximum —
+    /// rejected outright rather than silently truncated, so the model decides
+    /// what to drop or split instead of discovering later that it was cut.
+    #[error("todo list already has {current} task(s); adding {adding} more would exceed the {max} maximum")]
+    TooManyTasks {
+        current: usize,
+        adding: usize,
+        max: usize,
+    },
+    /// A `todo update` naming an id that is not in the list — usually a stale
+    /// id from earlier in the conversation, or a checklist the model never
+    /// created before trying to complete a task on it.
+    ///
+    /// `available` is `Some` when the caller knows the whole list, so the
+    /// message can name the way out instead of leaving a dead end.
+    #[error("{}", task_not_found_message(id, available))]
+    TaskNotFound {
+        id: String,
+        available: Option<Vec<String>>,
+    },
+    /// A git read failed. Carried as a string so git types stay out of the
+    /// tool boundary.
+    #[error("git error: {0}")]
+    Git(String),
+}
+
+fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
+    match available {
+        Some(ids) if ids.is_empty() => format!(
+            "no task with id: {id} — the checklist is empty, create tasks with op \"write\" before updating one"
+        ),
+        Some(ids) => format!("no task with id: {id} — current ids: {}", ids.join(", ")),
+        None => format!("no task with id: {id}"),
     }
 }
