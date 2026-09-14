@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::domain::llm::{
@@ -19,7 +20,8 @@ use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::tools::{ApprovalPolicy, ReadFiles, Task, ToolName, ToolResult, ToolScope};
 use crate::domain::turn::{
     ChatDone, ChatEventPayload, ChatEventSink, ChatStreamOutcome, ChatTurnEvent, DecisionError,
-    PendingApproval, PendingToolCall, ToolCallDecision, ToolCallEvent, ToolResultEvent,
+    PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision, ToolCallEvent,
+    ToolResultEvent,
 };
 use crate::infra::llm_debug_log;
 use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
@@ -143,6 +145,42 @@ pub struct Turn<'a> {
     /// Called in one-second slices while waiting to retry, so a stop takes
     /// effect during the wait rather than after it.
     pub sleep: &'a dyn Fn(Duration),
+    /// Takes whatever the user has typed since it was last called. Draining
+    /// rather than reading is deliberate: a note handed to the model must
+    /// leave the queue in the same step, or a round that is retried or
+    /// interrupted can deliver it twice.
+    pub take_steering: &'a dyn Fn() -> Vec<SteeringNote>,
+}
+
+/// Notes typed while a turn is running, waiting for the next round.
+///
+/// Shared between the turn and whatever accepts the user's typing, so it owns
+/// its own lock. A poisoned lock is recovered rather than propagated: losing
+/// the queue must not take down a turn that is otherwise fine.
+#[derive(Default)]
+pub struct SteeringQueue(Mutex<Vec<SteeringNote>>);
+
+impl SteeringQueue {
+    pub fn push(&self, note: SteeringNote) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(note);
+    }
+
+    pub fn take(&self) -> Vec<SteeringNote> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Removes the note with this id, if it is still queued.
+    ///
+    /// `false` means it is already gone — a round picked it up while the user
+    /// was reaching for cancel. What has been said to the model cannot be
+    /// unsaid, and the answer is what lets the caller tell "withdrawn" from
+    /// "too late".
+    pub fn cancel(&self, id: &str) -> bool {
+        let mut notes = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let before = notes.len();
+        notes.retain(|note| note.id != id);
+        notes.len() != before
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -207,6 +245,10 @@ pub fn stream(
     messages: Vec<LlmMessage>,
     todos: Vec<Task>,
 ) -> Result<ChatStreamOutcome, TurnError> {
+    // A note queued after the previous turn ended is not part of this one:
+    // the user typed it at a conversation that had already finished, and it
+    // reaches the model as their next message instead.
+    let _ = (turn.take_steering)();
     let state = State {
         history: messages,
         round: 0,
@@ -309,6 +351,9 @@ fn run(
             state.budget_used += round_cost(&calls);
             (calls, decisions)
         } else {
+            // Before the round is announced, so the notes and the boundary
+            // land in the transcript in the order the history has them.
+            apply_steering(&events, round, &mut state.history, (turn.take_steering)());
             events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
 
             let request = ChatRequest {
@@ -359,10 +404,25 @@ fn run(
             }
 
             if result.tool_calls.is_empty() {
-                return Ok(ChatStreamOutcome::Done(ChatDone {
-                    result,
-                    todos: state.todos,
-                }));
+                // The model is done — unless the user said something while it
+                // was answering. Ending the turn here would silently drop
+                // what they typed, and they would have no way to tell it was
+                // never seen.
+                let waiting = (turn.take_steering)();
+                if waiting.is_empty() {
+                    return Ok(ChatStreamOutcome::Done(ChatDone {
+                        result,
+                        todos: state.todos,
+                    }));
+                }
+                state.history.push(LlmMessage {
+                    role: LlmRole::Assistant,
+                    content: (!result.text.is_empty()).then(|| result.text.clone()),
+                    tool_call_id: None,
+                    tool_calls: vec![],
+                });
+                apply_steering(&events, round, &mut state.history, waiting);
+                continue;
             }
 
             // The assistant's own turn goes back into the history before its
@@ -474,6 +534,27 @@ fn run(
                 dedupe_repeat_result(&mut seen_results, call, outcome.as_ref().ok(), content);
             state.history.push(tool_message(&call.id, content));
         }
+    }
+}
+
+/// Adds queued notes to the conversation and says so, one event per note, so
+/// the front end can retire each by id rather than by matching its text.
+fn apply_steering(
+    events: &Events,
+    round: u32,
+    history: &mut Vec<LlmMessage>,
+    notes: Vec<SteeringNote>,
+) {
+    for note in notes {
+        history.push(LlmMessage::user(note.prefixed()));
+        events.emit(
+            round,
+            Some(format!("steer:{}", note.id)),
+            ChatEventPayload::SteeringApplied {
+                id: note.id,
+                text: note.text,
+            },
+        );
     }
 }
 
@@ -645,7 +726,7 @@ mod tests {
         ChatResponse, ChatUsage, LlmModelInfo, LlmProvider, LlmToolDefinition,
     };
     use crate::domain::tools::{ToolScope, ToolName};
-    use crate::domain::turn::ChatTurnEvent;
+    use crate::domain::turn::{ChatTurnEvent, STEERING_PREFIX};
     use crate::testing::temp_dir;
     use std::collections::{HashSet, VecDeque};
     use std::path::PathBuf;
@@ -660,6 +741,29 @@ mod tests {
         /// Streams text and *then* fails — the shape that must never be
         /// retried, since half the round has already been reported.
         StreamThenFail(&'static str, LlmError),
+        /// Answers, and the user types while it does. The only way to queue a
+        /// note *during* a turn when the provider is synchronous.
+        ReplyWhileTheUserTypes(ChatStreamResult, &'static str),
+    }
+
+    fn text_while_typing(answer: &str, note: &'static str) -> Step {
+        Step::ReplyWhileTheUserTypes(
+            ChatStreamResult {
+                text: answer.to_string(),
+                ..Default::default()
+            },
+            note,
+        )
+    }
+
+    fn asks_while_typing(calls: Vec<LlmToolCall>, note: &'static str) -> Step {
+        Step::ReplyWhileTheUserTypes(
+            ChatStreamResult {
+                tool_calls: calls,
+                ..Default::default()
+            },
+            note,
+        )
     }
 
     fn text(answer: &str) -> Step {
@@ -687,6 +791,7 @@ mod tests {
     struct Scripted {
         steps: Mutex<VecDeque<Step>>,
         requests: Mutex<Vec<ChatRequest>>,
+        steering: Mutex<Option<Arc<SteeringQueue>>>,
     }
 
     impl Scripted {
@@ -694,6 +799,7 @@ mod tests {
             Arc::new(Self {
                 steps: Mutex::new(steps.into()),
                 requests: Mutex::new(Vec::new()),
+                steering: Mutex::new(None),
             })
         }
 
@@ -734,6 +840,15 @@ mod tests {
                     on_delta(chunk);
                     Err(error)
                 }
+                Step::ReplyWhileTheUserTypes(result, note) => {
+                    if let Some(queue) = self.steering.lock().unwrap().as_ref() {
+                        queue.push(SteeringNote::user(note));
+                    }
+                    if !result.text.is_empty() {
+                        on_delta(&result.text);
+                    }
+                    Ok(result)
+                }
             }
         }
 
@@ -755,6 +870,7 @@ mod tests {
         cancel_after: Arc<Mutex<Option<usize>>>,
         polls: Arc<Mutex<usize>>,
         slept: Arc<Mutex<Vec<Duration>>>,
+        steering: Arc<SteeringQueue>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -762,6 +878,8 @@ mod tests {
         let provider = Scripted::new(steps);
         let log: Arc<Mutex<Vec<ChatTurnEvent>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = log.clone();
+        let steering = Arc::new(SteeringQueue::default());
+        *provider.steering.lock().unwrap() = Some(steering.clone());
         Harness {
             session: LlmSession {
                 provider: provider.clone(),
@@ -783,6 +901,7 @@ mod tests {
             cancel_after: Arc::new(Mutex::new(None)),
             polls: Arc::new(Mutex::new(0)),
             slept: Arc::new(Mutex::new(Vec::new())),
+            steering,
         }
     }
 
@@ -807,6 +926,8 @@ mod tests {
             };
             let slept = self.slept.clone();
             let sleep = move |d: Duration| slept.lock().unwrap().push(d);
+            let queue = self.steering.clone();
+            let take_steering = move || queue.take();
             let turn = Turn {
                 events: &self.events,
                 session: &self.session,
@@ -814,6 +935,7 @@ mod tests {
                 approval: &self.approval,
                 cancelled: &cancelled,
                 sleep: &sleep,
+                take_steering: &take_steering,
             };
             f(&turn)
         }
@@ -832,6 +954,7 @@ mod tests {
                 ChatEventPayload::ToolCall(c) => format!("toolCall:{}", c.id),
                 ChatEventPayload::ToolResult(r) => format!("toolResult:{}", r.id),
                 ChatEventPayload::ContextUsage(_) => "contextUsage".to_string(),
+                ChatEventPayload::SteeringApplied { id, .. } => format!("steering:{id}"),
             })
             .collect()
     }
@@ -1534,5 +1657,242 @@ mod tests {
         let requests = h.provider.requests();
         let offered: &[LlmToolDefinition] = &requests[0].tools;
         assert_eq!(offered.len(), ToolName::ALL.len());
+    }
+
+    // ------------------------------------------------------------- steering
+
+    fn user_messages(request: &ChatRequest) -> Vec<String> {
+        request
+            .messages
+            .iter()
+            .filter(|m| m.role == LlmRole::User)
+            .filter_map(|m| m.content.clone())
+            .collect()
+    }
+
+    /// The point of steering: what the user typed mid-turn reaches the model
+    /// on the next round, marked as a clarification rather than a new task.
+    #[test]
+    fn a_note_typed_mid_turn_reaches_the_next_round() {
+        let h = harness(
+            "steer-applied",
+            vec![
+                asks_while_typing(
+                    vec![wants("l1", "listFiles", "{}")],
+                    "use the existing helper",
+                ),
+                text("understood"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let second = user_messages(&h.provider.requests()[1]);
+        assert!(
+            second.iter().any(|m| m.contains("use the existing helper")),
+            "{second:?}"
+        );
+        assert!(
+            second.iter().any(|m| m.starts_with(STEERING_PREFIX)),
+            "a clarification, not a new task: {second:?}"
+        );
+        let applied: Vec<String> = payloads(&h.events())
+            .into_iter()
+            .filter(|p| p.starts_with("steering:"))
+            .collect();
+        assert_eq!(applied.len(), 1, "the note is announced by id: {applied:?}");
+    }
+
+    /// Ending the turn here would silently drop what the user typed, with
+    /// nothing to tell them it was never seen.
+    #[test]
+    fn a_note_that_arrives_as_the_model_finishes_keeps_the_turn_going() {
+        let h = harness(
+            "steer-late",
+            vec![
+                text_while_typing("all done", "and rename it too"),
+                text("also did the other thing"),
+            ],
+        );
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("expected Done");
+        };
+        assert_eq!(done.result.text, "also did the other thing");
+        assert_eq!(h.provider.requests().len(), 2, "the turn ran another round");
+        let second = user_messages(&h.provider.requests()[1]);
+        assert!(second.iter().any(|m| m.contains("and rename it too")), "{second:?}");
+        // The answer the model had already given stays in the conversation,
+        // or the extra round reads as if it never spoke.
+        assert!(h.provider.requests()[1]
+            .messages
+            .iter()
+            .any(|m| m.role == LlmRole::Assistant && m.content.as_deref() == Some("all done")));
+    }
+
+    /// A note is handed over once. A round that is retried, or a turn that
+    /// pauses in between, must not deliver it a second time.
+    #[test]
+    fn a_note_is_delivered_once() {
+        let h = harness(
+            "steer-once",
+            vec![
+                asks_while_typing(vec![wants("l1", "listFiles", "{}")], "watch the indentation"),
+                asks(vec![wants("l2", "listFiles", "{}")]),
+                text("done"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let delivered = user_messages(h.provider.requests().last().unwrap())
+            .iter()
+            .filter(|m| m.contains("watch the indentation"))
+            .count();
+        assert_eq!(delivered, 1);
+    }
+
+    /// The user typed it at a conversation that had already finished. It is
+    /// their next message, not a clarification of a turn they cannot see.
+    #[test]
+    fn a_note_left_over_from_a_finished_turn_does_not_leak_into_the_next() {
+        let h = harness("steer-leftover", vec![text("hi")]);
+        h.steering.push(SteeringNote::user("from the previous turn"));
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("a new question")], vec![]))
+            .expect("finishes");
+
+        let sent = user_messages(&h.provider.requests()[0]);
+        assert_eq!(sent, ["a new question"]);
+    }
+
+    #[test]
+    fn a_queued_note_can_be_cancelled_until_a_round_takes_it() {
+        let queue = SteeringQueue::default();
+        let note = SteeringNote::user("never mind");
+        let id = note.id.clone();
+        queue.push(note);
+
+        assert!(queue.cancel(&id), "still queued");
+        assert!(queue.take().is_empty());
+        // Cancelling what a round already picked up answers `false`: what has
+        // been said to the model cannot be unsaid.
+        assert!(!queue.cancel(&id));
+    }
+
+    /// Two identical clarifications are indistinguishable by text, which is
+    /// why cancelling works by id.
+    #[test]
+    fn identical_notes_are_still_separate() {
+        let queue = SteeringQueue::default();
+        let first = SteeringNote::user("check the locale");
+        let second = SteeringNote::user("check the locale");
+        assert_ne!(first.id, second.id);
+        let first_id = first.id.clone();
+        queue.push(first);
+        queue.push(second);
+
+        assert!(queue.cancel(&first_id));
+        assert_eq!(queue.take().len(), 1);
+    }
+
+    // --------------------------------------------------- the stage's own bar
+
+    /// What stage one set out to produce: a turn that reads a file, changes
+    /// it, and hands the model back what actually landed on disk — not just
+    /// `{"path": "…"}`, which tells it nothing about whether the edit took.
+    #[test]
+    fn a_turn_reads_a_file_edits_it_and_is_told_what_changed() {
+        let h = harness(
+            "stage-one",
+            vec![
+                asks(vec![wants("r1", "readFile", r#"{"path":"lib.rs"}"#)]),
+                asks(vec![wants(
+                    "e1",
+                    "editFile",
+                    r#"{"path":"lib.rs","edits":[{"old":"one","new":"two"}]}"#,
+                )]),
+                text("renamed it"),
+            ],
+        );
+        std::fs::write(h.root.join("lib.rs"), "fn one() {}\n").unwrap();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("rename one to two")], vec![]));
+
+        assert!(matches!(outcome.expect("finishes"), ChatStreamOutcome::Done(_)));
+        assert_eq!(
+            std::fs::read_to_string(h.root.join("lib.rs")).unwrap(),
+            "fn two() {}\n"
+        );
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        let edit = told.last().expect("the edit was reported");
+        assert!(edit.contains("linesAdded"), "no diff stats: {edit}");
+        assert!(edit.contains("-fn one"), "no diff itself: {edit}");
+    }
+
+    /// Every field of the checkpoint, exercised through a real pause rather
+    /// than by serializing a fixture: the checklist an earlier round built has
+    /// to come out the other side, along with the history, the ceilings, the
+    /// numbering and the read registry.
+    #[test]
+    fn the_whole_checkpoint_survives_a_real_pause() {
+        let mut h = harness(
+            "stage-one-checkpoint",
+            vec![
+                asks(vec![wants(
+                    "t1",
+                    "todo",
+                    r#"{"op":"write","tasks":["read it","rewrite it"]}"#,
+                )]),
+                asks(vec![wants("r1", "readFile", r#"{"path":"a.rs"}"#)]),
+                asks(vec![wants(
+                    "w1",
+                    "writeFile",
+                    r#"{"path":"a.rs","content":"new"}"#,
+                )]),
+                text("done"),
+            ],
+        );
+        h.approval = asking();
+        std::fs::write(h.root.join("a.rs"), "old").unwrap();
+
+        let ChatStreamOutcome::PendingApproval(pending) = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect("pauses")
+        else {
+            panic!("expected a pause");
+        };
+
+        assert_eq!(pending.round, 3, "the ceiling cannot be reset by pausing");
+        assert!(pending.budget_used > 0);
+        assert_eq!(pending.event_seq, h.events().last().unwrap().seq);
+        assert_eq!(pending.calls.len(), 1);
+        assert_eq!(
+            pending.todos.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(),
+            ["read it", "rewrite it"],
+            "the checklist an earlier round built"
+        );
+        assert!(pending.history.len() > 1);
+        assert!(pending.reads.check("a.rs", "old", true).is_ok());
+
+        let outcome = h.run(|turn| {
+            resume(
+                turn,
+                pending,
+                vec![ToolCallDecision {
+                    id: "w1".to_string(),
+                    approved: true,
+                    reason: None,
+                }],
+            )
+        });
+
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("expected Done");
+        };
+        assert_eq!(std::fs::read_to_string(h.root.join("a.rs")).unwrap(), "new");
+        assert_eq!(done.todos.len(), 2, "and the checklist comes out with it");
     }
 }

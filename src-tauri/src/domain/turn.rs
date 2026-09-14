@@ -139,6 +139,43 @@ pub enum DecisionError {
     Unknown(String),
 }
 
+/// What the model is told a mid-turn note is: a clarification of the work in
+/// progress, not a new task. Without the distinction a note like "use the
+/// existing helper" reads as a fresh instruction, and the model starts over.
+pub const STEERING_PREFIX: &str =
+    "[Clarification from the user, not a new task — take it into account in the work in progress]: ";
+
+/// One note the user typed while the turn was running.
+///
+/// Alfa Atlas also carries a `source`, because the app queues notes of its own
+/// (a nudge when the model promised a diagram and drew none) and those must not
+/// be attributed to the user — the model otherwise apologises to them for
+/// something they never said. Those backstops are not ported (they belong to a
+/// documentation product), so there is one kind of note here. The place a note
+/// joins the history is the extension point, not a field nothing sets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteeringNote {
+    /// The note's own id. Cancelling needs it: two identical clarifications
+    /// are indistinguishable by text.
+    pub id: String,
+    pub text: String,
+}
+
+impl SteeringNote {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            text: text.into(),
+        }
+    }
+
+    /// What goes into the history.
+    pub fn prefixed(&self) -> String {
+        format!("{STEERING_PREFIX}{}", self.text)
+    }
+}
+
 /// One ordered event in a turn.
 ///
 /// `seq` is monotonic across a pause and resume — the whole point, since those
@@ -171,6 +208,10 @@ pub enum ChatEventPayload {
         max_attempts: u32,
         delay_seconds: u64,
     },
+    /// A note the user typed mid-turn has been added to the conversation.
+    /// Carries the id so the front end can retire that queued note by
+    /// identity rather than by matching its text.
+    SteeringApplied { id: String, text: String },
     /// A fresh round is starting.
     ///
     /// Stated outright rather than inferred from whatever came next. Before
