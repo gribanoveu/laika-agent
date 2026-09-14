@@ -481,6 +481,7 @@ fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
 pub enum ToolCall {
     ReadFile(ReadFileArgs),
     Grep(GrepArgs),
+    ListFiles(ListFilesArgs),
 }
 
 impl ToolCall {
@@ -488,6 +489,7 @@ impl ToolCall {
         match self {
             ToolCall::ReadFile(_) => ToolName::ReadFile,
             ToolCall::Grep(_) => ToolName::Grep,
+            ToolCall::ListFiles(_) => ToolName::ListFiles,
         }
     }
 
@@ -523,6 +525,15 @@ pub enum ToolResult {
     #[serde(rename_all = "camelCase")]
     GrepResults {
         matches: Vec<GrepMatch>,
+        truncated: bool,
+    },
+    /// `truncated` carries the same "there is more here than you are seeing"
+    /// contract as `GrepResults`. It matters most on a vendored tree: a real
+    /// `node_modules` is tens of thousands of entries, and a listing that
+    /// quietly stopped at a cap reads to the model as the whole picture.
+    #[serde(rename_all = "camelCase")]
+    FileList {
+        entries: Vec<ToolFileEntry>,
         truncated: bool,
     },
 }
@@ -581,4 +592,31 @@ pub struct GrepMatch {
     pub before: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after: Vec<String>,
+}
+
+/// `listFiles` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ListFilesArgs {
+    /// Subdirectory relative to the scope root; `None`/`"."` lists the root.
+    pub path: Option<String>,
+    /// Levels below `path`, following the walker's convention: `path` itself
+    /// is depth 0, its direct children depth 1. `Some(0)` is valid and means
+    /// no descendants — not an error. `None` is unlimited.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub depth: Option<u32>,
+    /// Glob over each entry's file *name*, never its full path, so `"*.rs"`
+    /// matches at any depth. Directories are kept regardless: this scopes
+    /// which files come back, not the navigable structure.
+    pub pattern: Option<String>,
+}
+
+/// One listing entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolFileEntry {
+    /// Relative to the scope root, `/`-separated — the spelling `readFile`
+    /// takes, so an entry round-trips without editing.
+    pub path: String,
+    pub is_dir: bool,
 }
