@@ -1,0 +1,220 @@
+.item {
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--bg-panel-soft);
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.item:last-child {
+  margin-bottom: 0;
+}
+.item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  cursor: pointer;
+}
+.item-head:hover {
+  background: var(--bg-hover);
+}
+.item-ico {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-active);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.item-ico.mcp {
+  color: var(--accent);
+}
+.item-ico.skill {
+  color: var(--purple);
+}
+.item-ico.rule {
+  color: var(--amber);
+}
+.item-body {
+  flex: 1;
+  min-width: 0;
+}
+.item-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.item-desc {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.45;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.item-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.item-chev {
+  color: #4f4f4f;
+  flex: none;
+  margin-top: 2px;
+  transition: transform 0.15s;
+}
+.item.open .item-chev {
+  transform: rotate(90deg);
+}
+
+.badge-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+.badge-pill.ok {
+  background: rgba(87, 201, 138, 0.12);
+  color: var(--green);
+}
+.badge-pill.warn {
+  background: rgba(212, 168, 83, 0.12);
+  color: var(--amber);
+}
+.badge-pill.off {
+  background: rgba(109, 109, 109, 0.15);
+  color: var(--text-faint);
+}
+
+.toggle {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: #3a3a3a;
+  border: 0;
+  cursor: pointer;
+  position: relative;
+  flex: none;
+}
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #888;
+  transition: transform 0.15s, background 0.15s;
+}
+.toggle.on {
+  background: rgba(87, 201, 138, 0.25);
+}
+.toggle.on::after {
+  transform: translateX(12px);
+  background: var(--green);
+}
+
+.item-detail {
+  border-top: 1px solid var(--border-soft);
+  padding: 6px 9px 8px;
+}
+.item-detail .item-note {
+  padding: 4px 6px 0;
+}
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.tool-row:hover {
+  background: var(--bg-hover);
+}
+.tool-row .tname {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.tool-row .tdesc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.skill-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(167, 139, 250, 0.12);
+  color: var(--purple);
+  font-family: var(--font-mono);
+  margin-right: 4px;
+}
+
+.rule-block {
+  padding: 8px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rule-source {
+  padding: 5px 9px 7px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+.add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px;
+  border-radius: 8px;
+  background: none;
+  border: 1px dashed #3a3a3a;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.add-btn:hover {
+  border-color: #555;
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}

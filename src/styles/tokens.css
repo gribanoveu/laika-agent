@@ -1,0 +1,162 @@
+:root {
+  --bg-app: #0a0a0a;
+  --bg-window: #161616;
+  --bg-panel: #1c1c1c;
+  --bg-panel-soft: #1f1f1f;
+  --bg-hover: #262626;
+  --bg-active: #2d2d2d;
+  --bg-bubble: #232323;
+
+  --border: #2a2a2a;
+  --border-soft: #242424;
+
+  --text: #e6e6e6;
+  --text-dim: #9a9a9a;
+  --text-faint: #6d6d6d;
+
+  --accent: #5b9ddb;
+  --green: #57c98a;
+  --red: #e0736c;
+  --amber: #d4a853;
+  --purple: #a78bfa;
+
+  --radius: 12px;
+  --font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  /* The app fills the window; only inner panels scroll. Without this the webview
+     rubber-bands the whole page inside the frame. */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  /* Transparent OS window — the rounded .window paints the app background. */
+  background: transparent;
+  /* Desktop chrome doesn't select: a stray drag must not highlight the UI.
+     Content worth copying opts back in via .selectable below. */
+  -webkit-user-select: none;
+  user-select: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Text the user may legitimately want to copy stays selectable. */
+input,
+textarea,
+.bubble,
+.msg,
+.tool-detail,
+.approval-cmd,
+.diff-preview,
+.terminal-out,
+.rule-block,
+.commit-status {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e2e2e;
+  border-radius: 4px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 7px;
+  border: 0;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 500;
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+.btn-ghost {
+  background: none;
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.iconbtn {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.iconbtn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.link-btn:hover {
+  color: var(--accent);
+}
+
+.empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+
+.add {
+  color: var(--green);
+}
+.del {
+  color: var(--red);
+}
+.mono {
+  font-family: var(--font-mono);
+}

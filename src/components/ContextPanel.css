@@ -1,0 +1,145 @@
+.stage-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #cfcfcf;
+}
+.stage-file:hover {
+  background: var(--bg-hover);
+}
+.stage-btn {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: none;
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  font-family: inherit;
+}
+.stage-btn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: #444;
+}
+.stage-btn.unstage {
+  color: var(--text-dim);
+}
+.stage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.stage-name:hover {
+  color: var(--accent);
+}
+.stage-file .stat {
+  display: flex;
+  gap: 6px;
+  font-size: 11.5px;
+  flex: none;
+}
+.stage-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.diff-preview {
+  margin-top: 6px;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.diff-preview .ln-add {
+  color: var(--green);
+}
+.diff-preview .ln-del {
+  color: var(--red);
+}
+.diff-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+.diff-preview-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.commit-msg {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+.commit-msg:focus {
+  border-color: #444;
+}
+.commit-msg::placeholder {
+  color: var(--text-faint);
+}
+.commit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.commit-actions .btn-primary {
+  margin-left: auto;
+}
+.btn-ghost.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+.commit-status {
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--green);
+  min-height: 16px;
+}
+.commit-status .push-link {
+  margin-left: 8px;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+}
+.commit-status .push-link:hover {
+  text-decoration: underline;
+}

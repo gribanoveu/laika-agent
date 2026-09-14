@@ -1,0 +1,49 @@
+.composer {
+  flex: none;
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  padding: 14px 16px 11px;
+}
+.composer textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 120px;
+  resize: none;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.composer textarea::placeholder {
+  color: var(--text-faint);
+}
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.composer .mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.composer .send {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.composer .send:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}

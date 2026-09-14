@@ -1,0 +1,40 @@
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.window-controls .dot {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.window-controls .dot.r {
+  background: #ff5f57;
+}
+.window-controls .dot.y {
+  background: #febc2e;
+}
+.window-controls .dot.g {
+  background: #28c840;
+}
+
+.window-controls .dot svg {
+  width: 10px;
+  height: 10px;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  fill: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.window-controls:hover .dot svg {
+  opacity: 1;
+}

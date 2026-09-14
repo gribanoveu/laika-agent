@@ -1,0 +1,236 @@
+.chat-panel {
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.chat-head h1 {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  background: none;
+  border: 0;
+  padding: 2px 4px 2px 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.branch:hover {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.head-right {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  padding-top: 2px;
+}
+.head-time {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.context-meter-val {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1;
+}
+.context-meter-val .used {
+  color: var(--text-dim);
+}
+.context-meter-val .sep {
+  margin: 0 1px;
+  opacity: 0.6;
+}
+.context-ring {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -90deg,
+    rgba(91, 157, 219, 0.8) var(--ring-deg, 0deg),
+    #333 var(--ring-deg, 0deg)
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
+  mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
+}
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 24px;
+}
+
+.turn {
+  margin-bottom: 18px;
+}
+.turn:last-child {
+  margin-bottom: 0;
+}
+.role {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-bottom: 7px;
+}
+.role.agent {
+  color: var(--accent);
+}
+.bubble {
+  background: var(--bg-bubble);
+  border: 1px solid #2b2b2b;
+  border-radius: 9px;
+  padding: 11px 13px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #dcdcdc;
+}
+.msg {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d2d2d2;
+}
+
+.tools {
+  margin: 10px 0 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--border-soft);
+}
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tool:hover {
+  background: var(--bg-hover);
+}
+.tool .ico {
+  color: var(--text-faint);
+  display: grid;
+  place-items: center;
+  width: 14px;
+  flex: none;
+}
+.tool .name {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  min-width: 42px;
+  flex: none;
+}
+.tool .arg {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool .meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.tool .meta .zero {
+  color: var(--text-faint);
+}
+.tool .chev {
+  color: #4f4f4f;
+  flex: none;
+  transition: transform 0.15s;
+}
+.tool-item.open .tool .chev {
+  transform: rotate(90deg);
+}
+.tool-detail {
+  margin: 0 0 4px 8px;
+  padding: 7px 9px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+.approval-card {
+  margin: 6px 0 4px;
+  padding: 7px 9px;
+  border: 1px solid rgba(212, 168, 83, 0.35);
+  border-radius: 7px;
+  background: rgba(212, 168, 83, 0.06);
+}
+.approval-card.approved {
+  border-color: var(--border-soft);
+  background: var(--bg-panel-soft);
+  opacity: 0.85;
+}
+.approval-label {
+  font-size: 11px;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.approval-card.approved .approval-label {
+  color: var(--text-faint);
+}
+.approval-cmd {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.approval-card.approved .approval-cmd {
+  margin-bottom: 0;
+}
+.approval-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.approval-actions .btn {
+  padding: 5px 9px;
+  font-size: 11.5px;
+}
