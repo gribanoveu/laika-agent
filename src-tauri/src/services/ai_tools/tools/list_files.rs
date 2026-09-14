@@ -376,7 +376,7 @@ mod tests {
         let (scope, root) = fixture("list-dispatch");
         write(&root, "src/a.rs", "");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut ReadFiles::default()),
+            execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new()),
             Ok(ToolResult::FileList { .. })
         ));
     }

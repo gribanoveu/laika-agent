@@ -5,13 +5,13 @@
 //! per tool. Adding a tool is a variant in `ToolCall`, a variant in
 //! `ToolResult`, a module here, and an arm below.
 //!
-//! `reads` is the caller's record of what the agent has looked at. It lives
+//! `reads` and `todos` are the caller's, not this module's. It lives
 //! here rather than inside the executor for the same reason the turn's todo
 //! list does: the executor stays stateless, and the state survives an approval
 //! pause. Alfa Atlas also threads dependencies through here; those arrive with
 //! the tool that needs them.
 
-use crate::domain::tools::{ReadFiles, ToolCall, ToolError, ToolResult, ToolScope};
+use crate::domain::tools::{ReadFiles, Task, ToolCall, ToolError, ToolResult, ToolScope};
 
 pub mod create_directory;
 pub mod delete_directory;
@@ -20,6 +20,7 @@ pub mod edit_file;
 pub mod grep;
 pub mod list_files;
 pub mod move_path;
+pub mod todo;
 pub mod write_file;
 pub mod read_file;
 
@@ -27,6 +28,7 @@ pub fn execute_tool(
     scope: &ToolScope,
     call: &ToolCall,
     reads: &mut ReadFiles,
+    todos: &mut Vec<Task>,
 ) -> Result<ToolResult, ToolError> {
     match call {
         ToolCall::ReadFile(args) => read_file::read_file(scope, args, reads),
@@ -38,5 +40,6 @@ pub fn execute_tool(
         ToolCall::DeleteFile(args) => delete_file::delete_file(scope, args, reads),
         ToolCall::DeleteDirectory(args) => delete_directory::delete_directory(scope, args),
         ToolCall::Move(args) => move_path::move_path(scope, args),
+        ToolCall::Todo(args) => todo::todo(todos, args),
     }
 }

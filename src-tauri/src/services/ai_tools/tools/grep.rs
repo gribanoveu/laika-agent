@@ -444,7 +444,7 @@ mod tests {
         let (scope, root) = fixture("grep-dispatch");
         write(&root, "a.txt", "todo\n");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut ReadFiles::default()),
+            execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new()),
             Ok(ToolResult::GrepResults { .. })
         ));
     }

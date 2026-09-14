@@ -172,7 +172,7 @@ mod tests {
         let (scope, root, mut reads) = fixture("mv-dispatch");
         write(&root, "a.txt", "x\n");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::Moved { .. })
         ));
         assert!(root.join("b.txt").exists());

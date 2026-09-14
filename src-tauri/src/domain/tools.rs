@@ -501,6 +501,7 @@ pub enum ToolCall {
     DeleteFile(DeleteFileArgs),
     DeleteDirectory(DeleteDirectoryArgs),
     Move(MoveArgs),
+    Todo(TodoArgs),
 }
 
 impl ToolCall {
@@ -515,6 +516,7 @@ impl ToolCall {
             ToolCall::DeleteFile(_) => ToolName::DeleteFile,
             ToolCall::DeleteDirectory(_) => ToolName::DeleteDirectory,
             ToolCall::Move(_) => ToolName::Move,
+            ToolCall::Todo(_) => ToolName::Todo,
         }
     }
 
@@ -584,6 +586,10 @@ pub enum ToolResult {
     DirectoryDeleted { path: String },
     #[serde(rename_all = "camelCase")]
     Moved { from: String, to: String },
+    /// The whole checklist after the change. Returned in full rather than as a
+    /// delta because the caller owns the list and this is how it gets it back.
+    #[serde(rename_all = "camelCase")]
+    Todo { tasks: Vec<Task> },
 }
 
 /// `readFile` arguments.
@@ -828,4 +834,71 @@ pub struct DeleteDirectoryArgs {
 pub struct MoveArgs {
     pub path: String,
     pub new_path: String,
+}
+
+/// `todo` arguments. One wire tool, two operations — the same shape the model
+/// is given, so nothing has to fan it out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum TodoArgs {
+    /// Appends to the end of the list. Never replaces it.
+    Write { tasks: Vec<String> },
+    Update {
+        /// Which task to change. Omitted means the active one.
+        ///
+        /// The default exists because naming an id is a step that goes wrong
+        /// silently: in the transcript that prompted it, the model closed `t6`
+        /// meaning `t5`, and the checklist ended the turn claiming a finished
+        /// step was still outstanding. "The task I am on" needs no id, and that
+        /// is what almost every update means.
+        #[serde(default)]
+        id: Option<String>,
+        status: TodoUpdateStatus,
+        #[serde(default)]
+        note: Option<String>,
+    },
+}
+
+/// One entry in the model's checklist for a multi-step turn.
+///
+/// `id` is assigned by the runtime (`t1`, `t2`, …), never chosen by the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub title: String,
+    pub status: TodoStatus,
+    /// A short result when completed, or the reason when cancelled.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+}
+
+/// What an update may set — deliberately not `Pending` or `InProgress`.
+///
+/// Excluding them at the type level is what makes "the model never picks the
+/// next task itself" a fact the schema enforces rather than something the
+/// prompt asks for. The runtime advances the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TodoUpdateStatus {
+    Completed,
+    Cancelled,
+}
+
+impl From<TodoUpdateStatus> for TodoStatus {
+    fn from(status: TodoUpdateStatus) -> Self {
+        match status {
+            TodoUpdateStatus::Completed => TodoStatus::Completed,
+            TodoUpdateStatus::Cancelled => TodoStatus::Cancelled,
+        }
+    }
 }

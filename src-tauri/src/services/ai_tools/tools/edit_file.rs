@@ -378,7 +378,7 @@ mod tests {
 
         let (scope, root, mut reads) = fixture("edit-dispatch", "x\n");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::FileEdited { .. })
         ));
         assert_eq!(on_disk(&root), "y\n");

@@ -166,7 +166,7 @@ mod tests {
         write(&root, "a.txt", "x\n");
         agent_reads(&scope, &mut reads, "a.txt", None);
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::FileDeleted { .. })
         ));
         assert!(!root.join("a.txt").exists());

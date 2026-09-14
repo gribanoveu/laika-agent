@@ -249,7 +249,7 @@ mod tests {
 
         let (scope, root, mut reads) = fixture("write-dispatch");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::FileWritten { .. })
         ));
         assert_eq!(on_disk(&root, "a.txt"), "x\n");

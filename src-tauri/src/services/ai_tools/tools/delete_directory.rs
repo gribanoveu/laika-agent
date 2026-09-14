@@ -166,7 +166,7 @@ mod tests {
         let (scope, root, mut reads) = fixture("rmdir-dispatch");
         write(&root, "sub/a.txt", "x");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::DirectoryDeleted { .. })
         ));
         assert!(!root.join("sub").exists());

@@ -243,7 +243,7 @@ mod tests {
         let json = r#"{"tool": "readFile", "args": {"path": "file.txt", "startLine": "2", "endLine": "3"}}"#;
         let call: ToolCall = serde_json::from_str(json).expect("quoted numbers parse");
 
-        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call, &mut ReadFiles::default()).unwrap());
+        let (content, start, end, _) = unwrap_file(execute_tool(&scope, &call, &mut ReadFiles::default(), &mut Vec::new()).unwrap());
 
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end), (2, 3));

@@ -98,7 +98,7 @@ mod tests {
         assert!(call.is_risky());
         let (scope, root, mut reads) = fixture("mkdir-dispatch");
         assert!(matches!(
-            execute_tool(&scope, &call, &mut reads),
+            execute_tool(&scope, &call, &mut reads, &mut Vec::new()),
             Ok(ToolResult::DirectoryCreated { .. })
         ));
         assert!(root.join("a").is_dir());
