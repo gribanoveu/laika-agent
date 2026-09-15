@@ -19,6 +19,7 @@ pub fn run() {
             commands::chat::chat_start,
             commands::chat::chat_resume,
             commands::chat::chat_cancel,
+            commands::chat::chat_preview,
             commands::chat::chat_steer,
             commands::chat::chat_cancel_steer,
             commands::chat::approval_always_allow,

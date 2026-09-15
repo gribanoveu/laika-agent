@@ -402,6 +402,33 @@ impl ToolScope {
     }
 }
 
+/// What a call would do, worked out without doing it.
+///
+/// Approving a write means approving its contents, and the arguments alone do
+/// not show them: `{"path":"Mapper.java"}` is not an answer to "what would
+/// change". Computed on demand for a paused round, never as part of running
+/// one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ToolPreview {
+    /// What the file would look like afterwards, against what is there now.
+    #[serde(rename_all = "camelCase")]
+    Diff { path: String, diff: FileDiffStats },
+    /// How much a recursive delete would actually take. The scariest thing to
+    /// approve is a path that turned out broader than it looked.
+    #[serde(rename_all = "camelCase")]
+    Removes { path: String, files: usize },
+    /// A command line and where it would run.
+    #[serde(rename_all = "camelCase")]
+    Command { command: String, cwd: String },
+    /// The call would not succeed anyway, and this says why — better learned
+    /// before approving it than after.
+    #[serde(rename_all = "camelCase")]
+    Failed { reason: String },
+    /// Nothing worth showing beyond the arguments themselves.
+    Nothing,
+}
+
 /// What a tool needs from the environment, beyond the workspace it acts on.
 ///
 /// Empty until now, which is why the dispatcher took no such argument: every

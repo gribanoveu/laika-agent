@@ -21,11 +21,12 @@ use std::time::Duration;
 use tauri::{AppHandle, Runtime, State};
 
 use crate::domain::command_exec::Shell;
-use crate::domain::llm::LlmMessage;
-use crate::domain::tools::{ApprovalPolicy, Task, ToolName, ToolScope};
+use crate::domain::llm::{LlmMessage, LlmToolCall};
+use crate::domain::tools::{ApprovalPolicy, Task, ToolName, ToolPreview, ToolScope};
 use crate::domain::turn::{
-    ChatStreamOutcome, PendingApproval, SteeringNote, ToolCallDecision,
+    ChatStreamOutcome, PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision,
 };
+use crate::services::ai_tools::preview;
 use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
 use crate::services::llm_session;
 
@@ -128,6 +129,28 @@ pub async fn chat_resume<R: Runtime>(
         llm_chat::resume(turn, checkpoint, decisions)
     })
     .await
+}
+
+/// What the calls of a paused round would do, worked out without doing them.
+///
+/// Asked for the whole round at once: the card shows every call, and one round
+/// trip beats one per call. Nothing here runs anything.
+#[tauri::command]
+pub fn chat_preview(
+    calls: Vec<PendingToolCall>,
+    state: State<'_, Arc<AgentState>>,
+) -> Result<Vec<ToolPreview>, String> {
+    let workspace = state.workspace()?;
+    let scope = ToolScope::new(&workspace).map_err(|e| e.to_string())?;
+    let calls: Vec<LlmToolCall> = calls
+        .into_iter()
+        .map(|call| LlmToolCall {
+            id: call.id,
+            name: call.name,
+            arguments: call.arguments,
+        })
+        .collect();
+    Ok(preview::preview_round(&scope, &calls))
 }
 
 /// Asks the running turn to stop. Returns at once: the turn notices at its

@@ -62,7 +62,7 @@ pub fn edit_file(
 
 /// Splices every edit into `content` at once. Nothing is applied unless all of
 /// them resolve.
-fn apply_edits(content: &str, edits: &[FileEdit]) -> Result<String, ToolError> {
+pub(in crate::services::ai_tools) fn apply_edits(content: &str, edits: &[FileEdit]) -> Result<String, ToolError> {
     let ranges = exact_match_ranges(content, edits)?;
 
     let mut result = String::with_capacity(content.len());

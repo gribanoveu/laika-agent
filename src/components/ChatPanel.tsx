@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronRight,
   FileText,
@@ -14,7 +14,7 @@ import {
 import { ChatEmptyState } from "./ChatEmptyState";
 import { describeTool } from "../lib/describeTool";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
-import type { ChatUsage, ToolCallDecision } from "../lib/chat";
+import { previewCalls, type ChatUsage, type ToolCallDecision, type ToolPreview } from "../lib/chat";
 import "./ChatPanel.css";
 
 const TOOL_ICON: Record<string, typeof FileText> = {
@@ -69,7 +69,21 @@ function ApprovalCard({
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
 }) {
   const [reason, setReason] = useState("");
+  // What each call would do. Approving a write means approving its contents,
+  // and the arguments alone do not show them.
+  const [previews, setPreviews] = useState<ToolPreview[]>([]);
   const asked = block.calls.filter((call) => call.requiresConfirmation);
+
+  useEffect(() => {
+    let live = true;
+    previewCalls(block.calls)
+      // `?? []`: the card is worth drawing even if the previews are not.
+      .then((next) => live && setPreviews(next ?? []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [block.calls]);
   const answer = (approved: boolean, always: string[] = []) =>
     onDecide(
       asked.map((call) => ({
@@ -85,9 +99,12 @@ function ApprovalCard({
       <div className="approval-label">
         Approval required · {asked.map((call) => describeTool({ ...emptyTool, ...call }).name).join(", ")}
       </div>
-      {asked.map((call) => (
-        <div className="approval-cmd" key={call.id}>
-          {describeTool({ ...emptyTool, ...call }).arg}
+      {block.calls.map((call, index) => (
+        <div key={call.id}>
+          <div className={`approval-cmd${call.requiresConfirmation ? "" : " passive"}`}>
+            {describeTool({ ...emptyTool, ...call }).arg}
+          </div>
+          <Preview preview={previews[index]} />
         </div>
       ))}
       <input
@@ -115,6 +132,55 @@ function ApprovalCard({
     </div>
   );
 }
+
+/** What the call would do, once the backend has worked it out. */
+export function Preview({ preview }: { preview?: ToolPreview }) {
+  if (!preview || preview.kind === "nothing") return null;
+
+  if (preview.kind === "failed") {
+    // Worth as much as a successful preview: an edit whose anchor no longer
+    // matches is better refused before agreeing to it than after.
+    return <p className="approval-preview failed">This would not succeed: {preview.reason}</p>;
+  }
+
+  if (preview.kind === "removes") {
+    return (
+      <p className="approval-preview">
+        Removes {preview.files} {preview.files === 1 ? "file" : "files"} under {preview.path}
+      </p>
+    );
+  }
+
+  if (preview.kind === "command") {
+    return <p className="approval-preview">Runs in {preview.cwd}</p>;
+  }
+
+  return (
+    <div className="diff-preview-wrap">
+      <div className="diff-preview-head">
+        <span className="diff-preview-name">{preview.path}</span>
+        <span className="meta mono">
+          <span className="add">+{preview.diff.linesAdded}</span>{" "}
+          <span className={preview.diff.linesRemoved ? "del" : "zero"}>
+            -{preview.diff.linesRemoved}
+          </span>
+        </span>
+      </div>
+      <pre className="diff-preview">
+        {preview.diff.unifiedDiff.split("\n").map((line, i) => (
+          <span key={i} className={lineClass(line)}>
+            {line}
+            {"\n"}
+          </span>
+        ))}
+      </pre>
+      {preview.diff.truncated && <p className="approval-preview">…the rest is not shown</p>}
+    </div>
+  );
+}
+
+const lineClass = (line: string) =>
+  line.startsWith("+") ? "ln-add" : line.startsWith("-") ? "ln-del" : undefined;
 
 /** A pending call has no result yet, and `describeTool` reads the same shape either way. */
 const emptyTool = {

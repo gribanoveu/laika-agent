@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { ChatPanel } from "../components/ChatPanel";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { ChatPanel, Preview } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
 
 // The transcript's own rules: who a block belongs to, and what the approval
@@ -88,6 +88,9 @@ describe("a tool row", () => {
   });
 });
 
+/** The card asks the backend what its calls would do; let that answer land. */
+const settle = () => act(async () => {});
+
 describe("the approval card", () => {
   const approval: Block = {
     kind: "approval",
@@ -99,16 +102,18 @@ describe("the approval card", () => {
     ],
   };
 
-  test("asks only about the calls that need an answer", () => {
+  test("asks only about the calls that need an answer", async () => {
     panel(state([approval]));
+    await settle();
 
     expect(screen.getByText(/Approval required/).textContent).toContain("Write");
     expect(screen.getByText(/Approval required/).textContent).not.toContain("List");
   });
 
-  test("allowing answers every call that was asked about", () => {
+  test("allowing answers every call that was asked about", async () => {
     const decided: unknown[] = [];
     panel(state([approval]), (decisions, always) => decided.push({ decisions, always }));
+    await settle();
 
     fireEvent.click(screen.getByText("Allow"));
 
@@ -120,9 +125,10 @@ describe("the approval card", () => {
   /// A model told only "denied" tries the same call again, then a near variant
   /// of it. The reason is what ends that in one round — so it has to reach the
   /// decision, not just the textbox.
-  test("a refusal carries the reason that was typed", () => {
+  test("a refusal carries the reason that was typed", async () => {
     const decided: { decisions: { reason?: string | null }[] }[] = [];
     panel(state([approval]), (decisions) => decided.push({ decisions }));
+    await settle();
 
     fireEvent.change(screen.getByPlaceholderText(/Why not/), {
       target: { value: "use the existing helper" },
@@ -132,12 +138,67 @@ describe("the approval card", () => {
     expect(decided[0]?.decisions[0]?.reason).toBe("use the existing helper");
   });
 
-  test("always allow names the tool it should stop asking about", () => {
+  test("always allow names the tool it should stop asking about", async () => {
     const decided: { always: string[] }[] = [];
     panel(state([approval]), (_decisions, always) => decided.push({ always }));
+    await settle();
 
     fireEvent.click(screen.getByText("Always"));
 
     expect(decided[0]?.always).toEqual(["writeFile"]);
+  });
+});
+
+describe("what a call would do", () => {
+  test("a write shows its diff, coloured line by line", () => {
+    render(
+      <Preview
+        preview={{
+          kind: "diff",
+          path: "Mapper.java",
+          diff: {
+            linesAdded: 1,
+            linesRemoved: 1,
+            unifiedDiff: "@@ -1 +1 @@\n-return null;\n+return IncomeAmount.zero();\n",
+            truncated: false,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Mapper.java")).toBeDefined();
+    expect(screen.getByText("+1")).toBeDefined();
+    expect(document.querySelectorAll(".ln-add")).toHaveLength(1);
+    expect(document.querySelectorAll(".ln-del")).toHaveLength(1);
+  });
+
+  /// Learning that an edit cannot apply after approving it costs a round and
+  /// the user's trust in the card.
+  test("an edit that cannot apply says so instead", () => {
+    render(<Preview preview={{ kind: "failed", reason: "edit text not found: nowhere" }} />);
+
+    expect(screen.getByText(/would not succeed/).textContent).toContain("not found");
+  });
+
+  /// The scariest thing to approve is a path that turned out broader than it
+  /// looked.
+  test("a recursive delete says how much it would take", () => {
+    render(<Preview preview={{ kind: "removes", path: "src", files: 428 }} />);
+    expect(screen.getByText(/428 files/)).toBeDefined();
+  });
+
+  test("a command says where it would run", () => {
+    render(<Preview preview={{ kind: "command", command: "cargo test", cwd: "crate" }} />);
+    expect(screen.getByText(/Runs in crate/)).toBeDefined();
+  });
+
+  test("a call with nothing to show draws nothing at all", () => {
+    const { container } = render(<Preview preview={{ kind: "nothing" }} />);
+    expect(container.textContent).toBe("");
+  });
+
+  test("and so does a call whose preview has not arrived yet", () => {
+    const { container } = render(<Preview preview={undefined} />);
+    expect(container.textContent).toBe("");
   });
 });

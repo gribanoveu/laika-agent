@@ -234,3 +234,26 @@ export async function readiness(): Promise<Readiness> {
   if (!inTauri()) return { workspace: null, provider: null, hasKey: false };
   return invoke<Readiness>("agent_readiness");
 }
+
+// ------------------------------------------------------------- previewing
+
+export type FileDiffStats = {
+  linesAdded: number;
+  linesRemoved: number;
+  unifiedDiff: string;
+  truncated: boolean;
+};
+
+/** What a paused call would do, worked out without doing it. */
+export type ToolPreview =
+  | { kind: "diff"; path: string; diff: FileDiffStats }
+  | { kind: "removes"; path: string; files: number }
+  | { kind: "command"; command: string; cwd: string }
+  | { kind: "failed"; reason: string }
+  | { kind: "nothing" };
+
+/** One round trip for the whole card: it shows every call the round asked for. */
+export async function previewCalls(calls: PendingToolCall[]): Promise<ToolPreview[]> {
+  if (!inTauri()) return calls.map(() => ({ kind: "nothing" }) as ToolPreview);
+  return invoke<ToolPreview[]>("chat_preview", { calls });
+}

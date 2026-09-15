@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 
 // The wrappers are the only place command names and payload shapes are
 // written down, so what is worth checking here is that they are written
@@ -28,7 +28,15 @@ mock.module("@tauri-apps/api/event", () => ({
 }));
 
 // The wrappers refuse to run outside the app; these tests are the app's side.
+//
+// `window` is shared with every other test file in the run, so this has to be
+// put back: with it left behind, components in other files believe they are in
+// the app and call an `invoke` that is mocked here — which is how this suite
+// passed file by file and failed as a whole.
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+afterAll(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+});
 
 const chat = await import("../lib/chat");
 

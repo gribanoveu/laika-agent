@@ -280,3 +280,55 @@
 .tool-item.failed .arg {
   color: var(--red);
 }
+
+/* The diff a write would make, shown before it is approved. Same vocabulary as
+   the prototype's changes-panel preview, so the two read alike. */
+.diff-preview-wrap {
+  margin-bottom: 8px;
+}
+.diff-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.diff-preview-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.diff-preview {
+  margin: 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  /* A long diff scrolls inside the card rather than pushing the buttons that
+     answer it off the screen. */
+  max-height: 180px;
+  overflow-y: auto;
+}
+.diff-preview .ln-add {
+  color: var(--green);
+}
+.diff-preview .ln-del {
+  color: var(--red);
+}
+.approval-preview {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.approval-preview.failed {
+  color: var(--red);
+}
+/* A call bundled into the round that needs no decision of its own: it runs
+   when the round resumes, so it is shown — quietly. */
+.approval-cmd.passive {
+  color: var(--text-faint);
+}
