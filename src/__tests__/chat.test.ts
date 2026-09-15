@@ -139,3 +139,44 @@ describe("turn events", () => {
     expect(heard).toEqual([]);
   });
 });
+
+describe("saved chats", () => {
+  test("a chat is saved under its id, with both lists", async () => {
+    invokeResult = { id: "c1", title: "fix the parser", updatedAt: 7 };
+    const messages = [{ role: "user" as const, content: "fix the parser" }];
+    const blocks = [{ kind: "user" as const, id: "user:0", text: "fix the parser" }];
+
+    const summary = await chat.saveChat("c1", messages, blocks, []);
+
+    expect(calls).toEqual([
+      { command: "chat_save", args: { id: "c1", messages, blocks, todos: [] } },
+    ]);
+    expect(summary.title).toBe("fix the parser");
+  });
+
+  test("a chat is loaded by id", async () => {
+    invokeResult = { id: "c1", messages: [], blocks: [], todos: [] };
+    await chat.loadChat("c1");
+    expect(calls).toEqual([{ command: "chat_load", args: { id: "c1" } }]);
+  });
+
+  test("the list asks for nothing: the backend knows which folder is open", async () => {
+    invokeResult = [];
+    await chat.listChats();
+    expect(calls).toEqual([{ command: "chat_list", args: undefined }]);
+  });
+
+  /// The sidebar is drawn in a plain browser too (`bun run dev`), where there
+  /// is no backend to ask. An empty list is the honest answer; a thrown error
+  /// would be an empty sidebar with a broken page behind it.
+  test("and outside the app it is simply empty", async () => {
+    const internals = (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    try {
+      expect(await chat.listChats()).toEqual([]);
+      expect(calls).toEqual([]);
+    } finally {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = internals;
+    }
+  });
+});

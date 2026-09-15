@@ -8,3 +8,4 @@
 pub mod chat;
 pub mod chat_events;
 pub mod settings;
+pub mod chat_history;

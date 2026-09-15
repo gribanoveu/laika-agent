@@ -5,6 +5,7 @@ import {
   appendUserMessage,
   clearApproval,
   emptyTurn,
+  restoredTurn,
   type Block,
   type TurnState,
 } from "../lib/chatTurnReducer";
@@ -291,5 +292,52 @@ describe("the rest of the turn's state", () => {
     const state = appendUserMessage(emptyTurn(), "fix the NPE");
     expect(kinds(state)).toEqual(["user"]);
     expect(state.status).toBe("running");
+  });
+});
+
+describe("more than one turn", () => {
+  /// Each turn numbers its own events from one. Keeping the previous turn's
+  /// cursor made every event of the next one look like a repeat, and the
+  /// second answer to a conversation never appeared at all.
+  test("a new question starts the sequence over", () => {
+    const first = run([
+      ev({ type: "roundStarted", seq: 1 }),
+      ev({ type: "delta", seq: 2, payload: { delta: "first answer" } }),
+    ]);
+    expect(first.lastSeq).toBe(2);
+
+    const second = run(
+      [
+        ev({ type: "roundStarted", seq: 1 }),
+        ev({ type: "delta", seq: 2, payload: { delta: "second answer" } }),
+      ],
+      appendUserMessage(first, "and again"),
+    );
+
+    expect(second.blocks.filter((b) => b.kind === "message")).toHaveLength(2);
+    expect(second.blocks.at(-1)).toMatchObject({ kind: "message", text: "second answer" });
+  });
+
+  /// Not the same as a fresh question: a resumed turn carries on from the
+  /// checkpoint's own count, so its cursor must survive the pause.
+  test("answering an approval keeps the cursor", () => {
+    const paused = { ...emptyTurn(), lastSeq: 9, status: "awaitingApproval" as const };
+    expect(clearApproval(paused).lastSeq).toBe(9);
+  });
+});
+
+describe("reopening a saved chat", () => {
+  test("the transcript comes back at rest, with nothing in flight", () => {
+    const blocks: Block[] = [
+      { kind: "user", id: "user:0", text: "earlier" },
+      { kind: "message", id: "m1", round: 1, text: "answered" },
+    ];
+    const state = restoredTurn(blocks);
+
+    expect(state.blocks).toEqual(blocks);
+    expect(state.status).toBe("done");
+    expect(state.checkpoint).toBeNull();
+    expect(state.lastSeq).toBe(0);
+    expect(state.buffered).toEqual([]);
   });
 });

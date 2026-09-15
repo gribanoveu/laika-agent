@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+// Type-only, and erased: the transcript's block shapes are defined beside the
+// reducer that builds them, and a saved chat is where they cross the wire.
+import type { Block } from "./chatTurnReducer";
 
 // One typed wrapper per command. Components and hooks call these, never
 // `invoke` directly — the command names and payload shapes live here and
@@ -256,4 +259,56 @@ export type ToolPreview =
 export async function previewCalls(calls: PendingToolCall[]): Promise<ToolPreview[]> {
   if (!inTauri()) return calls.map(() => ({ kind: "nothing" }) as ToolPreview);
   return invoke<ToolPreview[]>("chat_preview", { calls });
+}
+
+// ------------------------------------------------------------ saved chats
+
+/** A row in the sidebar. Not the whole conversation — see `chat_load`. */
+export type ChatSummary = { id: string; title: string; updatedAt: number };
+
+/**
+ * One saved conversation. Two lists, because they are not the same list: the
+ * model reads `messages`, the reader reads `blocks`, and one tool call is two
+ * messages and one block.
+ *
+ * The shape is fixed on the other side in
+ * `src-tauri/src/domain/chat_record.rs`, where `schemaVersion` says which
+ * spelling of it this is.
+ */
+export type ChatRecord = {
+  schemaVersion: number;
+  id: string;
+  workspace: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: LlmMessage[];
+  blocks: Block[];
+  todos: Task[];
+};
+
+/** Chats of the open folder, newest first. No folder, no backend: no rows. */
+export async function listChats(): Promise<ChatSummary[]> {
+  if (!inTauri()) return [];
+  return invoke<ChatSummary[]>("chat_list");
+}
+
+export async function loadChat(id: string): Promise<ChatRecord> {
+  requireBackend();
+  return invoke<ChatRecord>("chat_load", { id });
+}
+
+export async function saveChat(
+  id: string,
+  messages: LlmMessage[],
+  blocks: Block[],
+  todos: Task[],
+): Promise<ChatSummary> {
+  requireBackend();
+  return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos });
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  requireBackend();
+  return invoke("chat_delete", { id });
 }

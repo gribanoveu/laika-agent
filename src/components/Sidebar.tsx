@@ -12,7 +12,8 @@ import {
   UserRound,
 } from "lucide-react";
 import { GettingStarted } from "./GettingStarted";
-import type { AsideTab, ChatSummary } from "../types";
+import type { ChatSummary } from "../lib/chat";
+import type { AsideTab } from "../types";
 import "./Sidebar.css";
 
 type Props = {

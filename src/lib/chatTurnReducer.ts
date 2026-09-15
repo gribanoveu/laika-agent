@@ -65,8 +65,19 @@ export function appendUserMessage(state: TurnState, text: string): TurnState {
   return {
     ...state,
     status: "running",
+    // A fresh turn numbers its events from one again — `seq` is a cursor
+    // within a turn, not within the conversation. Carrying the previous
+    // turn's cursor over would make every event of this one look like a
+    // replay, and the answer would never appear.
+    lastSeq: 0,
+    buffered: [],
     blocks: [...state.blocks, { kind: "user", id: `user:${state.blocks.length}`, text }],
   };
+}
+
+/** A conversation reopened from disk: its transcript, and nothing in flight. */
+export function restoredTurn(blocks: Block[]): TurnState {
+  return { ...emptyTurn(), blocks, status: "done" };
 }
 
 /**
@@ -213,12 +224,10 @@ function appendText(
   round: number,
   delta: string,
 ): TurnState {
-  const existing = lastOf(state, kind, round);
+  const id = textId(state, kind, round);
+  const existing = blockWithId(state, id);
   if (!existing) {
-    return {
-      ...state,
-      blocks: [...state.blocks, { kind, id: `round:${round}:${kind}`, round, text: delta }],
-    };
+    return { ...state, blocks: [...state.blocks, { kind, id, round, text: delta }] };
   }
   return replace(state, existing, { ...existing, text: existing.text + delta });
 }
@@ -229,23 +238,36 @@ function setText(
   round: number,
   text: string,
 ): TurnState {
-  const existing = lastOf(state, kind, round);
+  const id = textId(state, kind, round);
+  const existing = blockWithId(state, id);
   // A round that only called tools says nothing, and an empty block would draw
   // an empty paragraph in the transcript.
   if (!existing) {
     if (!text) return state;
-    return {
-      ...state,
-      blocks: [...state.blocks, { kind, id: `round:${round}:${kind}`, round, text }],
-    };
+    return { ...state, blocks: [...state.blocks, { kind, id, round, text }] };
   }
   return replace(state, existing, { ...existing, text });
 }
 
-function lastOf(state: TurnState, kind: "message" | "reasoning", round: number) {
+/**
+ * Where this round's prose goes — a round of *this* turn.
+ *
+ * Rounds are numbered from one inside every turn, so "the message block of
+ * round 1" names one block per question asked. Without the turn in the key,
+ * the second question's first answer was appended to the first question's
+ * paragraph, halfway up the transcript. The turn is counted rather than
+ * stored: a conversation has had exactly as many turns as it has questions in
+ * it, including the ones restored from disk.
+ */
+function textId(state: TurnState, kind: "message" | "reasoning", round: number) {
+  const turn = state.blocks.filter((block) => block.kind === "user").length;
+  return `turn:${turn}:round:${round}:${kind}`;
+}
+
+function blockWithId(state: TurnState, id: string) {
   return state.blocks.find(
     (block): block is Extract<Block, { kind: "message" | "reasoning" }> =>
-      block.kind === kind && block.round === round,
+      (block.kind === "message" || block.kind === "reasoning") && block.id === id,
   );
 }
 

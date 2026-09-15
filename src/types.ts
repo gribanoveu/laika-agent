@@ -1,8 +1,7 @@
-export type ChatSummary = { id: string; title: string };
-
 // The transcript's own types live in `lib/chatTurnReducer.ts`, beside the code
-// that builds them. What stays here is what the panels around the chat are
-// still drawn from.
+// that builds them, and a saved chat's in `lib/chat.ts`, beside the commands
+// that carry it. What stays here is what the panels around the chat are still
+// drawn from.
 
 export type ChangedFile = { name: string; add: number; del: number };
 

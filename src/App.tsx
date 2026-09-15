@@ -9,6 +9,7 @@ import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useAgentTurn } from "./hooks/useAgentTurn";
+import { useChatHistory } from "./hooks/useChatHistory";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -16,12 +17,8 @@ import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
-import type { AsideTab, ChatSummary } from "./types";
+import type { AsideTab } from "./types";
 import "./App.css";
-
-// The chat list waits on the store that would hold it (stage 3, F-3.8); the
-// conversation itself is live.
-const chats: ChatSummary[] = [];
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
 // titlebar contract, driven explicitly so clicks on the controls stay clicks.
@@ -38,13 +35,15 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("changes");
-  const [activeChat, setActiveChat] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openFolder, setOpenFolder] = useState(false);
   const [folderPath, setFolderPath] = useState("");
   const toast = useToast();
   const workspace = useWorkspace();
-  const agent = useAgentTurn();
+  const history = useChatHistory(workspace.path);
+  // The list is redrawn from disk after every save rather than guessed at
+  // here: what belongs in it, and in what order, is the store's rule.
+  const agent = useAgentTurn({ onSaved: history.refresh });
   const llm = useLlmSettings();
   const theme = useTheme();
   const panels = usePanelSizes({
@@ -70,8 +69,8 @@ export default function App() {
     setAsideCollapsed(false);
   };
 
-  // Nothing to tell the backend: it keeps no conversation of its own, so
-  // forgetting this one here is the whole of starting over.
+  // The conversation just left is already on disk and stays in the sidebar;
+  // this only stops pointing at it.
   const newChat = () => agent.reset();
 
   const send = (text: string) => {
@@ -110,10 +109,10 @@ export default function App() {
 
       <div className="body">
         <Sidebar
-          chats={chats}
+          chats={history.chats}
           repo={workspace.path}
-          activeChat={activeChat}
-          onSelectChat={setActiveChat}
+          activeChat={agent.chatId}
+          onSelectChat={agent.open}
           onNewChat={newChat}
           onToggleCollapse={() => setCollapsed((v) => !v)}
           onOpenSettings={() => setSettingsOpen(true)}

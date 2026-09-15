@@ -1,0 +1,58 @@
+//! The list of conversations, and one conversation restored.
+//!
+//! The window owns the transcript while a turn runs (see `commands::chat`);
+//! this is where it puts it afterwards so a restart is not a fresh start.
+
+use std::sync::Arc;
+
+use serde_json::Value;
+use tauri::State;
+
+use crate::domain::chat_record::{ChatRecord, ChatSummary};
+use crate::domain::llm::LlmMessage;
+use crate::domain::tools::Task;
+use crate::infra::chat_store;
+
+use super::chat::AgentState;
+
+/// Chats of the open folder, newest first. No folder open is an empty list:
+/// there is nothing to be wrong about yet, and the sidebar already says so.
+#[tauri::command]
+pub fn chat_list(state: State<'_, Arc<AgentState>>) -> Result<Vec<ChatSummary>, String> {
+    let Ok(workspace) = state.workspace() else {
+        return Ok(Vec::new());
+    };
+    chat_store::list(&workspace.display().to_string()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn chat_load(id: String) -> Result<ChatRecord, String> {
+    chat_store::load(&id).map_err(|e| e.to_string())
+}
+
+/// Writes the conversation as it now stands. Called once a turn has ended —
+/// saving mid-turn would store a transcript whose last tool call has no
+/// result yet.
+#[tauri::command]
+pub fn chat_save(
+    state: State<'_, Arc<AgentState>>,
+    id: String,
+    messages: Vec<LlmMessage>,
+    blocks: Value,
+    todos: Vec<Task>,
+) -> Result<ChatSummary, String> {
+    let workspace = state.workspace()?;
+    chat_store::save(
+        &id,
+        &workspace.display().to_string(),
+        &messages,
+        &blocks,
+        &todos,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn chat_delete(id: String) -> Result<(), String> {
+    chat_store::delete(&id).map_err(|e| e.to_string())
+}

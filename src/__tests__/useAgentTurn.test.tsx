@@ -1,0 +1,187 @@
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { act, renderHook, waitFor } from "@testing-library/react";
+
+// When a conversation is written down, and with what. The interesting part is
+// not the call itself but its timing: a turn that ended is history, a turn
+// still running is not, and a chat that was merely opened is not news.
+
+type Call = { command: string; args: Record<string, unknown> };
+const calls: Call[] = [];
+const results: Record<string, unknown> = {};
+
+mock.module("@tauri-apps/api/core", () => ({
+  invoke: (command: string, args: Record<string, unknown>) => {
+    calls.push({ command, args });
+    return Promise.resolve(results[command] ?? null);
+  },
+}));
+
+mock.module("@tauri-apps/api/event", () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
+
+(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+afterAll(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+});
+
+const { useAgentTurn } = await import("../hooks/useAgentTurn");
+
+const done = (text: string) => ({
+  status: "done",
+  value: { text, truncated: false, todos: [] },
+});
+
+afterEach(() => {
+  calls.length = 0;
+  for (const key of Object.keys(results)) delete results[key];
+});
+
+const saved = () => calls.filter((call) => call.command === "chat_save");
+
+describe("saving", () => {
+  test("a finished turn is written down, with both lists", async () => {
+    results.chat_start = done("here you go");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("fix the parser");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+
+    const args = saved()[0].args;
+    expect(args.messages).toEqual([
+      { role: "user", content: "fix the parser" },
+      { role: "assistant", content: "here you go" },
+    ]);
+    // The transcript, not a reconstruction of it from the messages.
+    expect(args.blocks).toEqual([{ kind: "user", id: "user:0", text: "fix the parser" }]);
+    expect(result.current.chatId).toBe(args.id as string);
+  });
+
+  test("the second turn of a conversation goes to the same chat", async () => {
+    results.chat_start = done("one");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("first");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    const first = saved()[0].args.id;
+
+    await act(async () => {
+      await result.current.send("second");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(2));
+
+    expect(saved()[1].args.id).toBe(first as string);
+  });
+
+  /// Reading is not a change. Saving here would also reorder the sidebar,
+  /// which lists by when a chat was last written to.
+  test("opening a chat does not write it straight back", async () => {
+    results.chat_load = {
+      schemaVersion: 1,
+      id: "kept",
+      workspace: "/repo",
+      title: "earlier",
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [{ role: "user", content: "earlier" }],
+      blocks: [{ kind: "user", id: "user:0", text: "earlier" }],
+      todos: [],
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.open("kept");
+    });
+
+    expect(saved()).toEqual([]);
+    expect(result.current.chatId).toBe("kept");
+    expect(result.current.turn.blocks).toHaveLength(1);
+  });
+
+  /// What was said carries on from where the transcript left off — otherwise
+  /// the model answers the next question having forgotten the last one.
+  test("a reopened chat continues its own history", async () => {
+    results.chat_load = {
+      schemaVersion: 1,
+      id: "kept",
+      workspace: "/repo",
+      title: "earlier",
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        { role: "user", content: "earlier" },
+        { role: "assistant", content: "answered" },
+      ],
+      blocks: [],
+      todos: [],
+    };
+    results.chat_start = done("still here");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.open("kept");
+    });
+    await act(async () => {
+      await result.current.send("and now?");
+    });
+
+    const started = calls.find((call) => call.command === "chat_start");
+    expect(started?.args.messages).toEqual([
+      { role: "user", content: "earlier" },
+      { role: "assistant", content: "answered" },
+      { role: "user", content: "and now?" },
+    ]);
+  });
+
+  /// A turn that paused is not over: its last tool call has been asked about
+  /// and not yet answered, and a transcript saved here has a hole in it.
+  test("a turn waiting for approval is not written down yet", async () => {
+    results.chat_start = {
+      status: "pendingApproval",
+      value: {
+        history: [],
+        round: 1,
+        budgetUsed: 1,
+        eventSeq: 3,
+        calls: [{ id: "w1", name: "writeFile", arguments: "{}", requiresConfirmation: true }],
+        todos: [],
+        reads: {},
+      },
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("write it");
+    });
+
+    expect(result.current.turn.status).toBe("awaitingApproval");
+    expect(saved()).toEqual([]);
+  });
+
+  test("starting a new chat leaves the old one where it is", async () => {
+    results.chat_start = done("one");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("first");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    const first = saved()[0].args.id;
+
+    act(() => result.current.reset());
+    await act(async () => {
+      await result.current.send("second");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(2));
+
+    expect(saved()[1].args.id).not.toBe(first as string);
+    expect(saved()[1].args.messages).toEqual([
+      { role: "user", content: "second" },
+      { role: "assistant", content: "one" },
+    ]);
+  });
+});
