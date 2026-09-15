@@ -17,6 +17,7 @@ use crate::domain::llm::{
     sanitize_tool_call_arguments,
 };
 use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
+use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -30,6 +31,7 @@ use crate::infra::llm_debug_log;
 use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::ai_tools::tools::{execute_tool, tool_definitions};
+use crate::services::context_compaction;
 use crate::services::llm_session::LlmSession;
 
 /// How many model↔tool round trips one turn may run.
@@ -362,12 +364,7 @@ fn run(
             apply_steering(&events, round, &mut state.history, (turn.take_steering)());
             events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
 
-            let request = ChatRequest {
-                messages: state.history.clone(),
-                tools: tool_definitions(),
-                model: turn.session.model.clone(),
-            };
-            let result = match stream_one_round(turn, &events, round, request)? {
+            let result = match ask_the_model(turn, &events, round, &mut state.history)? {
                 Some(result) => result,
                 // Cancelled during a retry wait.
                 None => {
@@ -606,6 +603,62 @@ fn apply_steering(
 ///
 /// `Ok(None)` means the turn was cancelled during a wait — the caller turns
 /// that into the same cancelled outcome as every other stopping point.
+/// One round's request, made once more against a shorter history if the
+/// provider says the conversation no longer fits.
+///
+/// The compaction is reactive on purpose: it happens because a request was
+/// actually refused, not because an estimate guessed it would be. Once, and
+/// only once — a second refusal after the history has already been summarized
+/// is not about the history's length, and summarizing again would spend
+/// another request to lose more of the conversation for nothing.
+///
+/// A pass that cannot help leaves `history` alone and the original refusal is
+/// what the turn reports: "this conversation does not fit" is the useful
+/// thing to read, and "the summarizer also failed" is not.
+fn ask_the_model(
+    turn: &Turn,
+    events: &Events,
+    round: u32,
+    history: &mut Vec<LlmMessage>,
+) -> Result<Option<ChatStreamResult>, TurnError> {
+    let mut compacted = false;
+    loop {
+        let request = ChatRequest {
+            messages: history.clone(),
+            tools: tool_definitions(),
+            model: turn.session.model.clone(),
+        };
+        let error = match stream_one_round(turn, events, round, request) {
+            Ok(result) => return Ok(result),
+            Err(TurnError::Provider(error)) if !compacted && too_long(&error) => error,
+            Err(other) => return Err(other),
+        };
+        compacted = true;
+
+        // Harder than a proactive pass would: the window is not nearly full,
+        // it is already over.
+        match context_compaction::compact(turn.session, history, RETRY_KEEP_LAST_MESSAGES) {
+            Ok(Some(shorter)) => {
+                *history = shorter.history;
+                events.emit(
+                    round,
+                    Some(format!("round:{round}")),
+                    ChatEventPayload::HistoryCompacted {
+                        folded: shorter.folded,
+                    },
+                );
+            }
+            // Nothing could be folded, or the summarizer itself failed: report
+            // what the model actually refused.
+            Ok(None) | Err(_) => return Err(TurnError::Provider(error)),
+        }
+    }
+}
+
+fn too_long(error: &LlmError) -> bool {
+    compaction::is_context_length_error(&error.to_string())
+}
+
 fn stream_one_round(
     turn: &Turn,
     events: &Events,
@@ -836,6 +889,10 @@ mod tests {
         steps: Mutex<VecDeque<Step>>,
         requests: Mutex<Vec<ChatRequest>>,
         steering: Mutex<Option<Arc<SteeringQueue>>>,
+        /// Summarizing requests, which arrive unstreamed and out of band —
+        /// kept apart from `requests` so a test can say how many rounds there
+        /// were without counting them.
+        summaries: Mutex<Vec<ChatRequest>>,
     }
 
     impl Scripted {
@@ -844,6 +901,7 @@ mod tests {
                 steps: Mutex::new(steps.into()),
                 requests: Mutex::new(Vec::new()),
                 steering: Mutex::new(None),
+                summaries: Mutex::new(Vec::new()),
             })
         }
 
@@ -853,8 +911,14 @@ mod tests {
     }
 
     impl LlmProvider for Scripted {
-        fn chat(&self, _: ChatRequest) -> Result<ChatResponse, LlmError> {
-            unreachable!("the loop only ever streams")
+        /// Only compaction gets here: the loop itself always streams.
+        fn chat(&self, request: ChatRequest) -> Result<ChatResponse, LlmError> {
+            self.summaries.lock().unwrap().push(request);
+            Ok(ChatResponse {
+                content: Some("they were fixing the parser".to_string()),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
         }
 
         fn chat_stream(
@@ -1002,6 +1066,7 @@ mod tests {
                 ChatEventPayload::ContextUsage(_) => "contextUsage".to_string(),
                 ChatEventPayload::SteeringApplied { id, .. } => format!("steering:{id}"),
                 ChatEventPayload::CommandOutput { id, .. } => format!("commandOutput:{id}"),
+                ChatEventPayload::HistoryCompacted { folded } => format!("compacted:{folded}"),
             })
             .collect()
     }
@@ -1170,6 +1235,119 @@ mod tests {
         };
         assert_eq!(done.result.text, "done");
         assert_eq!(h.provider.requests().len(), 1, "one round, one request");
+    }
+
+    fn too_long_error() -> LlmError {
+        LlmError::Http(
+            "http status 400: This model's maximum context length is 8192 tokens".to_string(),
+        )
+    }
+
+    fn long_conversation() -> Vec<LlmMessage> {
+        (0..40)
+            .map(|i| {
+                if i % 2 == 0 {
+                    LlmMessage::user(format!("question {i}"))
+                } else {
+                    LlmMessage::assistant(format!("answer {i}"))
+                }
+            })
+            .collect()
+    }
+
+    /// The failure this exists for: the provider refuses because the
+    /// conversation no longer fits, and the turn ends. Now it makes room and
+    /// asks again, and the user never learns there was a problem.
+    #[test]
+    fn a_conversation_that_no_longer_fits_is_summarized_and_asked_again() {
+        let h = harness(
+            "loop-too-long",
+            vec![Step::Fail(too_long_error()), text("done")],
+        );
+
+        let outcome = h.run(|turn| stream(turn, long_conversation(), vec![]));
+
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("expected Done");
+        };
+        assert_eq!(done.result.text, "done");
+
+        let requests = h.provider.requests();
+        assert_eq!(requests.len(), 2, "the refused round and the retry");
+        assert!(
+            requests[1].messages.len() < requests[0].messages.len(),
+            "asked again with the same history"
+        );
+        assert!(requests[1].messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("they were fixing the parser"));
+        assert_eq!(h.provider.summaries.lock().unwrap().len(), 1);
+    }
+
+    /// History disappearing on its own is the thing to avoid: the model stops
+    /// remembering what it was told, and nothing in the window says why.
+    #[test]
+    fn the_transcript_is_told_that_history_was_folded_away() {
+        let h = harness(
+            "loop-too-long-event",
+            vec![Step::Fail(too_long_error()), text("done")],
+        );
+
+        h.run(|turn| stream(turn, long_conversation(), vec![]))
+            .expect("finishes");
+
+        let compacted: Vec<String> = payloads(&h.events())
+            .into_iter()
+            .filter(|p| p.starts_with("compacted:"))
+            .collect();
+        assert_eq!(compacted, ["compacted:34"]);
+    }
+
+    /// A second refusal after the history has already been summarized is not
+    /// about its length. Summarizing again would spend another request to lose
+    /// more of the conversation and fail anyway.
+    #[test]
+    fn a_conversation_is_summarized_once_and_then_the_refusal_stands() {
+        let h = harness(
+            "loop-too-long-twice",
+            vec![Step::Fail(too_long_error()), Step::Fail(too_long_error())],
+        );
+
+        let outcome = h.run(|turn| stream(turn, long_conversation(), vec![]));
+
+        assert!(matches!(outcome, Err(TurnError::Provider(_))), "{outcome:?}");
+        assert_eq!(h.provider.summaries.lock().unwrap().len(), 1, "summarized twice");
+    }
+
+    /// Not every overflow is a long conversation: one enormous file read
+    /// fills the window on its own, and there is nothing to summarize. The
+    /// refusal is then the useful thing to report — and no request is spent
+    /// discovering that.
+    #[test]
+    fn a_short_conversation_that_does_not_fit_is_reported_rather_than_summarized() {
+        let h = harness("loop-too-long-short", vec![Step::Fail(too_long_error())]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("x".repeat(9_000))], vec![]));
+
+        assert!(matches!(outcome, Err(TurnError::Provider(_))), "{outcome:?}");
+        assert!(h.provider.summaries.lock().unwrap().is_empty());
+    }
+
+    /// Any other refusal is reported as it always was — answering one with a
+    /// summarizing request costs money and loses history for nothing.
+    #[test]
+    fn another_kind_of_refusal_is_not_answered_by_summarizing() {
+        let h = harness(
+            "loop-other-error",
+            vec![Step::Fail(LlmError::Http("http status 401: invalid api key".to_string()))],
+        );
+
+        let outcome = h.run(|turn| stream(turn, long_conversation(), vec![]));
+
+        assert!(matches!(outcome, Err(TurnError::Provider(_))), "{outcome:?}");
+        assert!(h.provider.summaries.lock().unwrap().is_empty());
     }
 
     /// The loop's actual job: a call runs, and what it produced goes back to

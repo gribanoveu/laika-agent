@@ -26,7 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::domain::llm::{ChatRequest, ChatStreamResult, LlmError};
+use crate::domain::llm::{ChatRequest, LlmError};
 use crate::infra::app_dir;
 
 const FILE: &str = "llm.jsonl";
@@ -56,11 +56,16 @@ pub fn log_request(enabled: bool, provider_id: &str, round: u32, request: &ChatR
 
 /// What that round produced — the result, or the error's message, which for
 /// an HTTP status already carries the provider's own explanation.
-pub fn log_response(
+///
+/// Generic over the response type because a round is not the only thing that
+/// talks to the provider: the compaction pass sends an ordinary, unstreamed
+/// request, and a log that omits the request which rewrote the history cannot
+/// explain what the model was reading afterwards.
+pub fn log_response<T: Serialize>(
     enabled: bool,
     provider_id: &str,
     round: u32,
-    result: &Result<ChatStreamResult, LlmError>,
+    result: &Result<T, LlmError>,
 ) {
     if !enabled {
         return;
@@ -111,6 +116,7 @@ fn append<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::llm::ChatStreamResult;
     use crate::domain::llm::LlmMessage;
     use crate::testing::{temp_dir, with_app_dir};
 
@@ -179,7 +185,12 @@ mod tests {
     fn disabled_writes_nothing() {
         with_app_dir("debug-log-off", || {
             log_request(false, "local", 1, &request());
-            log_response(false, "local", 1, &Err(LlmError::Http("boom".to_string())));
+            log_response::<ChatStreamResult>(
+                false,
+                "local",
+                1,
+                &Err(LlmError::Http("boom".to_string())),
+            );
 
             assert!(!log_path().unwrap().exists());
         });

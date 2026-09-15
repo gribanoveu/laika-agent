@@ -164,6 +164,96 @@ pub fn summary_message(summary: &str) -> LlmMessage {
     LlmMessage::user(format!("{SUMMARY_PREFIX}\n\n{summary}"))
 }
 
+/// How the provider says "this conversation no longer fits".
+///
+/// Every one of these is someone's prose, which is why this is a list of
+/// phrases rather than a status code: the OpenAI-compatible protocol has no
+/// code for it, and each gateway phrases it its own way. Matching too
+/// eagerly is the expensive mistake — an unrelated failure answered with a
+/// summarizing request costs money and loses history — so these are phrases
+/// specific enough that nothing else produces them.
+const CONTEXT_LENGTH_PHRASES: [&str; 6] = [
+    "context length",
+    "context_length",
+    "context window",
+    "too many tokens",
+    "prompt is too long",
+    "maximum context",
+];
+
+pub fn is_context_length_error(message: &str) -> bool {
+    let message = message.to_lowercase();
+    CONTEXT_LENGTH_PHRASES
+        .iter()
+        .any(|phrase| message.contains(phrase))
+}
+
+/// What the summarizer is asked to do. Written for the next model reading
+/// its own summary, not for a person: what matters is what would otherwise
+/// have to be asked again.
+pub const SUMMARY_INSTRUCTIONS: &str = "\
+You are compacting the earlier part of a conversation between a user and a \
+coding agent so it can continue in less context. Write a summary in English \
+covering: what the user is trying to achieve, decisions already made and \
+why, files touched by path and what changed in them, what has been tried \
+and failed, and anything the agent must not forget to do. Be specific — \
+names, paths, error messages. Do not add advice, do not speculate, and do \
+not describe the conversation ('the user asked…'); write the state of the \
+work. Plain prose and short lists only.";
+
+/// The longest any one message is rendered at for the summarizer.
+///
+/// A file read is thirty thousand characters. Sending those verbatim to be
+/// summarized would send the very context that just overflowed — the request
+/// that is meant to make room would be the largest one of the session. What
+/// a summary needs from a tool result is that it happened and roughly what
+/// came back, and that survives truncation.
+const MAX_RENDERED_CHARS: usize = 1_500;
+
+/// The messages to be folded away, as text for the summarizer.
+pub fn render_for_summary(messages: &[LlmMessage]) -> String {
+    let mut out = String::new();
+    for message in messages {
+        let line = match message.role {
+            LlmRole::System => continue,
+            LlmRole::User => format!("User: {}", content_of(message)),
+            LlmRole::Tool => format!("  [result] {}", content_of(message)),
+            LlmRole::Assistant => {
+                let mut parts = Vec::new();
+                let text = content_of(message);
+                if !text.is_empty() {
+                    parts.push(format!("Assistant: {text}"));
+                }
+                for call in &message.tool_calls {
+                    // The arguments, not only the name: the summary is asked
+                    // for the files that were touched, and `writeFile` alone
+                    // names none of them.
+                    parts.push(format!("  [tool] {} {}", call.name, truncate(&call.arguments)));
+                }
+                parts.join("\n")
+            }
+        };
+        if line.is_empty() {
+            continue;
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn content_of(message: &LlmMessage) -> String {
+    truncate(message.content.as_deref().unwrap_or(""))
+}
+
+fn truncate(text: &str) -> String {
+    if text.chars().count() <= MAX_RENDERED_CHARS {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(MAX_RENDERED_CHARS).collect();
+    format!("{kept}… [{} characters omitted]", text.chars().count() - MAX_RENDERED_CHARS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +444,90 @@ mod tests {
 
         let second = apply(&grown, plan, "the parser and the lexer");
         assert_eq!(second.iter().filter(|m| is_summary(m)).count(), 1);
+    }
+
+    #[test]
+    fn a_provider_saying_the_conversation_is_too_long_is_recognised() {
+        for message in [
+            "http status 400: This model's maximum context length is 8192 tokens",
+            "provider error: context_length_exceeded",
+            "Error: prompt is too long: 210000 tokens > 200000 maximum",
+            "input exceeds the context window of this model",
+            "too many tokens in the request",
+        ] {
+            assert!(is_context_length_error(message), "missed {message:?}");
+        }
+    }
+
+    /// The expensive mistake is the other one: answering an unrelated failure
+    /// with a summarizing request costs a call and folds away history for
+    /// nothing.
+    #[test]
+    fn and_other_failures_are_not_mistaken_for_it() {
+        for message in [
+            "http status 401: invalid api key",
+            "rate limited by the provider",
+            "connection closed before message completed",
+            "model not found: qwen3",
+            "context deadline exceeded",
+        ] {
+            assert!(!is_context_length_error(message), "matched {message:?}");
+        }
+    }
+
+    #[test]
+    fn what_the_summarizer_reads_names_the_files_that_were_touched() {
+        let messages = vec![
+            user("fix the parser"),
+            calling("c1"),
+            answered("c1"),
+            assistant("done"),
+        ];
+
+        let rendered = render_for_summary(&messages);
+        assert!(rendered.contains("User: fix the parser"), "{rendered}");
+        assert!(rendered.contains("[tool] readFile"), "{rendered}");
+        assert!(rendered.contains("a.rs"), "{rendered}");
+        assert!(rendered.contains("Assistant: done"), "{rendered}");
+    }
+
+    /// The request that is supposed to make room must not be the largest one
+    /// of the session: a file read is thirty thousand characters, and there
+    /// are dozens of them in what is being folded away.
+    #[test]
+    fn a_huge_tool_result_is_cut_down_before_it_is_summarized() {
+        let huge = LlmMessage {
+            content: Some("x".repeat(30_000)),
+            ..answered("c1")
+        };
+
+        let rendered = render_for_summary(&[huge]);
+        assert!(rendered.len() < 3_000, "{} characters", rendered.len());
+        assert!(rendered.contains("characters omitted"), "{rendered}");
+    }
+
+    /// Cutting by characters on a multi-byte string is how this kind of code
+    /// panics in production and nowhere else.
+    #[test]
+    fn cutting_a_long_message_does_not_split_a_character() {
+        let cyrillic = LlmMessage {
+            content: Some("я".repeat(30_000)),
+            ..answered("c1")
+        };
+
+        let rendered = render_for_summary(&cyrillic_message(cyrillic));
+        assert!(rendered.contains("characters omitted"), "{rendered}");
+    }
+
+    fn cyrillic_message(message: LlmMessage) -> Vec<LlmMessage> {
+        vec![message]
+    }
+
+    #[test]
+    fn the_system_prompt_is_not_part_of_what_is_summarized() {
+        let rendered = render_for_summary(&[LlmMessage::system("you are an agent"), user("hi")]);
+        assert!(!rendered.contains("you are an agent"), "{rendered}");
+        assert!(rendered.contains("User: hi"), "{rendered}");
     }
 
     fn is_summary(message: &LlmMessage) -> bool {

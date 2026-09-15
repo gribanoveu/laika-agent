@@ -68,6 +68,7 @@ export type TurnEvent = { turnId: string; seq: number; round: number; targetId?:
   | { type: "reasoning"; payload: { delta: string } }
   | { type: "retrying"; payload: { attempt: number; maxAttempts: number; delaySeconds: number } }
   | { type: "steeringApplied"; payload: { id: string; text: string } }
+  | { type: "historyCompacted"; payload: { folded: number } }
   | { type: "roundStarted" }
   | { type: "roundCompleted"; payload: { text: string; reasoning?: string } }
   | { type: "toolCallDelta"; payload: LlmToolCall }

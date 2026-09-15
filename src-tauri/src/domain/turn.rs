@@ -209,6 +209,14 @@ pub enum ChatEventPayload {
         max_attempts: u32,
         delay_seconds: u64,
     },
+    /// The older part of the conversation has been replaced by a summary.
+    ///
+    /// Said out loud because the alternative is history disappearing on its
+    /// own: the model stops remembering something it was told, and nothing in
+    /// the window explains why. `folded` is how many messages the summary now
+    /// stands for — the transcript keeps showing all of them, since what the
+    /// reader sees and what the model reads are different lists.
+    HistoryCompacted { folded: usize },
     /// A note the user typed mid-turn has been added to the conversation.
     /// Carries the id so the front end can retire that queued note by
     /// identity rather than by matching its text.
