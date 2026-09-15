@@ -12,7 +12,8 @@ type Props = {
   settings: LlmSettings | null;
   busy: boolean;
   error: string | null;
-  onSave: (provider: ProviderConfig, apiKey: string | null) => void;
+  /** Resolves to whether it was stored — the form says so rather than making it a guess. */
+  onSave: (provider: ProviderConfig, apiKey: string | null) => void | Promise<boolean>;
   onRemove: (id: string) => void;
   onSelect: (id: string) => void;
   onDebugLogging: (enabled: boolean) => void;
@@ -33,6 +34,9 @@ export function ProviderSettings({
   // `null` means the field was never touched, which is not the same as an
   // empty one: an empty one deletes the stored key.
   const [apiKey, setApiKey] = useState<string | null>(null);
+  // Saving a key gives nothing back to look at — the field empties either way,
+  // and a key that silently did not arrive is found out a turn later.
+  const [saved, setSaved] = useState(false);
 
   // Follow the backend rather than remember a stale copy of it: a save that
   // renamed or removed a provider must not leave the form editing a ghost.
@@ -52,13 +56,18 @@ export function ProviderSettings({
   const pick = (id: string | null) => {
     setEditing(id);
     setApiKey(null);
+    setSaved(false);
     const next = providers.find((p) => p.id === id);
     setDraft(next ? { id: next.id, baseUrl: next.baseUrl, model: next.model ?? "" } : BLANK);
     if (id) onSelect(id);
   };
 
-  const save = () =>
-    onSave(
+  const save = async (e?: React.FormEvent) => {
+    // The form is here for one reason: Enter. Every other box in this app
+    // sends on Enter, and a settings box that quietly does nothing looks
+    // exactly like a settings box that saved.
+    e?.preventDefault();
+    const ok = await onSave(
       {
         ...chosen,
         id: draft.id.trim(),
@@ -67,6 +76,13 @@ export function ProviderSettings({
       },
       apiKey,
     );
+    setSaved(ok !== false);
+  };
+
+  const edit = (next: Partial<typeof draft>) => {
+    setDraft({ ...draft, ...next });
+    setSaved(false);
+  };
 
   return (
     <div className="provider-settings">
@@ -98,81 +114,97 @@ export function ProviderSettings({
         </div>
       )}
 
-      <div className="modal-field">
-        <label>Name</label>
-        <input
-          type="text"
-          value={draft.id}
-          placeholder="openai"
-          onChange={(e) => setDraft({ ...draft, id: e.target.value })}
-        />
-      </div>
-      <div className="modal-field">
-        <label>Base URL</label>
-        <input
-          type="text"
-          value={draft.baseUrl}
-          placeholder="https://api.openai.com/v1"
-          onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
-        />
-      </div>
-      <div className="modal-field">
-        <label>Model</label>
-        <input
-          type="text"
-          value={draft.model}
-          placeholder="auto — the first one the provider lists"
-          onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-        />
-      </div>
-      <div className="modal-field">
-        <label>API key</label>
-        <input
-          type="password"
-          value={apiKey ?? ""}
-          placeholder={chosen?.hasApiKey ? "stored — type to replace" : "not configured"}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-      </div>
-
-      <div className="modal-field">
-        <label>Log every request to disk</label>
-        <div className="segmented" role="radiogroup" aria-label="Debug logging">
-          {[
-            ["off", false],
-            ["on", true],
-          ].map(([label, value]) => (
-            <button
-              key={String(label)}
-              type="button"
-              role="radio"
-              aria-checked={settings?.debugLogging === value}
-              className={`segment${settings?.debugLogging === value ? " active" : ""}`}
-              onClick={() => onDebugLogging(Boolean(value))}
-            >
-              {label}
-            </button>
-          ))}
+      <form
+        onSubmit={save}
+        // Enter in any of the boxes, stated rather than left to the browser's
+        // implicit submission — which a webview can decline, and which is
+        // indistinguishable from a settings panel that does not save.
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+          e.preventDefault();
+          save();
+        }}
+      >
+        <div className="modal-field">
+          <label>Name</label>
+          <input
+            type="text"
+            value={draft.id}
+            placeholder="openai"
+            onChange={(e) => edit({ id: e.target.value })}
+          />
         </div>
-      </div>
+        <div className="modal-field">
+          <label>Base URL</label>
+          <input
+            type="text"
+            value={draft.baseUrl}
+            placeholder="https://api.openai.com/v1"
+            onChange={(e) => edit({ baseUrl: e.target.value })}
+          />
+        </div>
+        <div className="modal-field">
+          <label>Model</label>
+          <input
+            type="text"
+            value={draft.model}
+            placeholder="auto — the first one the provider lists"
+            onChange={(e) => edit({ model: e.target.value })}
+          />
+        </div>
+        <div className="modal-field">
+          <label>API key</label>
+          <input
+            type="password"
+            value={apiKey ?? ""}
+            placeholder={chosen?.hasApiKey ? "stored — type to replace" : "not configured"}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              setSaved(false);
+            }}
+          />
+        </div>
 
-      <div className="provider-actions">
-        <button className="btn btn-primary" type="button" disabled={busy} onClick={save}>
-          Save
-        </button>
-        {chosen && (
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={busy}
-            onClick={() => onRemove(chosen.id)}
-          >
-            Remove
+        <div className="modal-field">
+          <label>Log every request to disk</label>
+          <div className="segmented" role="radiogroup" aria-label="Debug logging">
+            {[
+              ["off", false],
+              ["on", true],
+            ].map(([label, value]) => (
+              <button
+                key={String(label)}
+                type="button"
+                role="radio"
+                aria-checked={settings?.debugLogging === value}
+                className={`segment${settings?.debugLogging === value ? " active" : ""}`}
+                onClick={() => onDebugLogging(Boolean(value))}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="provider-actions">
+          <button className="btn btn-primary" type="submit" disabled={busy}>
+            Save
           </button>
-        )}
-      </div>
+          {chosen && (
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => onRemove(chosen.id)}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </form>
 
       {error && <p className="modal-note provider-error">{error}</p>}
+      {saved && !error && <p className="modal-note provider-saved">Saved.</p>}
       <p className="modal-note">
         The key is sealed on disk and never leaves the backend — nothing here can read it back.
         Turning the request log on writes whole conversations, including the contents of every

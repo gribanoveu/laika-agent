@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ProviderSettings } from "../components/ProviderSettings";
 import type { LlmSettings, ProviderConfig } from "../lib/chat";
 
@@ -56,21 +56,25 @@ describe("editing a provider", () => {
   /// The whole reason the key field starts empty rather than pre-filled: there
   /// is nothing to pre-fill it with, and sending its empty value on every save
   /// would delete the key the user just stored.
-  test("an untouched key field leaves the stored key alone", () => {
+  test("an untouched key field leaves the stored key alone", async () => {
     const { saved } = form();
 
     fireEvent.change(field("Model"), { target: { value: "qwen3" } });
-    fireEvent.click(screen.getByText("Save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
 
     expect(saved[0]?.apiKey).toBeNull();
     expect(saved[0]?.provider.model).toBe("qwen3");
   });
 
-  test("a typed key is sent to be sealed", () => {
+  test("a typed key is sent to be sealed", async () => {
     const { saved } = form();
 
     fireEvent.change(field("API key"), { target: { value: "sk-new" } });
-    fireEvent.click(screen.getByText("Save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
 
     expect(saved[0]?.apiKey).toBe("sk-new");
   });
@@ -80,11 +84,13 @@ describe("editing a provider", () => {
     expect(field("API key").placeholder).toContain("stored");
   });
 
-  test("an empty model means auto, not an empty string", () => {
+  test("an empty model means auto, not an empty string", async () => {
     const { saved } = form();
 
     fireEvent.change(field("Model"), { target: { value: "  " } });
-    fireEvent.click(screen.getByText("Save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
 
     expect(saved[0]?.provider.model).toBeNull();
   });
@@ -92,18 +98,20 @@ describe("editing a provider", () => {
   /// Found by a mutation: without clearing the field on the way out, a key
   /// typed for one provider is sealed under the next one's id — the wrong
   /// endpoint is handed a credential, and the right one still has none.
-  test("a key typed for one provider does not follow you to another", () => {
+  test("a key typed for one provider does not follow you to another", async () => {
     const { saved } = form();
 
     fireEvent.change(field("API key"), { target: { value: "sk-for-local" } });
     fireEvent.click(screen.getByText("openai"));
-    fireEvent.click(screen.getByText("Save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
 
     expect(saved[0]?.provider.id).toBe("openai");
     expect(saved[0]?.apiKey).toBeNull();
   });
 
-  test("adding one starts from a blank form", () => {
+  test("adding one starts from a blank form", async () => {
     const { saved } = form();
 
     fireEvent.click(screen.getByTitle("Add another provider"));
@@ -111,12 +119,14 @@ describe("editing a provider", () => {
 
     fireEvent.change(field("Name"), { target: { value: "openrouter" } });
     fireEvent.change(field("Base URL"), { target: { value: "https://openrouter.ai/api/v1" } });
-    fireEvent.click(screen.getByText("Save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
 
     expect(saved[0]?.provider.id).toBe("openrouter");
   });
 
-  test("removing names the provider being edited", () => {
+  test("removing names the provider being edited", async () => {
     const { removed } = form();
     fireEvent.click(screen.getByText("Remove"));
     expect(removed).toEqual(["local"]);
@@ -149,5 +159,85 @@ describe("with nothing configured", () => {
 
     expect(screen.queryByText("Remove")).toBeNull();
     expect(field("Name").value).toBe("");
+  });
+});
+
+describe("saving", () => {
+  /// Every other box in this app sends on Enter. One that quietly does nothing
+  /// looks exactly like one that saved — which is how a typed key goes missing.
+  test("Enter in a field saves, the way it does everywhere else", async () => {
+    const { saved } = form();
+
+    fireEvent.change(field("API key"), { target: { value: "sk-typed" } });
+    await act(async () => {
+      fireEvent.keyDown(field("API key"), { key: "Enter" });
+    });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0].apiKey).toBe("sk-typed");
+  });
+
+  test("and the form says it was stored", async () => {
+    render(
+      <ProviderSettings
+        settings={settings()}
+        busy={false}
+        error={null}
+        onSave={() => Promise.resolve(true)}
+        onRemove={() => {}}
+        onSelect={() => {}}
+        onDebugLogging={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText("Saved.")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(screen.queryByText("Saved.")).toBeTruthy();
+  });
+
+  /// A refusal must not read as a success.
+  test("a refused save says nothing", async () => {
+    render(
+      <ProviderSettings
+        settings={settings()}
+        busy={false}
+        error={null}
+        onSave={() => Promise.resolve(false)}
+        onRemove={() => {}}
+        onSelect={() => {}}
+        onDebugLogging={() => {}}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(screen.queryByText("Saved.")).toBeNull();
+  });
+
+  /// And it must not stand over a form that has changed since: "Saved." next
+  /// to an edited key is the same lie in the other direction.
+  test("editing again takes the word back", async () => {
+    render(
+      <ProviderSettings
+        settings={settings()}
+        busy={false}
+        error={null}
+        onSave={() => Promise.resolve(true)}
+        onRemove={() => {}}
+        onSelect={() => {}}
+        onDebugLogging={() => {}}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(screen.queryByText("Saved.")).toBeTruthy();
+
+    fireEvent.change(field("API key"), { target: { value: "sk-newer" } });
+    expect(screen.queryByText("Saved.")).toBeNull();
   });
 });

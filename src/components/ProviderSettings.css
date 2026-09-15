@@ -17,3 +17,9 @@
 .provider-error {
   color: var(--red);
 }
+
+/* And its opposite. The key field empties whether or not the key arrived, so
+   without this the only way to find out was to start a turn. */
+.provider-saved {
+  color: var(--green);
+}

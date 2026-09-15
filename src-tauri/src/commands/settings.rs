@@ -127,3 +127,84 @@ pub struct Readiness {
     pub provider: Option<String>,
     pub has_key: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::with_app_dir;
+
+    fn provider(id: &str) -> ProviderConfig {
+        ProviderConfig {
+            id: id.to_string(),
+            base_url: "https://gateway.example/v1".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The whole path the settings window drives, in order: configure a
+    /// provider, give it a key, ask what is configured. Each piece is tested
+    /// where it lives; what this adds is that the three commands agree —
+    /// which is the part a window can be wrong about and a unit test cannot.
+    #[test]
+    fn a_saved_key_is_reported_as_stored() {
+        with_app_dir("cmd-settings-key", || {
+            llm_provider_save(provider("gateway")).unwrap();
+            llm_api_key_save("gateway".to_string(), "sk-live".to_string()).unwrap();
+            llm_active_provider_set(Some("gateway".to_string())).unwrap();
+
+            let view = llm_settings_get().unwrap();
+            assert_eq!(view.active_provider_id.as_deref(), Some("gateway"));
+            assert_eq!(view.providers.len(), 1);
+            assert!(view.providers[0].has_api_key, "the key did not survive");
+
+            // And it is the key itself that survived, not merely a flag.
+            let stored = llm_credentials_store::get_api_key("gateway").expect("stored");
+            assert_eq!(secrecy::ExposeSecret::expose_secret(&stored), "sk-live");
+        });
+    }
+
+    /// The window sends the whole provider back, including fields it added
+    /// itself. A refusal here would take the key with it: the key is saved
+    /// after the provider, in the same click.
+    #[test]
+    fn the_shape_the_window_sends_is_accepted() {
+        with_app_dir("cmd-settings-wire", || {
+            let wire = serde_json::json!({
+                "id": "gateway",
+                "baseUrl": "https://gateway.example/v1",
+                "model": null,
+                "hasApiKey": true,
+            });
+            let parsed: ProviderConfig = serde_json::from_value(wire).expect("accepted");
+
+            llm_provider_save(parsed).unwrap();
+            assert_eq!(llm_settings_get().unwrap().providers.len(), 1);
+        });
+    }
+
+    /// An empty box means "delete the stored key" — and it must not leave the
+    /// provider believing it still has one.
+    #[test]
+    fn an_emptied_key_box_removes_the_key() {
+        with_app_dir("cmd-settings-clear", || {
+            llm_provider_save(provider("gateway")).unwrap();
+            llm_api_key_save("gateway".to_string(), "sk-live".to_string()).unwrap();
+            llm_api_key_save("gateway".to_string(), "  ".to_string()).unwrap();
+
+            assert!(!llm_settings_get().unwrap().providers[0].has_api_key);
+        });
+    }
+
+    #[test]
+    fn a_provider_without_a_name_or_a_url_is_refused() {
+        with_app_dir("cmd-settings-blank", || {
+            assert!(llm_provider_save(provider("  ")).is_err());
+            assert!(llm_provider_save(ProviderConfig {
+                id: "gateway".to_string(),
+                base_url: " ".to_string(),
+                ..Default::default()
+            })
+            .is_err());
+        });
+    }
+}
