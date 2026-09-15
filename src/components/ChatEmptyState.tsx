@@ -24,7 +24,7 @@ export function ChatEmptyState({ workspace, onOpenRepo, onNewChat }: Props) {
       <p className="chat-empty-text">
         {workspace
           ? `Describe a task and the agent works through ${name}, showing every tool call as it goes.`
-          : "Open a folder to give the agent a workspace, then describe what needs doing."}
+          : "Open a folder to give the agent a workspace. It reads and writes inside that folder; a command it runs is not confined to it, which is what the approval prompts are for."}
       </p>
       <div className="chat-empty-actions">
         {!workspace && (

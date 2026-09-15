@@ -36,8 +36,6 @@ export default function App() {
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("changes");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [openFolder, setOpenFolder] = useState(false);
-  const [folderPath, setFolderPath] = useState("");
   const toast = useToast();
   const workspace = useWorkspace();
   const history = useChatHistory(workspace.path);
@@ -73,21 +71,18 @@ export default function App() {
   // this only stops pointing at it.
   const newChat = () => agent.reset();
 
-  const send = (text: string) => {
-    if (!workspace.path) {
-      setOpenFolder(true);
-      return;
-    }
-    agent.send(text);
+  const chooseFolder = async () => {
+    const opened = await workspace.pick();
+    if (!opened && workspace.error) toast.show(workspace.error);
+    return opened;
   };
 
-  const chooseFolder = async () => {
-    if (await workspace.open(folderPath)) {
-      setOpenFolder(false);
-      setFolderPath("");
-    } else if (workspace.error) {
-      toast.show(workspace.error);
-    }
+  // Asking before the first message rather than refusing it — and then sending
+  // it: the composer has already cleared the box, so anything not sent here is
+  // typed twice.
+  const send = async (text: string) => {
+    if (!workspace.path && !(await chooseFolder())) return;
+    agent.send(text);
   };
 
   return (
@@ -131,7 +126,7 @@ export default function App() {
             turn={agent.turn}
             usage={agent.turn.usage}
             onDecide={agent.decide}
-            onOpenRepo={() => setOpenFolder(true)}
+            onOpenRepo={chooseFolder}
             onNewChat={newChat}
           />
           <Composer
@@ -194,41 +189,6 @@ export default function App() {
             ))}
           </div>
         </div>
-      </Modal>
-
-      <Modal
-        title="Open folder"
-        open={openFolder}
-        onClose={() => setOpenFolder(false)}
-        footer={
-          <>
-            <button className="btn btn-ghost" type="button" onClick={() => setOpenFolder(false)}>
-              Cancel
-            </button>
-            <button className="btn btn-primary" type="button" onClick={chooseFolder}>
-              Open
-            </button>
-          </>
-        }
-      >
-        <div className="modal-field">
-          <label>Folder</label>
-          {/* A typed path until the file-dialog plugin lands: the app draws its
-              own dialogs, and a native `prompt()` would arrive looking like a
-              different program. */}
-          <input
-            type="text"
-            value={folderPath}
-            placeholder="/path/to/project"
-            autoFocus
-            onChange={(e) => setFolderPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && chooseFolder()}
-          />
-        </div>
-        <p className="modal-note">
-          The agent reads and writes inside this folder. A command it runs is not
-          confined to it — that is what the approval prompts are for.
-        </p>
       </Modal>
 
       <Toast message={toast.message} />

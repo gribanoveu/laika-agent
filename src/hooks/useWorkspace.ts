@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { currentWorkspace, openWorkspace } from "../lib/chat";
+import { pickFolder } from "../lib/dialog";
 
 /** The folder the agent acts on. Resolved by the backend, displayed here. */
 export function useWorkspace() {
@@ -22,5 +23,12 @@ export function useWorkspace() {
     }
   }, []);
 
-  return { path, error, open };
+  /** Asks for a folder and opens it. `false` also means "the user cancelled". */
+  const pick = useCallback(async () => {
+    const chosen = await pickFolder();
+    if (!chosen) return false;
+    return open(chosen);
+  }, [open]);
+
+  return { path, error, open, pick };
 }
