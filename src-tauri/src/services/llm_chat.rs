@@ -12,12 +12,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::Local;
+
 use crate::domain::llm::{
     ChatRequest, ChatStreamResult, LlmError, LlmMessage, LlmRole, LlmToolCall,
     sanitize_tool_call_arguments,
 };
 use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
+use crate::domain::prompt;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -364,7 +367,13 @@ fn run(
             apply_steering(&events, round, &mut state.history, (turn.take_steering)());
             events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
 
-            let result = match ask_the_model(turn, &events, round, &mut state.history)? {
+            let result = match ask_the_model(
+                turn,
+                &events,
+                round,
+                &mut state.history,
+                &state.todos,
+            )? {
                 Some(result) => result,
                 // Cancelled during a retry wait.
                 None => {
@@ -620,11 +629,12 @@ fn ask_the_model(
     events: &Events,
     round: u32,
     history: &mut Vec<LlmMessage>,
+    todos: &[Task],
 ) -> Result<Option<ChatStreamResult>, TurnError> {
     let mut compacted = false;
     loop {
         let request = ChatRequest {
-            messages: history.clone(),
+            messages: prepend_system_prompt(turn, todos, history),
             tools: tool_definitions(),
             model: turn.session.model.clone(),
         };
@@ -653,6 +663,27 @@ fn ask_the_model(
             Ok(None) | Err(_) => return Err(TurnError::Provider(error)),
         }
     }
+}
+
+/// The request's messages: what the model is told, then the conversation.
+///
+/// Rebuilt every round rather than pushed into `history` once. The checklist
+/// changes *within* a turn — the model ticks an item off and the next round
+/// has to see that — and a folder or a date frozen into the stored
+/// conversation would be resent, wrong, for as long as the chat exists. The
+/// history stays exactly what the two sides said to each other, which is also
+/// what keeps `plan_compaction`'s leading-system-messages count at zero.
+fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<LlmMessage> {
+    let context = prompt::TurnContext {
+        workspace: turn.scope.root(),
+        shell: &turn.shell.program,
+        today: &Local::now().format("%e %B %Y").to_string(),
+        todos,
+        unattended: turn.approval.skip_all,
+    };
+    let mut messages = prompt::system_messages(&context);
+    messages.extend_from_slice(history);
+    messages
 }
 
 fn too_long(error: &LlmError) -> bool {
@@ -1223,6 +1254,126 @@ mod tests {
         );
     }
 
+    // ----------------------------------------------------- the system prompt
+
+    /// Everything the two sides actually said, with what the app told the
+    /// model stripped off the front.
+    fn conversation_of(request: &ChatRequest) -> &[LlmMessage] {
+        let lead = request
+            .messages
+            .iter()
+            .take_while(|m| m.role == LlmRole::System)
+            .count();
+        assert_eq!(lead, 2, "the instructions and this turn's facts, in that order");
+        &request.messages[lead..]
+    }
+
+    /// The model is told who it is and where it stands before it is asked
+    /// anything. Without this the agent goes into a repository with no
+    /// identity, no rules about tools, and no idea which folder is open.
+    #[test]
+    fn the_request_opens_with_the_prompt_and_then_the_conversation() {
+        let h = harness("prompt-front", vec![text("done")]);
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![]))
+            .expect("finishes");
+
+        let requests = h.provider.requests();
+        assert_eq!(
+            requests[0].messages[0].content.as_deref(),
+            Some(prompt::INSTRUCTIONS)
+        );
+        assert!(
+            requests[0].messages[1]
+                .content
+                .as_deref()
+                .unwrap()
+                .contains(&h.root.display().to_string()),
+            "the open folder is not in the prompt"
+        );
+        assert_eq!(conversation_of(&requests[0]).len(), 1);
+    }
+
+    /// The prompt is prepended at request time and belongs to no turn: a
+    /// folder and a checklist frozen into the stored conversation would be
+    /// saved to the chat file and resent, stale, for as long as it exists.
+    #[test]
+    fn the_prompt_never_enters_the_history_the_caller_keeps() {
+        let mut h = harness(
+            "prompt-not-history",
+            vec![
+                asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]),
+                text("done"),
+            ],
+        );
+        h.approval = asking();
+
+        let ChatStreamOutcome::PendingApproval(pending) = h
+            .run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect("pauses")
+        else {
+            panic!("expected a pause");
+        };
+
+        assert!(
+            pending.history.iter().all(|m| m.role != LlmRole::System),
+            "the prompt was stored with the conversation"
+        );
+    }
+
+    /// Rebuilt every round, not once per turn. The model ticks an item off
+    /// mid-turn, and the round after that has to see the list as it now is —
+    /// a prompt built once shows it the work it has already finished.
+    #[test]
+    fn the_checklist_in_the_prompt_follows_the_turn() {
+        let h = harness(
+            "prompt-todo",
+            vec![
+                asks(vec![wants(
+                    "t1",
+                    "todo",
+                    r#"{"op":"write","tasks":["read it","rewrite it"]}"#,
+                )]),
+                text("done"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect("finishes");
+
+        let requests = h.provider.requests();
+        let first = requests[0].messages[1].content.clone().unwrap();
+        let second = requests[1].messages[1].content.clone().unwrap();
+        assert!(!first.contains("read it"), "a list nobody had written yet");
+        assert!(second.contains("read it") && second.contains("rewrite it"));
+    }
+
+    /// A turn nobody is watching must not be told to expect an approval
+    /// prompt, and a watched one must not be told the opposite.
+    #[test]
+    fn whether_anybody_is_watching_reaches_the_prompt() {
+        let unattended = harness("prompt-unattended", vec![text("done")]);
+        unattended
+            .run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![]))
+            .expect("finishes");
+
+        let mut attended = harness("prompt-attended", vec![text("done")]);
+        attended.approval = asking();
+        attended
+            .run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![]))
+            .expect("finishes");
+
+        let watched = |h: &Harness| {
+            h.provider.requests()[0].messages[1]
+                .content
+                .clone()
+                .unwrap()
+                .contains("approved this turn in advance")
+        };
+        assert!(watched(&unattended));
+        assert!(!watched(&attended));
+    }
+
     // ------------------------------------------------------------- the loop
 
     #[test]
@@ -1279,11 +1430,14 @@ mod tests {
             requests[1].messages.len() < requests[0].messages.len(),
             "asked again with the same history"
         );
-        assert!(requests[1].messages[0]
-            .content
-            .as_deref()
-            .unwrap()
-            .contains("they were fixing the parser"));
+        assert!(
+            conversation_of(&requests[1])[0]
+                .content
+                .as_deref()
+                .unwrap()
+                .contains("they were fixing the parser"),
+            "the summary opens the shorter conversation"
+        );
         assert_eq!(h.provider.summaries.lock().unwrap().len(), 1);
     }
 

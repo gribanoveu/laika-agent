@@ -7,3 +7,4 @@ pub mod llm_retry;
 pub mod command_exec;
 pub mod chat_record;
 pub mod compaction;
+pub mod prompt;
