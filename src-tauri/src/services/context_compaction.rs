@@ -8,7 +8,9 @@
 
 use crate::domain::compaction::{self, SUMMARY_INSTRUCTIONS};
 use crate::domain::llm::{ChatRequest, LlmError, LlmMessage};
+use crate::domain::prompt;
 use crate::infra::llm_debug_log;
+use crate::services::ai_tools::tools::tool_definitions;
 use crate::services::llm_session::LlmSession;
 
 /// A conversation, shorter than it was.
@@ -18,6 +20,24 @@ pub struct Compacted {
     /// How many messages the summary stands for — what the transcript says
     /// happened.
     pub folded: usize,
+}
+
+/// What every request pays before a single message of the conversation is
+/// added to it.
+///
+/// Two things, and neither is a message, which is why the estimate could not
+/// see them: the system prompt, sent in front of the history on every round,
+/// and the tool schemas, sent beside it. Together they are the largest fixed
+/// item in the request and they do not shrink when the conversation does — a
+/// window that looks 60% free can be nearly full.
+///
+/// The prompt's varying half is deliberately left out. It is a date, a path,
+/// a shell and a checklist: a few hundred characters against tens of
+/// thousands, and counting it exactly would mean handing this function a
+/// workspace and a todo list it otherwise has no use for.
+pub fn fixed_request_tokens() -> usize {
+    compaction::estimate_text_tokens(prompt::INSTRUCTIONS)
+        + compaction::estimate_tool_schema_tokens(&tool_definitions())
 }
 
 /// A pass before the conversation fails rather than after, when the session
@@ -34,7 +54,7 @@ pub fn compact_if_needed(
 ) -> Result<Option<Compacted>, LlmError> {
     let needed = force
         || compaction::should_compact(
-            compaction::estimate_tokens(history),
+            fixed_request_tokens() + compaction::estimate_tokens(history),
             session.context_limit,
             history,
         );
@@ -301,6 +321,49 @@ mod tests {
         assert!(provider.asked.lock().unwrap().is_empty());
     }
 
+    /// The failure this closes: the prompt and the tool schemas are the
+    /// largest fixed item in every request and neither is a message, so the
+    /// estimate could not see them. A window measured by the conversation
+    /// alone reads as having room it does not have, and the pass that was
+    /// supposed to happen before the wall happens after it.
+    ///
+    /// The window is worked out from the real numbers rather than written
+    /// down: editing the prompt or a tool's description must not turn this
+    /// into a test of a stale constant.
+    #[test]
+    fn the_prompt_and_the_schemas_are_charged_for() {
+        let provider = Summarizer::saying("a summary");
+        let history = conversation(40);
+        let conversation_only = compaction::estimate_tokens(&history);
+        let fixed = fixed_request_tokens();
+        // Two separate omissions, each of which would leave the other
+        // looking like a working estimate.
+        assert!(
+            fixed > compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
+            "the tool schemas were not counted"
+        );
+        assert!(
+            fixed > compaction::estimate_tool_schema_tokens(&tool_definitions()),
+            "the system prompt was not counted"
+        );
+
+        // Roomy for the conversation on its own, full once the request's own
+        // weight is on the scale.
+        let limit = (conversation_only as u64 * 100 / compaction::TRIGGER_PERCENT) as u32 + 1
+            + fixed as u32;
+        assert!(
+            !compaction::should_compact(conversation_only, Some(limit), &history),
+            "the window has to be roomy for the conversation alone, or this proves nothing"
+        );
+
+        assert!(
+            compact_if_needed(&session_with_window(provider, limit), &history, false)
+                .unwrap()
+                .is_some(),
+            "the fixed cost of the request was not counted"
+        );
+    }
+
     /// Asking for it outright skips the threshold — and nothing else. A
     /// conversation with nothing worth folding stays as it is whoever asked.
     #[test]
@@ -346,3 +409,4 @@ mod tests {
         assert_ne!(compacted.history[1].role, crate::domain::llm::LlmRole::Tool);
     }
 }
+

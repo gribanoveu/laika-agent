@@ -20,7 +20,7 @@
 //!   no longer there. Upstream had no such rule to break, because its
 //!   messages carried their tool calls inside them.
 
-use super::llm::{LlmMessage, LlmRole};
+use super::llm::{LlmMessage, LlmRole, LlmToolDefinition};
 
 /// Compaction starts once the estimate crosses this much of the context
 /// window. Early enough that the rest of the turn — a tool-calling loop can
@@ -71,6 +71,39 @@ const CHARS_PER_TOKEN: usize = 4;
 /// ratio leaves room rather than sitting at the edge.
 pub fn estimate_tokens(messages: &[LlmMessage]) -> usize {
     messages.iter().map(estimate_message_tokens).sum()
+}
+
+/// The same rule of thumb, over a bare string.
+///
+/// Public because the two largest things in a request are not messages: the
+/// system prompt and the tool schemas.
+pub fn estimate_text_tokens(text: &str) -> usize {
+    text.len().div_ceil(CHARS_PER_TOKEN)
+}
+
+/// What the tool schemas cost, on **every** request.
+///
+/// They are not messages and not part of the system prompt, so nothing else in
+/// this file sees them — and they are not small. Upstream measured its 24
+/// advertised tools at ~37 800 characters, about 9 500 tokens, resent verbatim
+/// with every request; leaving them out had the estimate running a stable ~36%
+/// under the provider's own `promptTokens`.
+///
+/// Serialized rather than stored as a number: the descriptions are edited
+/// where the tools live, and a constant here would be wrong the first time one
+/// of them grew a paragraph. Slightly under the wire form, which wraps each
+/// entry in `{"type":"function","function":{…}}` — about 40 characters a tool,
+/// inside the noise of the estimate itself.
+pub fn estimate_tool_schema_tokens(tools: &[LlmToolDefinition]) -> usize {
+    if tools.is_empty() {
+        return 0;
+    }
+    match serde_json::to_string(tools) {
+        Ok(json) => estimate_text_tokens(&json),
+        // An estimate is allowed to be approximate; it is not allowed to take
+        // down the turn it is estimating.
+        Err(_) => 0,
+    }
 }
 
 fn estimate_message_tokens(message: &LlmMessage) -> usize {
@@ -261,6 +294,47 @@ mod tests {
 
     fn user(text: &str) -> LlmMessage {
         LlmMessage::user(text)
+    }
+
+    fn definition(name: &str, description: &str) -> LlmToolDefinition {
+        LlmToolDefinition {
+            name: name.to_string(),
+            description: description.to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }
+    }
+
+    /// No tools advertised is no cost — not a floor, and not the JSON of an
+    /// empty array.
+    #[test]
+    fn no_schemas_cost_nothing() {
+        assert_eq!(estimate_tool_schema_tokens(&[]), 0);
+    }
+
+    /// The description is the bulk of a schema and the part that grows: a
+    /// count that only saw the names would stay flat while the real cost
+    /// doubled.
+    #[test]
+    fn a_schema_costs_what_its_description_costs() {
+        let short = [definition("readFile", "Reads a file.")];
+        let long = [definition("readFile", &"Reads a file. ".repeat(100))];
+
+        let grown = estimate_tool_schema_tokens(&long) - estimate_tool_schema_tokens(&short);
+        assert!(
+            grown > 300,
+            "a description 1 400 characters longer added {grown} tokens"
+        );
+    }
+
+    #[test]
+    fn every_advertised_tool_is_paid_for() {
+        let one = [definition("readFile", "Reads a file.")];
+        let two = [
+            definition("readFile", "Reads a file."),
+            definition("grep", "Searches for a pattern."),
+        ];
+
+        assert!(estimate_tool_schema_tokens(&two) > estimate_tool_schema_tokens(&one));
     }
 
     fn assistant(text: &str) -> LlmMessage {
