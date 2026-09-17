@@ -4,12 +4,17 @@ import { Dropdown } from "./Dropdown";
 import type { ConversationMode } from "../lib/chat";
 import "./Composer.css";
 
-// Permission modes are UI behaviour, not backend data. Models come from the
-// provider config once that command exists — empty until then.
-const MODES = [
-  { value: "Auto", hint: "default" },
-  { value: "Ask", hint: "confirm" },
-  { value: "Manual", hint: "step" },
+// Models come from the provider config once that command exists — empty
+// until then.
+//
+// Two permission states, not the prototype's three, because two is what
+// `ApprovalPolicy` has: ask before anything that changes the tree, or run the
+// whole turn without asking. A third label would be a control that moves and
+// changes nothing. "Always allow this tool" is the third real state and it is
+// not a chip — it is answered on the card, about one tool, in the moment.
+const MODES: { value: string; label: string; hint: string }[] = [
+  { value: "ask", label: "Ask", hint: "confirm changes" },
+  { value: "auto", label: "Auto", hint: "never ask" },
 ];
 const MODELS: { value: string }[] = [];
 
@@ -26,23 +31,25 @@ type Props = {
   onSend: (text: string) => void;
   onStop: () => void;
   running: boolean;
-  onNotify: (msg: string) => void;
-  /** Lives above this component: the backend has to be told, and a component
-      does not call commands. */
+  /** Both chips live above this component: the backend has to be told, and a
+      component does not call commands. */
   conversation: ConversationMode;
   onConversation: (mode: ConversationMode) => void;
+  /** `true` when the turn runs without asking — `ApprovalPolicy::skip_all`. */
+  unattended: boolean;
+  onUnattended: (unattended: boolean) => void;
 };
 
 export function Composer({
   onSend,
   onStop,
   running,
-  onNotify,
   conversation,
   onConversation,
+  unattended,
+  onUnattended,
 }: Props) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState(MODES[0].value);
   const [model, setModel] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
 
@@ -87,15 +94,12 @@ export function Composer({
           label={
             <span className="mode-label">
               <ShieldCheck size={13} />
-              {mode}
+              {unattended ? "Auto" : "Ask"}
             </span>
           }
-          value={mode}
+          value={unattended ? "auto" : "ask"}
           options={MODES}
-          onPick={(v) => {
-            setMode(v);
-            if (v === "Ask") onNotify("Ask mode — agent will request approval");
-          }}
+          onPick={(v) => onUnattended(v === "auto")}
         />
         {/* Two chips because these are two questions. This one is what the
             agent is for; the one beside it is who has to agree before it

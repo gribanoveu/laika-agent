@@ -26,15 +26,21 @@ afterEach(() => {
   refuse = false;
 });
 
-function composer(conversation: "agent" | "plan" | "ask", onConversation = () => {}) {
+function composer(
+  conversation: "agent" | "plan" | "ask",
+  onConversation: (mode: "agent" | "plan" | "ask") => void = () => {},
+  unattended = false,
+  onUnattended: (unattended: boolean) => void = () => {},
+) {
   return render(
     <Composer
       onSend={() => {}}
       onStop={() => {}}
       running={false}
-      onNotify={() => {}}
       conversation={conversation}
       onConversation={onConversation}
+      unattended={unattended}
+      onUnattended={onUnattended}
     />,
   );
 }
@@ -70,6 +76,34 @@ describe("the conversation-mode chip", () => {
   });
 });
 
+describe("the permission chip", () => {
+  /// It used to be three labels over a backend with two states, wired to
+  /// nothing. A control that moves and changes nothing is worse than no
+  /// control: it reads as a guarantee.
+  test("offers exactly the two states the backend has", () => {
+    composer("agent");
+    fireEvent.click(screen.getByTitle("Permission mode"));
+
+    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(["Askconfirm changes", "Autonever ask"]);
+  });
+
+  test("picking auto reports that nothing will be asked", () => {
+    const picked: boolean[] = [];
+    composer("agent", () => {}, false, (v) => picked.push(v));
+
+    fireEvent.click(screen.getByTitle("Permission mode"));
+    fireEvent.click(screen.getByRole("option", { name: /Auto/ }));
+    expect(picked).toEqual([true]);
+  });
+
+  /// The label is the backend's state, not a click this component remembered.
+  test("shows the state it was given", () => {
+    composer("agent", () => {}, true);
+    expect(screen.getByTitle("Permission mode").textContent).toContain("Auto");
+  });
+});
+
 describe("telling the backend", () => {
   test("the mode goes to the command that enforces it", async () => {
     await setConversationMode("ask");
@@ -84,7 +118,7 @@ describe("telling the backend", () => {
   });
 });
 
-const { useConversationMode } = await import("../hooks/useConversationMode");
+const { useBackendSetting } = await import("../hooks/useBackendSetting");
 const { act, renderHook } = await import("@testing-library/react");
 
 describe("holding the chosen mode", () => {
@@ -92,7 +126,7 @@ describe("holding the chosen mode", () => {
   /// that is still armed is worse than showing the old mode for a moment.
   test("the mode only changes once the backend has agreed", async () => {
     refuse = true;
-    const { result } = renderHook(() => useConversationMode());
+    const { result } = renderHook(() => useBackendSetting(setConversationMode, "agent"));
 
     let failed: string | null = null;
     await act(async () => {
@@ -100,17 +134,27 @@ describe("holding the chosen mode", () => {
     });
 
     expect(failed).toBeTruthy();
-    expect(result.current.mode).toBe("agent");
+    expect(result.current.value).toBe("agent");
   });
 
   test("a change the backend accepted is kept", async () => {
-    const { result } = renderHook(() => useConversationMode());
+    const { result } = renderHook(() => useBackendSetting(setConversationMode, "agent"));
 
     await act(async () => {
       expect(await result.current.pick("ask")).toBeNull();
     });
 
-    expect(result.current.mode).toBe("ask");
+    expect(result.current.value).toBe("ask");
     expect(calls).toEqual([{ command: "chat_set_mode", args: { mode: "ask" } }]);
+  });
+
+  /// The chip the prototype drew and nobody connected. The command existed on
+  /// the backend for two stages with no way to reach it.
+  test("the permission chip reaches the policy that enforces it", async () => {
+    const { setUnattended } = await import("../lib/chat");
+    await setUnattended(true);
+    expect(calls).toEqual([
+      { command: "approval_set_unattended", args: { unattended: true } },
+    ]);
   });
 });

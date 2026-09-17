@@ -17,8 +17,8 @@ import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
-import { useConversationMode } from "./hooks/useConversationMode";
-import type { ConversationMode } from "./lib/chat";
+import { useBackendSetting } from "./hooks/useBackendSetting";
+import { setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
 import type { AsideTab } from "./types";
 import "./App.css";
 
@@ -38,7 +38,11 @@ export default function App() {
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("changes");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const conversation = useConversationMode();
+  // What the agent may do this turn, and whether anyone is asked before it
+  // does it. Two chips, two questions — and both are enforced on the backend,
+  // so these hold only what the chips read back.
+  const conversation = useBackendSetting(setConversationMode, "agent" as ConversationMode);
+  const unattended = useBackendSetting<boolean>(setUnattended, false);
   const toast = useToast();
   const workspace = useWorkspace();
   const history = useChatHistory(workspace.path);
@@ -88,6 +92,15 @@ export default function App() {
   const pickConversation = async (mode: ConversationMode) => {
     const failed = await conversation.pick(mode);
     if (failed) toast.show(failed);
+  };
+
+  // Said out loud in one direction only. Turning confirmations back on needs
+  // no warning; turning them off means the next write happens without anyone
+  // seeing it, and the chip alone is a small thing to have noticed.
+  const pickUnattended = async (next: boolean) => {
+    const failed = await unattended.pick(next);
+    if (failed) toast.show(failed);
+    else if (next) toast.show("Auto — the agent will change files without asking");
   };
 
   const chooseFolder = async () => {
@@ -154,9 +167,10 @@ export default function App() {
             onSend={send}
             onStop={agent.cancel}
             running={agent.turn.status === "running"}
-            onNotify={toast.show}
-            conversation={conversation.mode}
+            conversation={conversation.value}
             onConversation={pickConversation}
+            unattended={unattended.value}
+            onUnattended={pickUnattended}
           />
         </main>
 
