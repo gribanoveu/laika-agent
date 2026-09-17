@@ -341,3 +341,20 @@ describe("reopening a saved chat", () => {
     expect(state.buffered).toEqual([]);
   });
 });
+
+describe("compaction", () => {
+  /// The model quietly forgetting what it was told, with nothing in the
+  /// window to explain it, is the outcome this exists to prevent.
+  test("a fold is said out loud in the transcript", () => {
+    const state = run([ev({ type: "historyCompacted", seq: 1, payload: { folded: 12 } })]);
+
+    expect(state.blocks).toHaveLength(1);
+    expect(state.blocks[0]).toMatchObject({ kind: "notice" });
+    expect((state.blocks[0] as { text: string }).text).toContain("12 messages");
+  });
+
+  test("and one message is one message", () => {
+    const state = run([ev({ type: "historyCompacted", seq: 1, payload: { folded: 1 } })]);
+    expect((state.blocks[0] as { text: string }).text).toContain("1 message folded");
+  });
+});

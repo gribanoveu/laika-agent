@@ -994,6 +994,7 @@ mod tests {
                 provider_id: "test".to_string(),
                 model: "m".to_string(),
                 debug_logging: false,
+                context_limit: None,
             },
             provider,
             scope: ToolScope::new(&root).expect("a scope over the temp root"),

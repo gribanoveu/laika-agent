@@ -46,6 +46,13 @@ pub struct ProviderConfig {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// How big this model's context window is, in tokens. `None` means the
+    /// app does not know — which is the honest default for a gateway it has
+    /// never heard of, and it is why compaction stays off until someone says.
+    /// Guessing here would throw away conversation to solve a problem that
+    /// may not exist.
+    #[serde(default)]
+    pub context_limit: Option<u32>,
     /// How hard a reasoning model should think — `"low"`/`"medium"`/`"high"`
     /// as that gateway spells it. A free string on purpose: gateways disagree
     /// on the vocabulary, and a value this app has never heard of must still

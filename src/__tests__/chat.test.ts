@@ -140,6 +140,26 @@ describe("turn events", () => {
   });
 });
 
+describe("compaction", () => {
+  test("the whole conversation goes over, and the shorter one comes back", async () => {
+    const messages = [{ role: "user" as const, content: "hi" }];
+    invokeResult = { history: messages, folded: 3 };
+
+    const shorter = await chat.compactHistory(messages);
+
+    expect(calls).toEqual([
+      { command: "chat_compact", args: { messages, force: false } },
+    ]);
+    expect(shorter?.folded).toBe(3);
+  });
+
+  test("and asking for one outright says so", async () => {
+    invokeResult = null;
+    await chat.compactHistory([], true);
+    expect(calls[0].args).toEqual({ messages: [], force: true });
+  });
+});
+
 describe("saved chats", () => {
   test("a chat is saved under its id, with both lists", async () => {
     invokeResult = { id: "c1", title: "fix the parser", updatedAt: 7 };

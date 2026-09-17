@@ -13,15 +13,21 @@ const state = (blocks: Block[], over: Partial<TurnState> = {}): TurnState => ({
   ...over,
 });
 
-const panel = (turn: TurnState, onDecide = () => {}) =>
+const panel = (
+  turn: TurnState,
+  onDecide = () => {},
+  over: { contextLimit?: number | null; onCompact?: () => void } = {},
+) =>
   render(
     <ChatPanel
       workspace="/tmp/project"
       turn={turn}
       usage={turn.usage}
+      contextLimit={over.contextLimit ?? null}
       onDecide={onDecide}
       onOpenRepo={() => {}}
       onNewChat={() => {}}
+      onCompact={over.onCompact ?? (() => {})}
     />,
   );
 
@@ -200,5 +206,58 @@ describe("what a call would do", () => {
   test("and so does a call whose preview has not arrived yet", () => {
     const { container } = render(<Preview preview={undefined} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("the context meter", () => {
+  const used = { promptTokens: 8_000, completionTokens: 0, totalTokens: 8_000 };
+
+  /// Without the window, a number of tokens says nothing: 8k is nothing on a
+  /// 200k model and the end of the road on a 8k one.
+  test("shows how much of the window is gone, once the window is known", () => {
+    panel(state([{ kind: "user", id: "u0", text: "hi" }], { usage: used }), () => {}, {
+      contextLimit: 200_000,
+    });
+
+    expect(screen.getByText("8k")).toBeTruthy();
+    expect(screen.getByText("200k")).toBeTruthy();
+  });
+
+  test("and asks for a compaction when clicked", () => {
+    let asked = 0;
+    panel(state([{ kind: "user", id: "u0", text: "hi" }], { usage: used }), () => {}, {
+      onCompact: () => (asked += 1),
+    });
+
+    fireEvent.click(screen.getByText("8k"));
+    expect(asked).toBe(1);
+  });
+
+  /// Mid-turn the history is the turn's, not the window's: shortening it from
+  /// under a running request is not something to offer.
+  test("but not while a turn is running", () => {
+    panel(
+      state([{ kind: "user", id: "u0", text: "hi" }], { usage: used, status: "running" }),
+      () => {},
+      { onCompact: () => {} },
+    );
+
+    expect(screen.getByText("8k").closest("button")?.disabled).toBe(true);
+  });
+});
+
+describe("a notice", () => {
+  /// It is the app talking, not the agent. Under an "Agent" label it reads as
+  /// something the model said about itself.
+  test("belongs to neither side of the conversation", () => {
+    panel(
+      state([
+        { kind: "user", id: "u0", text: "hi" },
+        { kind: "notice", id: "n0", text: "Older history compacted" },
+      ]),
+    );
+
+    expect(screen.getByText("Older history compacted")).toBeTruthy();
+    expect(screen.queryByText("Agent")).toBeNull();
   });
 });

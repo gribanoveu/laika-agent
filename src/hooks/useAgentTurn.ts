@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelChat,
+  compactHistory,
   loadChat,
   onTurnEvent,
   resumeChat,
@@ -15,6 +16,7 @@ import {
 import {
   acceptEvent,
   acceptOutcome,
+  appendNotice,
   appendUserMessage,
   clearApproval,
   emptyTurn,
@@ -88,6 +90,39 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       .catch((e) => setError(String(e)));
   }, [turn.status, turn.blocks, chatId, onSaved]);
 
+  /**
+   * Folds the older part of the conversation into a summary, when the backend
+   * says it is worth it — `force` is the user asking outright.
+   *
+   * Here rather than inside the turn because the window owns the history: a
+   * turn can shorten its own copy (and does, when a request is refused), but
+   * only this side can keep the shorter one for next time. Nothing about when
+   * or how much is decided here.
+   */
+  const makeRoom = useCallback(async (force: boolean) => {
+    try {
+      const shorter = await compactHistory(history.current, force);
+      if (!shorter) return false;
+      history.current = shorter.history;
+      unsaved.current = true;
+      setTurn((state) =>
+        appendNotice(
+          state,
+          `Older history compacted — ${shorter.folded} message${
+            shorter.folded === 1 ? "" : "s"
+          } folded into a summary`,
+        ),
+      );
+      return true;
+    } catch (e) {
+      // Not fatal on the way to a turn: the request may well still fit, and if
+      // it does not, the turn's own pass reports what the provider said. Only
+      // an explicit request is worth interrupting for.
+      if (force) setError(String(e));
+      return false;
+    }
+  }, []);
+
   /** Sends what the user typed. While a turn is running the same text steers it. */
   const send = useCallback(
     async (text: string) => {
@@ -103,6 +138,9 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       unsaved.current = true;
       setTurn((state) => appendUserMessage(state, trimmed));
       history.current = [...history.current, { role: "user", content: trimmed }];
+      // Before the turn, so the room is made once and kept — a turn that
+      // compacts its own copy pays for the summary again on the next message.
+      await makeRoom(false);
 
       const id = `turn-${++turnId.current}`;
       try {
@@ -113,7 +151,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
         setTurn((state) => ({ ...state, status: "done" }));
       }
     },
-    [turn.status, listen, finish],
+    [turn.status, listen, finish, makeRoom],
   );
 
   /** Answers the approval card. `always` widens the policy before continuing. */
@@ -168,5 +206,5 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     setTurn(emptyTurn());
   }, []);
 
-  return { turn, chatId, error, send, decide, cancel, open, reset };
+  return { turn, chatId, error, send, decide, cancel, open, reset, compact: makeRoom };
 }

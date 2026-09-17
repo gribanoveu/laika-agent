@@ -21,6 +21,9 @@ pub struct LlmSession {
     /// Read here rather than at each call site so the turn loop cannot use a
     /// stale copy of the flag mid-turn.
     pub debug_logging: bool,
+    /// The model's context window, when it is known. See
+    /// `domain::compaction`.
+    pub context_limit: Option<u32>,
 }
 
 /// The session for `provider_id`, or for the active provider when `None`.
@@ -49,6 +52,7 @@ pub fn resolve(provider_id: Option<&str>) -> Result<LlmSession, LlmError> {
         provider_id: config.id.clone(),
         model,
         debug_logging: settings.debug_logging,
+        context_limit: config.context_limit,
     })
 }
 

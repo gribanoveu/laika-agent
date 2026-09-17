@@ -194,12 +194,21 @@ const emptyTool = {
  * The flat block stream, grouped the way the prototype draws it: a user bubble
  * opens a turn, and everything until the next one belongs to the agent.
  */
-function group(blocks: Block[]): { role: "user" | "agent"; blocks: Block[] }[] {
-  const groups: { role: "user" | "agent"; blocks: Block[] }[] = [];
+type Group = { role: "user" | "agent" | "notice"; blocks: Block[] };
+
+function group(blocks: Block[]): Group[] {
+  const groups: Group[] = [];
   for (const block of blocks) {
-    const role = block.kind === "user" || block.kind === "steer" ? "user" : "agent";
+    // A notice is nobody's turn — it is the app saying what it did — so it
+    // stands alone rather than appearing under "Agent" as something said.
+    const role =
+      block.kind === "notice"
+        ? "notice"
+        : block.kind === "user" || block.kind === "steer"
+          ? "user"
+          : "agent";
     const last = groups[groups.length - 1];
-    if (!last || last.role !== role || block.kind === "user") {
+    if (!last || last.role !== role || block.kind === "user" || role === "notice") {
       groups.push({ role, blocks: [block] });
     } else {
       last.blocks.push(block);
@@ -212,12 +221,24 @@ type Props = {
   workspace: string | null;
   turn: TurnState;
   usage: ChatUsage | null;
+  /** The active provider's context window, when it is configured. */
+  contextLimit: number | null;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
   onOpenRepo: () => void;
   onNewChat: () => void;
+  onCompact: () => void;
 };
 
-export function ChatPanel({ workspace, turn, usage, onDecide, onOpenRepo, onNewChat }: Props) {
+export function ChatPanel({
+  workspace,
+  turn,
+  usage,
+  contextLimit,
+  onDecide,
+  onOpenRepo,
+  onNewChat,
+  onCompact,
+}: Props) {
   const groups = group(turn.blocks);
   const name = workspace?.split("/").filter(Boolean).pop() ?? null;
 
@@ -241,14 +262,37 @@ export function ChatPanel({ workspace, turn, usage, onDecide, onOpenRepo, onNewC
             </span>
           )}
           {usage && (
-            <div
+            <button
+              type="button"
               className="context-meter"
-              title={`Context: ${compact(usage.totalTokens)} tokens in the last request`}
+              disabled={turn.status === "running"}
+              title={
+                contextLimit
+                  ? `Context: ${compact(usage.totalTokens)} of ${compact(contextLimit)} tokens. Click to fold the older part into a summary.`
+                  : `Context: ${compact(usage.totalTokens)} tokens in the last request. Click to fold the older part into a summary.`
+              }
+              onClick={onCompact}
             >
+              {contextLimit ? (
+                <span
+                  className="context-ring"
+                  style={
+                    {
+                      "--ring-deg": `${Math.min(360, Math.round((usage.totalTokens / contextLimit) * 360))}deg`,
+                    } as React.CSSProperties
+                  }
+                />
+              ) : null}
               <span className="context-meter-val">
                 <span className="used">{compact(usage.totalTokens)}</span>
+                {contextLimit && (
+                  <>
+                    <span className="sep">/</span>
+                    {compact(contextLimit)}
+                  </>
+                )}
               </span>
-            </div>
+            </button>
           )}
         </div>
       </header>
@@ -259,9 +303,11 @@ export function ChatPanel({ workspace, turn, usage, onDecide, onOpenRepo, onNewC
         ) : (
           groups.map((turnGroup, index) => (
             <div className="turn" key={index}>
-              <div className={`role${turnGroup.role === "agent" ? " agent" : ""}`}>
-                {turnGroup.role === "agent" ? "Agent" : "You"}
-              </div>
+              {turnGroup.role !== "notice" && (
+                <div className={`role${turnGroup.role === "agent" ? " agent" : ""}`}>
+                  {turnGroup.role === "agent" ? "Agent" : "You"}
+                </div>
+              )}
               {turnGroup.blocks.map((block) => renderBlock(block, onDecide))}
             </div>
           ))
@@ -287,6 +333,12 @@ function renderBlock(
         <div className="bubble steer" key={block.id} title="Sent while the agent was working">
           {block.text}
         </div>
+      );
+    case "notice":
+      return (
+        <p className="notice" key={block.id}>
+          {block.text}
+        </p>
       );
     case "message":
       return (

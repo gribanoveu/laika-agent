@@ -114,6 +114,22 @@ export async function startChat(
   return invoke<Outcome>("chat_start", { turnId, messages, todos });
 }
 
+/**
+ * Shortens the conversation when it is worth shortening, and returns the
+ * shorter one. `null` means "leave yours alone" — the decision is the
+ * backend's, including how much to fold.
+ */
+export async function compactHistory(
+  messages: LlmMessage[],
+  force = false,
+): Promise<{ history: LlmMessage[]; folded: number } | null> {
+  if (!inTauri()) return null;
+  return invoke<{ history: LlmMessage[]; folded: number } | null>("chat_compact", {
+    messages,
+    force,
+  });
+}
+
 /** Continues a paused turn. `checkpoint` goes back exactly as it arrived. */
 export async function resumeChat(
   turnId: string,
@@ -179,6 +195,8 @@ export type ProviderConfig = {
   requestHeaders?: Record<string, string>;
   temperature?: number | null;
   maxTokens?: number | null;
+  /** The model's context window in tokens. Unset means the app does not know. */
+  contextLimit?: number | null;
   reasoningEffort?: string | null;
 };
 

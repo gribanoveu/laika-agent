@@ -39,6 +39,65 @@ afterEach(() => {
 
 const saved = () => calls.filter((call) => call.command === "chat_save");
 
+describe("making room before a turn", () => {
+  /// Compacting inside the turn would work once and be paid for again on the
+  /// next message: the window owns the history, so the shorter one has to be
+  /// kept here.
+  test("a shorter history is adopted and sent", async () => {
+    // What the backend returns: the summary, then the tail it was given —
+    // the message just typed among it.
+    results.chat_compact = {
+      history: [
+        { role: "user", content: "[summary] earlier" },
+        { role: "user", content: "and now?" },
+      ],
+      folded: 20,
+    };
+    results.chat_start = done("carry on");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("and now?");
+    });
+
+    const started = calls.find((call) => call.command === "chat_start");
+    expect(started?.args.messages).toEqual([
+      { role: "user", content: "[summary] earlier" },
+      { role: "user", content: "and now?" },
+    ]);
+    expect(result.current.turn.blocks.some((b) => b.kind === "notice")).toBe(true);
+  });
+
+  test("and a history that needs nothing is sent as it is", async () => {
+    results.chat_compact = null;
+    results.chat_start = done("carry on");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    const started = calls.find((call) => call.command === "chat_start");
+    expect(started?.args.messages).toEqual([{ role: "user", content: "hello" }]);
+    expect(result.current.turn.blocks.some((b) => b.kind === "notice")).toBe(false);
+  });
+
+  /// Asked for outright, with nothing worth folding: the answer is no, and
+  /// the caller is the one that says so.
+  test("asking for one that cannot help reports back", async () => {
+    results.chat_compact = null;
+    const { result } = renderHook(() => useAgentTurn());
+
+    let folded: boolean | undefined;
+    await act(async () => {
+      folded = await result.current.compact(true);
+    });
+
+    expect(folded).toBe(false);
+    expect(calls).toEqual([{ command: "chat_compact", args: { messages: [], force: true } }]);
+  });
+});
+
 describe("saving", () => {
   test("a finished turn is written down, with both lists", async () => {
     results.chat_start = done("here you go");

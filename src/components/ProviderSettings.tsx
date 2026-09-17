@@ -6,7 +6,7 @@ import "./ProviderSettings.css";
 // because a popup menu is clipped by the modal's own overflow — the same
 // reason the theme picker is segmented.
 
-const BLANK = { id: "", baseUrl: "", model: "" };
+const BLANK = { id: "", baseUrl: "", model: "", contextLimit: "" };
 
 type Props = {
   settings: LlmSettings | null;
@@ -18,6 +18,13 @@ type Props = {
   onSelect: (id: string) => void;
   onDebugLogging: (enabled: boolean) => void;
 };
+
+const fromConfig = (config: ProviderConfig) => ({
+  id: config.id,
+  baseUrl: config.baseUrl,
+  model: config.model ?? "",
+  contextLimit: config.contextLimit ? String(config.contextLimit) : "",
+});
 
 export function ProviderSettings({
   settings,
@@ -45,9 +52,7 @@ export function ProviderSettings({
     const active = settings.activeProviderId ?? providers[0]?.id ?? null;
     setEditing(active);
     const chosen = providers.find((p) => p.id === active);
-    setDraft(
-      chosen ? { id: chosen.id, baseUrl: chosen.baseUrl, model: chosen.model ?? "" } : BLANK,
-    );
+    setDraft(chosen ? fromConfig(chosen) : BLANK);
     setApiKey(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
@@ -58,7 +63,7 @@ export function ProviderSettings({
     setApiKey(null);
     setSaved(false);
     const next = providers.find((p) => p.id === id);
-    setDraft(next ? { id: next.id, baseUrl: next.baseUrl, model: next.model ?? "" } : BLANK);
+    setDraft(next ? fromConfig(next) : BLANK);
     if (id) onSelect(id);
   };
 
@@ -73,6 +78,9 @@ export function ProviderSettings({
         id: draft.id.trim(),
         baseUrl: draft.baseUrl.trim(),
         model: draft.model.trim() || null,
+        // Blank means "not known", which is what turns compaction off. A zero
+        // or a typo must read the same way rather than as a window of nothing.
+        contextLimit: Number.parseInt(draft.contextLimit, 10) || null,
       },
       apiKey,
     );

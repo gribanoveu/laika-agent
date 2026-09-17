@@ -15,6 +15,8 @@ export type Block =
   | { kind: "message"; id: string; round: number; text: string }
   | { kind: "reasoning"; id: string; round: number; text: string }
   | { kind: "steer"; id: string; text: string }
+  /** Something the app did to the conversation, said out loud. */
+  | { kind: "notice"; id: string; text: string }
   | {
       kind: "tool";
       id: string;
@@ -72,6 +74,14 @@ export function appendUserMessage(state: TurnState, text: string): TurnState {
     lastSeq: 0,
     buffered: [],
     blocks: [...state.blocks, { kind: "user", id: `user:${state.blocks.length}`, text }],
+  };
+}
+
+/** Says what the app did, in the place where it happened. */
+export function appendNotice(state: TurnState, text: string): TurnState {
+  return {
+    ...state,
+    blocks: [...state.blocks, { kind: "notice", id: `notice:${state.blocks.length}`, text }],
   };
 }
 
@@ -175,6 +185,17 @@ function applyEvent(state: TurnState, event: TurnEvent): TurnState {
       // The authoritative text, replacing whatever the deltas built: a delta
       // lost on the way here is permanent once the transcript is saved.
       return setText(state, "message", event.round, event.payload.text);
+
+    case "historyCompacted": {
+      // The transcript keeps every message; it is the model's copy that got
+      // shorter. Saying so is the whole point — history that disappears on
+      // its own looks like the agent forgetting for no reason.
+      const folded = event.payload.folded;
+      return appendNotice(
+        state,
+        `Older history compacted — ${folded} message${folded === 1 ? "" : "s"} folded into a summary`,
+      );
+    }
 
     case "steeringApplied":
       return {

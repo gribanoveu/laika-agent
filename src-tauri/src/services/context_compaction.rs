@@ -20,6 +20,30 @@ pub struct Compacted {
     pub folded: usize,
 }
 
+/// A pass before the conversation fails rather than after, when the session
+/// knows how big the window is and the estimate says the next request is
+/// close to filling it.
+///
+/// `force` is the user asking for it outright: the threshold is skipped, but
+/// nothing else is — a conversation with nothing worth folding stays as it is
+/// whoever asked.
+pub fn compact_if_needed(
+    session: &LlmSession,
+    history: &[LlmMessage],
+    force: bool,
+) -> Result<Option<Compacted>, LlmError> {
+    let needed = force
+        || compaction::should_compact(
+            compaction::estimate_tokens(history),
+            session.context_limit,
+            history,
+        );
+    if !needed {
+        return Ok(None);
+    }
+    compact(session, history, compaction::KEEP_LAST_MESSAGES)
+}
+
 /// One pass. `None` means the history is unchanged, for any reason: there was
 /// nothing worth folding, or the summary came back empty.
 ///
@@ -127,6 +151,14 @@ mod tests {
             provider_id: "test".to_string(),
             model: "m".to_string(),
             debug_logging: false,
+            context_limit: None,
+        }
+    }
+
+    fn session_with_window(provider: Arc<Summarizer>, tokens: u32) -> LlmSession {
+        LlmSession {
+            context_limit: Some(tokens),
+            ..session(provider)
         }
     }
 
@@ -227,6 +259,59 @@ mod tests {
         });
 
         assert!(compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES).is_err());
+    }
+
+    /// The app talks to gateways it knows nothing about. Compacting against
+    /// a guessed window would throw away conversation to solve a problem that
+    /// may not exist.
+    #[test]
+    fn without_a_known_window_nothing_happens_on_its_own() {
+        let provider = Summarizer::saying("a summary");
+        let long: Vec<LlmMessage> = (0..40)
+            .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
+            .collect();
+
+        assert_eq!(compact_if_needed(&session(provider.clone()), &long, false).unwrap(), None);
+        assert!(provider.asked.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_conversation_filling_its_window_is_folded_before_it_fails() {
+        let provider = Summarizer::saying("a summary");
+        let long: Vec<LlmMessage> = (0..40)
+            .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
+            .collect();
+
+        let compacted = compact_if_needed(&session_with_window(provider, 10_000), &long, false)
+            .unwrap()
+            .expect("a shorter history");
+        assert_eq!(compacted.folded, 40 - KEEP_LAST_MESSAGES);
+    }
+
+    #[test]
+    fn a_conversation_with_room_to_spare_is_left_alone() {
+        let provider = Summarizer::saying("a summary");
+        let history = conversation(40);
+
+        assert_eq!(
+            compact_if_needed(&session_with_window(provider.clone(), 1_000_000), &history, false)
+                .unwrap(),
+            None
+        );
+        assert!(provider.asked.lock().unwrap().is_empty());
+    }
+
+    /// Asking for it outright skips the threshold — and nothing else. A
+    /// conversation with nothing worth folding stays as it is whoever asked.
+    #[test]
+    fn asking_for_it_skips_the_threshold_but_not_the_plan() {
+        let provider = Summarizer::saying("a summary");
+        let session = session(provider.clone());
+
+        assert!(compact_if_needed(&session, &conversation(40), true)
+            .unwrap()
+            .is_some());
+        assert_eq!(compact_if_needed(&session, &conversation(4), true).unwrap(), None);
     }
 
     /// The pair rule of `plan_compaction`, seen from the outside: what comes

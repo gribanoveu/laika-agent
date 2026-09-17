@@ -28,6 +28,7 @@ use crate::domain::turn::{
 };
 use crate::services::ai_tools::preview;
 use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
+use crate::services::context_compaction;
 use crate::services::llm_session;
 
 use super::chat_events::chat_event_sink;
@@ -151,6 +152,44 @@ pub fn chat_preview(
         })
         .collect();
     Ok(preview::preview_round(&scope, &calls))
+}
+
+/// What the conversation looks like once the older part of it is a summary.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactedHistory {
+    pub history: Vec<LlmMessage>,
+    /// How many messages the one summary now stands for.
+    pub folded: usize,
+}
+
+/// Shortens the conversation, if it is worth shortening.
+///
+/// Called by the window before it sends, and by the user asking outright
+/// (`force`). It is the window that asks because the window owns the history
+/// — but nothing about *when* or *how much* is decided there: this returns
+/// `None` whenever the answer is "leave it alone", so the rules stay on this
+/// side and cannot drift into a second copy written in TypeScript.
+#[tauri::command]
+pub async fn chat_compact(
+    messages: Vec<LlmMessage>,
+    force: bool,
+) -> Result<Option<CompactedHistory>, String> {
+    // A summary is an ordinary request to the provider, and a request on the
+    // IPC loop freezes every other command for its duration.
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
+        context_compaction::compact_if_needed(&session, &messages, force)
+            .map(|compacted| {
+                compacted.map(|compacted| CompactedHistory {
+                    history: compacted.history,
+                    folded: compacted.folded,
+                })
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("the compaction thread failed: {e}"))?
 }
 
 /// Asks the running turn to stop. Returns at once: the turn notices at its
