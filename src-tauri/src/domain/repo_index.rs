@@ -80,6 +80,9 @@ pub enum Language {
     JavaScript,
     Python,
     Go,
+    /// Spring on the back, React on the front is what an enterprise repository
+    /// usually is, and half of it would otherwise be chunked by byte count.
+    Java,
 }
 
 impl Language {
@@ -97,6 +100,7 @@ impl Language {
         Language::JavaScript,
         Language::Python,
         Language::Go,
+        Language::Java,
     ];
 }
 
@@ -127,6 +131,7 @@ pub fn detect_language(path: &str) -> Language {
         ".js" | ".mjs" | ".cjs" | ".jsx" => Language::JavaScript,
         ".py" | ".pyi" => Language::Python,
         ".go" => Language::Go,
+        ".java" => Language::Java,
         _ => Language::PlainText,
     }
 }
@@ -234,6 +239,7 @@ mod tests {
             ("components/Card.jsx", Language::JavaScript),
             ("scripts/build-embedding-model.py", Language::Python),
             ("cmd/main.go", Language::Go),
+            ("src/main/java/com/acme/UserService.java", Language::Java),
         ] {
             assert_eq!(detect_language(path), expected, "{path}");
         }
@@ -276,7 +282,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             Language::ALL.len(),
-            10,
+            11,
             "a language was added or removed — update ALL and this count together"
         );
         let unique: std::collections::HashSet<_> = Language::ALL.iter().collect();
@@ -287,7 +293,7 @@ mod tests {
     /// will be asked about.
     #[test]
     fn every_detectable_language_is_listed() {
-        for path in ["a.md", "a.json", "a.yaml", "a.rs", "a.ts", "a.tsx", "a.js", "a.py", "a.go", "a.txt"] {
+        for path in ["a.md", "a.json", "a.yaml", "a.rs", "a.ts", "a.tsx", "a.js", "a.py", "a.go", "a.java", "a.txt"] {
             assert!(Language::ALL.contains(&detect_language(path)));
         }
     }
