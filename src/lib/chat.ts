@@ -168,6 +168,22 @@ export async function setUnattended(unattended: boolean): Promise<void> {
   return invoke<void>("approval_set_unattended", { unattended });
 }
 
+/** What the agent is allowed to be. Mirrors `domain::conversation_mode`. */
+export type ConversationMode = "agent" | "plan" | "ask";
+
+/**
+ * Chooses the mode for the turns that follow.
+ *
+ * Told to the backend rather than sent with each turn, because a paused turn
+ * is resumed from a checkpoint that predates the chip — and because the mode
+ * is enforced there, not here: the window asking nicely for fewer tools would
+ * be a rule the model never sees.
+ */
+export async function setConversationMode(mode: ConversationMode): Promise<void> {
+  requireBackend();
+  return invoke<void>("chat_set_mode", { mode });
+}
+
 /**
  * Subscribes to one turn's events.
  *

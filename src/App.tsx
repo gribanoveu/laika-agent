@@ -17,6 +17,8 @@ import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
+import { useConversationMode } from "./hooks/useConversationMode";
+import type { ConversationMode } from "./lib/chat";
 import type { AsideTab } from "./types";
 import "./App.css";
 
@@ -36,6 +38,7 @@ export default function App() {
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("changes");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const conversation = useConversationMode();
   const toast = useToast();
   const workspace = useWorkspace();
   const history = useChatHistory(workspace.path);
@@ -80,6 +83,11 @@ export default function App() {
     if (!(await agent.compact(true))) {
       toast.show(agent.error ?? "Nothing worth folding away yet");
     }
+  };
+
+  const pickConversation = async (mode: ConversationMode) => {
+    const failed = await conversation.pick(mode);
+    if (failed) toast.show(failed);
   };
 
   const chooseFolder = async () => {
@@ -147,6 +155,8 @@ export default function App() {
             onStop={agent.cancel}
             running={agent.turn.status === "running"}
             onNotify={toast.show}
+            conversation={conversation.mode}
+            onConversation={pickConversation}
           />
         </main>
 

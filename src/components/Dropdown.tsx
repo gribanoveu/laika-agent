@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import "./Dropdown.css";
 
-type Option = { value: string; hint?: string };
+/** `label` when what the caller sends and what the reader sees differ — a wire
+    value like "plan" is not a word to put in a menu. */
+type Option = { value: string; label?: string; hint?: string };
 
 type Props = {
   label: ReactNode;
@@ -65,7 +67,7 @@ export function Dropdown({ label, title, options, value, onPick, mono, emptyLabe
                 setOpen(false);
               }}
             >
-              {opt.value}
+              {opt.label ?? opt.value}
               {opt.hint && <span className="hint">{opt.hint}</span>}
             </button>
           ))}

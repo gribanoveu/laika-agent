@@ -19,6 +19,7 @@
 
 use std::path::Path;
 
+use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::LlmMessage;
 use crate::domain::tools::{Task, TodoStatus};
 
@@ -87,12 +88,46 @@ Never reproduce an API key, token, password, private key, or a connection string
 
 Stay inside the open folder and the tools you were given. If something needs access you do not have, say so rather than routing around it."#;
 
+/// What the chosen mode changes about the job.
+///
+/// Its own message rather than a branch inside [`INSTRUCTIONS`]: three copies
+/// of a shared body differing by a paragraph is three places to edit one rule,
+/// and the mode text is constant per mode, so the cacheable prefix is still
+/// constant as long as the mode is.
+///
+/// Each says what the mode *is for*, not which tools it has. The request
+/// already carries the tools it has, and `conversation_mode::tools` is what
+/// actually decides — a prompt describing a narrower set than the request
+/// advertises is a rule the model watches itself break.
+pub fn mode_instructions(mode: ConversationMode) -> &'static str {
+    match mode {
+        ConversationMode::Agent => "## This conversation: Agent
+
+You can research, change the repository and run commands. Handle the request rather than describing how it could be handled.",
+        // Written against the failure the mode exists to prevent: an agent
+        // that answers "here is the plan" and has already applied half of it.
+        ConversationMode::Plan => "## This conversation: Plan
+
+You are working out *how* something should be done, and you are not doing it. Read whatever you need, then give the user a plan they can read and argue with: what changes, in which files, in what order, and what you are unsure about.
+
+Nothing that changes the repository is available to you here, and neither is running a command — so do not say you will edit, create, delete or run anything, and do not offer to. If the work is now clear enough to do, say the plan is ready; switching to Agent is the user's move, not yours.
+
+This also means you cannot check your plan against a build or a test run. Where that matters, say which step you would verify first.",
+        ConversationMode::Ask => "## This conversation: Ask
+
+Answer the question from the repository, as directly as it deserves — one line if one line is the answer. Read what you need to be sure, and stop there.
+
+You cannot change anything or run anything here, so do not offer to. There is no checklist and no plan to produce: if the answer turns out to need real work, say what the work is and leave the decision to the user.",
+    }
+}
+
 /// This turn's facts, as the caller knows them.
 ///
 /// `today` is a formatted date rather than a clock: the domain layer has no
 /// business reading one, and a fixed string is what makes the assembled text
 /// testable.
 pub struct TurnContext<'a> {
+    pub mode: ConversationMode,
     pub workspace: &'a Path,
     /// The shell `runCommand` runs a line through — a setting, and one the
     /// model has to know before it writes a line that only works in one.
@@ -165,6 +200,7 @@ pub fn todo_block(todos: &[Task]) -> Option<String> {
 pub fn system_messages(ctx: &TurnContext) -> Vec<LlmMessage> {
     vec![
         LlmMessage::system(INSTRUCTIONS),
+        LlmMessage::system(mode_instructions(ctx.mode)),
         LlmMessage::system(context_block(ctx)),
     ]
 }
@@ -172,6 +208,7 @@ pub fn system_messages(ctx: &TurnContext) -> Vec<LlmMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::conversation_mode::ConversationMode;
     use crate::domain::llm::LlmRole;
     use crate::domain::tools::ToolName;
     use std::path::PathBuf;
@@ -187,6 +224,7 @@ mod tests {
 
     fn ctx<'a>(workspace: &'a Path, todos: &'a [Task]) -> TurnContext<'a> {
         TurnContext {
+            mode: ConversationMode::Agent,
             workspace,
             shell: "/bin/sh",
             today: "17 September 2026",
@@ -233,7 +271,8 @@ mod tests {
         });
 
         assert_eq!(first[0], second[0], "the cacheable prefix varies");
-        assert_ne!(first[1], second[1], "then nothing is carrying the turn");
+        assert_eq!(first[1], second[1], "the same mode, a different paragraph");
+        assert_ne!(first[2], second[2], "then nothing is carrying the turn");
     }
 
     #[test]
@@ -289,12 +328,59 @@ mod tests {
         assert!(unattended.contains("approved this turn in advance"));
     }
 
+    /// The narrower modes have to say plainly that they cannot act. An
+    /// agent that promises an edit it has no tool for is the failure both of
+    /// them exist to prevent.
+    #[test]
+    fn the_read_only_modes_say_they_cannot_act() {
+        for mode in [ConversationMode::Plan, ConversationMode::Ask] {
+            let text = mode_instructions(mode).to_lowercase();
+            assert!(
+                text.contains("do not offer to"),
+                "{mode:?} does not tell the model to stop offering what it cannot do"
+            );
+        }
+        assert!(!mode_instructions(ConversationMode::Agent).contains("do not offer to"));
+    }
+
+    /// The mode reaches the model at all. Each paragraph has to be its own
+    /// text, or two of the three modes are a label on the same behaviour.
+    #[test]
+    fn each_mode_is_told_apart_in_the_prompt() {
+        let texts: Vec<&str> = ConversationMode::ALL
+            .iter()
+            .map(|&mode| mode_instructions(mode))
+            .collect();
+        for (i, text) in texts.iter().enumerate() {
+            assert!(!text.trim().is_empty(), "{:?} says nothing", ConversationMode::ALL[i]);
+            assert_eq!(
+                texts.iter().filter(|other| *other == text).count(),
+                1,
+                "two modes share a paragraph"
+            );
+        }
+    }
+
+    #[test]
+    fn the_chosen_mode_reaches_the_messages() {
+        let workspace = PathBuf::from("/tmp/p");
+        let planning = system_messages(&TurnContext {
+            mode: ConversationMode::Plan,
+            ..ctx(&workspace, &[])
+        });
+
+        assert_eq!(
+            planning[1].content.as_deref(),
+            Some(mode_instructions(ConversationMode::Plan))
+        );
+    }
+
     #[test]
     fn both_messages_are_system_messages_and_the_constant_one_is_first() {
         let workspace = PathBuf::from("/tmp/p");
         let messages = system_messages(&ctx(&workspace, &[]));
 
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
         assert!(messages.iter().all(|m| m.role == LlmRole::System));
         assert_eq!(messages[0].content.as_deref(), Some(INSTRUCTIONS));
     }

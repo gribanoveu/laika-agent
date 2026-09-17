@@ -28,6 +28,7 @@ pub fn run() {
             commands::chat::chat_cancel_steer,
             commands::chat::approval_always_allow,
             commands::chat::approval_set_unattended,
+            commands::chat::chat_set_mode,
             commands::chat_history::chat_list,
             commands::chat_history::chat_load,
             commands::chat_history::chat_save,

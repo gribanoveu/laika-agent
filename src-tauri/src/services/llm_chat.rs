@@ -15,11 +15,12 @@ use std::time::Duration;
 use chrono::Local;
 
 use crate::domain::llm::{
-    ChatRequest, ChatStreamResult, LlmError, LlmMessage, LlmRole, LlmToolCall,
+    ChatRequest, ChatStreamResult, LlmError, LlmMessage, LlmRole, LlmToolCall, LlmToolDefinition,
     sanitize_tool_call_arguments,
 };
 use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
+use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
@@ -147,6 +148,10 @@ pub struct Turn<'a> {
     pub session: &'a LlmSession,
     pub scope: &'a ToolScope,
     pub approval: &'a ApprovalPolicy,
+    /// Which tools exist this turn, and what the model is told the
+    /// conversation is for. Read once per turn: a mode changed while an
+    /// approval card was showing does not rewrite decisions already made.
+    pub mode: ConversationMode,
     /// Polled between rounds, after a round streams, between individual calls,
     /// and during a retry wait.
     pub cancelled: &'a dyn Fn() -> bool,
@@ -455,7 +460,7 @@ fn run(
             // which is the case the truncation note exists for.
             let mut runnable: Vec<LlmToolCall> = Vec::new();
             for call in &result.tool_calls {
-                match preflight_tool_call(turn.scope, &state.reads, call) {
+                match preflight_tool_call(turn.scope, turn.mode, &state.reads, call) {
                     Ok(()) => runnable.push(call.clone()),
                     Err(e) => {
                         report_call(&events, round, call);
@@ -635,7 +640,7 @@ fn ask_the_model(
     loop {
         let request = ChatRequest {
             messages: prepend_system_prompt(turn, todos, history),
-            tools: tool_definitions(),
+            tools: tool_definitions_for(turn.mode),
             model: turn.session.model.clone(),
         };
         let error = match stream_one_round(turn, events, round, request) {
@@ -665,6 +670,20 @@ fn ask_the_model(
     }
 }
 
+/// What this mode advertises. Leaving a tool out of the request is the half
+/// of the gate the model can see; [`preflight_tool_call`] is the half it
+/// cannot, and both are needed — a model that used `writeFile` earlier in a
+/// conversation calls it again from memory when the mode narrows.
+fn tool_definitions_for(mode: ConversationMode) -> Vec<LlmToolDefinition> {
+    tool_definitions()
+        .into_iter()
+        .filter(|definition| {
+            ToolName::from_wire_name(&definition.name)
+                .is_some_and(|tool| conversation_mode::offers(mode, tool))
+        })
+        .collect()
+}
+
 /// The request's messages: what the model is told, then the conversation.
 ///
 /// Rebuilt every round rather than pushed into `history` once. The checklist
@@ -675,6 +694,7 @@ fn ask_the_model(
 /// what keeps `plan_compaction`'s leading-system-messages count at zero.
 fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<LlmMessage> {
     let context = prompt::TurnContext {
+        mode: turn.mode,
         workspace: turn.scope.root(),
         shell: &turn.shell.program,
         today: &Local::now().format("%e %B %Y").to_string(),
@@ -1006,6 +1026,7 @@ mod tests {
         events: ChatEventSink,
         log: Arc<Mutex<Vec<ChatTurnEvent>>>,
         approval: ApprovalPolicy,
+        mode: ConversationMode,
         cancel_after: Arc<Mutex<Option<usize>>>,
         polls: Arc<Mutex<usize>>,
         slept: Arc<Mutex<Vec<Duration>>>,
@@ -1038,6 +1059,7 @@ mod tests {
                 always_allowed: HashSet::new(),
                 skip_all: true,
             },
+            mode: ConversationMode::Agent,
             cancel_after: Arc::new(Mutex::new(None)),
             polls: Arc::new(Mutex::new(0)),
             slept: Arc::new(Mutex::new(Vec::new())),
@@ -1074,6 +1096,7 @@ mod tests {
                 session: &self.session,
                 scope: &self.scope,
                 approval: &self.approval,
+                mode: self.mode,
                 cancelled: &cancelled,
                 sleep: &sleep,
                 take_steering: &take_steering,
@@ -1259,13 +1282,25 @@ mod tests {
     /// Everything the two sides actually said, with what the app told the
     /// model stripped off the front.
     fn conversation_of(request: &ChatRequest) -> &[LlmMessage] {
+        &request.messages[lead_of(request)..]
+    }
+
+    fn lead_of(request: &ChatRequest) -> usize {
         let lead = request
             .messages
             .iter()
             .take_while(|m| m.role == LlmRole::System)
             .count();
-        assert_eq!(lead, 2, "the instructions and this turn's facts, in that order");
-        &request.messages[lead..]
+        assert_eq!(lead, 3, "the instructions, the mode, then this turn's facts");
+        lead
+    }
+
+    /// The last of the leading system messages: the half that changes.
+    fn facts_of(request: &ChatRequest) -> String {
+        request.messages[lead_of(request) - 1]
+            .content
+            .clone()
+            .expect("the facts are a message with content")
     }
 
     /// The model is told who it is and where it stands before it is asked
@@ -1284,11 +1319,7 @@ mod tests {
             Some(prompt::INSTRUCTIONS)
         );
         assert!(
-            requests[0].messages[1]
-                .content
-                .as_deref()
-                .unwrap()
-                .contains(&h.root.display().to_string()),
+            facts_of(&requests[0]).contains(&h.root.display().to_string()),
             "the open folder is not in the prompt"
         );
         assert_eq!(conversation_of(&requests[0]).len(), 1);
@@ -1342,8 +1373,8 @@ mod tests {
             .expect("finishes");
 
         let requests = h.provider.requests();
-        let first = requests[0].messages[1].content.clone().unwrap();
-        let second = requests[1].messages[1].content.clone().unwrap();
+        let first = facts_of(&requests[0]);
+        let second = facts_of(&requests[1]);
         assert!(!first.contains("read it"), "a list nobody had written yet");
         assert!(second.contains("read it") && second.contains("rewrite it"));
     }
@@ -1363,15 +1394,82 @@ mod tests {
             .run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![]))
             .expect("finishes");
 
-        let watched = |h: &Harness| {
-            h.provider.requests()[0].messages[1]
-                .content
-                .clone()
-                .unwrap()
-                .contains("approved this turn in advance")
-        };
+        let watched =
+            |h: &Harness| facts_of(&h.provider.requests()[0]).contains("approved this turn in advance");
         assert!(watched(&unattended));
         assert!(!watched(&attended));
+    }
+
+    /// Half the gate: a tool the mode does not offer is not in the request.
+    #[test]
+    fn a_narrower_mode_advertises_fewer_tools() {
+        let mut planning = harness("mode-advertised", vec![text("here is the plan")]);
+        planning.mode = ConversationMode::Plan;
+
+        planning
+            .run(|turn| stream(turn, vec![LlmMessage::user("how would you do it?")], vec![]))
+            .expect("finishes");
+
+        let advertised: Vec<String> = planning.provider.requests()[0]
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert!(advertised.contains(&"readFile".to_string()));
+        assert!(!advertised.contains(&"writeFile".to_string()));
+        assert!(!advertised.contains(&"runCommand".to_string()));
+    }
+
+    /// The other half, and the one that matters: a model that used `writeFile`
+    /// earlier in the conversation calls it again from memory. Not advertising
+    /// it does not stop that — refusing it does, and the refusal has to reach
+    /// the model as a result it can act on rather than ending the turn.
+    #[test]
+    fn a_tool_the_mode_does_not_offer_is_refused_even_when_asked_for() {
+        let mut planning = harness(
+            "mode-refused",
+            vec![
+                asks(vec![wants(
+                    "w1",
+                    "writeFile",
+                    r#"{"path":"a.rs","content":"new"}"#,
+                )]),
+                text("right — here is what I would change"),
+            ],
+        );
+        planning.mode = ConversationMode::Plan;
+        std::fs::write(planning.root.join("a.rs"), "old").unwrap();
+
+        let outcome = planning
+            .run(|turn| stream(turn, vec![LlmMessage::user("fix it")], vec![]))
+            .expect("finishes rather than failing");
+
+        let ChatStreamOutcome::Done(done) = outcome else {
+            panic!("a refused tool must not pause or stop the turn");
+        };
+        assert_eq!(done.result.text, "right — here is what I would change");
+        assert_eq!(
+            std::fs::read_to_string(planning.root.join("a.rs")).unwrap(),
+            "old",
+            "the file was written in a mode that cannot write"
+        );
+
+        let told = told_errors(&planning);
+        assert!(
+            told.iter().any(|r| r.contains("not available in this conversation mode")),
+            "the model was not told why: {told:?}"
+        );
+    }
+
+    /// Every failure the model was handed back this turn.
+    fn told_errors(h: &Harness) -> Vec<String> {
+        h.events()
+            .into_iter()
+            .filter_map(|event| match event.event {
+                ChatEventPayload::ToolResult(result) => result.error,
+                _ => None,
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------- the loop

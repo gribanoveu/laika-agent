@@ -11,6 +11,7 @@
 
 use serde::de::DeserializeOwned;
 
+use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::llm::LlmToolCall;
 use crate::domain::tools::{ReadFiles, ToolCall, ToolError, ToolScope, WriteBlocked};
 
@@ -45,10 +46,21 @@ pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
 /// could not have been told immediately.
 pub fn preflight_tool_call(
     scope: &ToolScope,
+    mode: ConversationMode,
     reads: &ReadFiles,
     call: &LlmToolCall,
 ) -> Result<(), ToolError> {
     let parsed = parse_tool_call(call)?;
+
+    // The mode, enforced rather than described. The tool was left out of the
+    // request, so asking for it means the model is working from memory of an
+    // earlier round — and an error it can read is what corrects that, where a
+    // sentence in the prompt did not.
+    if !conversation_mode::offers(mode, parsed.name()) {
+        return Err(ToolError::NotOfferedInMode(
+            parsed.name().wire_name().to_string(),
+        ));
+    }
 
     // Containment, checked here as well as inside each tool. The duplication is
     // the point: this runs before approval, the tool's own check runs before
@@ -276,6 +288,7 @@ mod tests {
         let (scope, _, reads) = fixture("preflight-escape");
         let err = preflight_tool_call(
             &scope,
+            ConversationMode::Agent,
             &reads,
             &call("writeFile", r#"{"path": "../outside.txt", "content": "x"}"#),
         )
@@ -290,6 +303,7 @@ mod tests {
 
         let err = preflight_tool_call(
             &scope,
+            ConversationMode::Agent,
             &reads,
             &call("writeFile", r#"{"path": "a.txt", "content": "x"}"#),
         )
@@ -304,6 +318,7 @@ mod tests {
         let (scope, _, reads) = fixture("preflight-new");
         preflight_tool_call(
             &scope,
+            ConversationMode::Agent,
             &reads,
             &call("writeFile", r#"{"path": "fresh.txt", "content": "x"}"#),
         )
@@ -318,6 +333,7 @@ mod tests {
         assert!(matches!(
             preflight_tool_call(
                 &scope,
+                ConversationMode::Agent,
                 &reads,
                 &call("move", r#"{"path": "a.txt", "newPath": "../b.txt"}"#)
             ),
@@ -330,9 +346,9 @@ mod tests {
     fn preflight_never_blocks_a_read() {
         let (scope, root, reads) = fixture("preflight-read");
         std::fs::write(root.join("a.txt"), "x").expect("writable");
-        preflight_tool_call(&scope, &reads, &call("readFile", r#"{"path": "a.txt"}"#))
+        preflight_tool_call(&scope, ConversationMode::Agent, &reads, &call("readFile", r#"{"path": "a.txt"}"#))
             .expect("reading is always allowed");
-        preflight_tool_call(&scope, &reads, &call("gitStatus", "")).expect("also allowed");
+        preflight_tool_call(&scope, ConversationMode::Agent, &reads, &call("gitStatus", "")).expect("also allowed");
     }
 
     /// An unparseable call is stopped here rather than becoming a card for
@@ -341,7 +357,7 @@ mod tests {
     fn preflight_surfaces_a_parse_failure() {
         let (scope, _, reads) = fixture("preflight-garbage");
         assert!(matches!(
-            preflight_tool_call(&scope, &reads, &call("writeFile", "not json at all")),
+            preflight_tool_call(&scope, ConversationMode::Agent, &reads, &call("writeFile", "not json at all")),
             Err(ToolError::InvalidArguments { .. })
         ));
     }

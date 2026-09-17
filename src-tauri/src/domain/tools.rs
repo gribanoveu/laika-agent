@@ -453,6 +453,13 @@ pub struct ToolDeps {
 pub enum ToolError {
     #[error("path escapes tool root: {0}")]
     PathEscape(String),
+    /// A tool the current conversation mode does not offer. Worded for the
+    /// model, which has to decide what to do next: the reason it is missing
+    /// matters more than the fact, or it simply tries again.
+    #[error(
+        "the tool `{0}` is not available in this conversation mode — the user chose a mode that cannot change the repository. Say what would need to be done instead of doing it."
+    )]
+    NotOfferedInMode(String),
     #[error("not found: {0}")]
     NotFound(String),
     #[error("not a file: {0}")]

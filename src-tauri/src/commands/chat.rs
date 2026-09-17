@@ -21,6 +21,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Runtime, State};
 
 use crate::domain::command_exec::Shell;
+use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
 use crate::domain::tools::{ApprovalPolicy, Task, ToolName, ToolPreview, ToolScope};
 use crate::domain::turn::{
@@ -45,6 +46,13 @@ pub struct AgentState {
     /// Grows as the user answers "always allow"; not persisted, because a
     /// saved "never ask me" is a brake released a month ago and forgotten.
     approval: Mutex<ApprovalPolicy>,
+    /// What the window's mode chip says right now. Resident rather than sent
+    /// with each turn for the same reason as the approval policy: a paused
+    /// turn is resumed from a checkpoint that predates the chip, and a mode
+    /// threaded through both entry points would have to be re-sent correctly
+    /// by the caller at the one moment it is easiest to forget. Not persisted
+    /// — a mode is a decision about this conversation, not about the app.
+    mode: Mutex<ConversationMode>,
 }
 
 impl AgentState {
@@ -54,6 +62,16 @@ impl AgentState {
             .map_err(|_| "workspace lock poisoned".to_string())?
             .clone()
             .ok_or_else(|| "no folder is open".to_string())
+    }
+
+    fn mode(&self) -> ConversationMode {
+        // A poisoned lock loses the chip's setting, not the turn. Falling back
+        // to the default would silently widen it, so the last successful read
+        // is not available — `Agent` is the default and the honest answer is
+        // to say the mode could not be read.
+        self.mode
+            .lock()
+            .map_or(ConversationMode::default(), |mode| *mode)
     }
 
     fn approval(&self) -> Result<ApprovalPolicy, String> {
@@ -230,6 +248,21 @@ pub fn approval_always_allow(tool: String, state: State<'_, Arc<AgentState>>) ->
     Ok(())
 }
 
+/// What the conversation is for: everything, planning only, or answering
+/// only. Takes effect from the next turn, and never retroactively — a turn
+/// already paused on an approval card runs the calls the user decided on.
+#[tauri::command]
+pub fn chat_set_mode(
+    mode: ConversationMode,
+    state: State<'_, Arc<AgentState>>,
+) -> Result<(), String> {
+    *state
+        .mode
+        .lock()
+        .map_err(|_| "mode lock poisoned".to_string())? = mode;
+    Ok(())
+}
+
 /// Runs the whole turn without asking. Deliberately not persisted anywhere.
 #[tauri::command]
 pub fn approval_set_unattended(
@@ -261,6 +294,7 @@ where
 {
     let workspace = state.workspace()?;
     let approval = state.approval()?;
+    let mode = state.mode();
 
     tauri::async_runtime::spawn_blocking(move || {
         let events = chat_event_sink(&app, turn_id);
@@ -276,6 +310,7 @@ where
             session: &session,
             scope: &scope,
             approval: &approval,
+            mode,
             cancelled: &cancelled,
             sleep: &sleep,
             take_steering: &take_steering,
