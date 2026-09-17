@@ -94,7 +94,48 @@ describe("making room before a turn", () => {
     });
 
     expect(folded).toBe(false);
-    expect(calls).toEqual([{ command: "chat_compact", args: { messages: [], force: true } }]);
+    expect(calls.filter((call) => call.command === "chat_compact")).toEqual([
+      { command: "chat_compact", args: { messages: [], force: true } },
+    ]);
+  });
+});
+
+describe("the context estimate", () => {
+  /// The meter has to have something to show before the first message: an
+  /// empty conversation still costs the prompt and the tool schemas.
+  test("is asked for on the first render, with an empty history", async () => {
+    results.chat_context_usage = {
+      instructions: 1_000,
+      tools: 3_000,
+      conversation: 0,
+      total: 4_000,
+      limit: null,
+      compactsAt: null,
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    await waitFor(() => expect(result.current.context?.total).toBe(4_000));
+    expect(calls).toContainEqual({ command: "chat_context_usage", args: { messages: [] } });
+  });
+
+  /// It is an estimate over the history, so it has to be asked again once the
+  /// history is shorter — otherwise the meter still reads full after a fold.
+  test("is asked again after the conversation was folded", async () => {
+    results.chat_compact = { history: [{ role: "user", content: "summary" }], folded: 9 };
+    const { result } = renderHook(() => useAgentTurn());
+    await waitFor(() =>
+      expect(calls.some((call) => call.command === "chat_context_usage")).toBe(true),
+    );
+    calls.length = 0;
+
+    await act(async () => {
+      await result.current.compact(true);
+    });
+
+    expect(calls).toContainEqual({
+      command: "chat_context_usage",
+      args: { messages: [{ role: "user", content: "summary" }] },
+    });
   });
 });
 

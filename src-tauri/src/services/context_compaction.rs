@@ -36,8 +36,28 @@ pub struct Compacted {
 /// thousands, and counting it exactly would mean handing this function a
 /// workspace and a todo list it otherwise has no use for.
 pub fn fixed_request_tokens() -> usize {
-    compaction::estimate_text_tokens(prompt::INSTRUCTIONS)
-        + compaction::estimate_tool_schema_tokens(&tool_definitions())
+    let usage = compaction::ContextUsage::new(
+        compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
+        compaction::estimate_tool_schema_tokens(&tool_definitions()),
+        0,
+        None,
+    );
+    usage.total
+}
+
+/// What the next request will cost, as the window should show it.
+///
+/// The same arithmetic the threshold uses, handed outward rather than computed
+/// a second time in TypeScript. It is an estimate and the meter says so by
+/// being a meter — but it is the estimate that actually decides, so a reader
+/// watching it fill is watching the thing that will fold their conversation.
+pub fn usage(session: &LlmSession, history: &[LlmMessage]) -> compaction::ContextUsage {
+    compaction::ContextUsage::new(
+        compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
+        compaction::estimate_tool_schema_tokens(&tool_definitions()),
+        compaction::estimate_tokens(history),
+        session.context_limit,
+    )
 }
 
 /// A pass before the conversation fails rather than after, when the session
@@ -319,6 +339,76 @@ mod tests {
             None
         );
         assert!(provider.asked.lock().unwrap().is_empty());
+    }
+
+    /// What an empty chat costs. A meter reading zero over a window with
+    /// ~4 000 tokens already committed is a gauge that is not connected to
+    /// anything — and it reads as reassurance.
+    #[test]
+    fn a_conversation_that_has_not_started_already_costs_something() {
+        let provider = Summarizer::saying("a summary");
+        let usage = usage(&session_with_window(provider, 200_000), &[]);
+
+        assert_eq!(usage.conversation, 0);
+        assert!(usage.instructions > 0, "the prompt is free");
+        assert!(usage.tools > 0, "the schemas are free");
+        assert_eq!(usage.total, usage.instructions + usage.tools);
+    }
+
+    /// The three parts behave differently, and that is the reason for three:
+    /// folding the conversation shortens one of them and leaves the others
+    /// exactly where they were.
+    #[test]
+    fn only_the_conversation_moves_when_the_conversation_does() {
+        let provider = Summarizer::saying("a summary");
+        let session = session_with_window(provider, 200_000);
+
+        let empty = usage(&session, &[]);
+        let talking = usage(&session, &conversation(40));
+
+        assert!(talking.conversation > empty.conversation);
+        assert_eq!(talking.instructions, empty.instructions);
+        assert_eq!(talking.tools, empty.tools);
+        assert_eq!(talking.total, empty.total + talking.conversation);
+    }
+
+    /// The meter's scale and the threshold have to be the same threshold.
+    /// A gauge whose red zone is not where compaction happens is worse than
+    /// no gauge.
+    #[test]
+    fn the_mark_on_the_meter_is_where_a_pass_actually_starts() {
+        let provider = Summarizer::saying("a summary");
+        let history = conversation(40);
+        let session = session_with_window(provider, 200_000);
+        let at = usage(&session, &history).compacts_at.expect("a known window");
+
+        assert!(!compaction::should_compact(at - 1, Some(200_000), &history));
+        assert!(compaction::should_compact(at, Some(200_000), &history));
+    }
+
+    /// No window means a number with no scale. Inventing one would draw a
+    /// ring that fills against a guess.
+    #[test]
+    fn without_a_window_there_is_a_total_and_no_scale() {
+        let provider = Summarizer::saying("a summary");
+        let usage = usage(&session(provider), &conversation(40));
+
+        assert!(usage.total > 0);
+        assert_eq!(usage.limit, None);
+        assert_eq!(usage.compacts_at, None);
+    }
+
+    /// A typo in the settings field, read as a window of zero, would fill the
+    /// ring and promise to fold at nothing. The threshold already treats it as
+    /// "not configured"; the meter has to agree, or the two disagree about the
+    /// same number.
+    #[test]
+    fn a_window_of_zero_is_no_window_here_too() {
+        let provider = Summarizer::saying("a summary");
+        let usage = usage(&session_with_window(provider, 0), &conversation(40));
+
+        assert_eq!(usage.limit, None);
+        assert_eq!(usage.compacts_at, None);
     }
 
     /// The failure this closes: the prompt and the tool schemas are the

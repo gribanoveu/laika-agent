@@ -79,10 +79,6 @@ export default function App() {
   const newChat = () => agent.reset();
 
   // The window the meter is drawn against, and the provider a turn talks to.
-  const activeProvider =
-    llm.settings?.providers.find((p) => p.id === llm.settings?.activeProviderId) ??
-    llm.settings?.providers[0];
-
   const compactNow = async () => {
     if (!(await agent.compact(true))) {
       toast.show(agent.error ?? "Nothing worth folding away yet");
@@ -157,7 +153,7 @@ export default function App() {
             workspace={workspace.path}
             turn={agent.turn}
             usage={agent.turn.usage}
-            contextLimit={activeProvider?.contextLimit ?? null}
+            context={agent.context}
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
             onNewChat={newChat}

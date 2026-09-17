@@ -168,6 +168,29 @@ export async function setUnattended(unattended: boolean): Promise<void> {
   return invoke<void>("approval_set_unattended", { unattended });
 }
 
+/**
+ * What the next request will cost, split into the parts that behave
+ * differently: compacting shortens `conversation` and nothing else.
+ *
+ * Mirrors `domain::compaction::ContextUsage`. An estimate, and the one the
+ * backend actually decides on — which is the point of asking for it rather
+ * than counting characters here.
+ */
+export type ContextUsage = {
+  instructions: number;
+  tools: number;
+  conversation: number;
+  total: number;
+  limit: number | null;
+  /** The total at which a pass starts happening on its own. */
+  compactsAt: number | null;
+};
+
+export async function contextUsage(messages: LlmMessage[]): Promise<ContextUsage> {
+  requireBackend();
+  return invoke<ContextUsage>("chat_context_usage", { messages });
+}
+
 /** What the agent is allowed to be. Mirrors `domain::conversation_mode`. */
 export type ConversationMode = "agent" | "plan" | "ask";
 

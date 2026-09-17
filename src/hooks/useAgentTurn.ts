@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelChat,
   compactHistory,
+  contextUsage,
   loadChat,
   onTurnEvent,
   resumeChat,
@@ -9,6 +10,7 @@ import {
   startChat,
   steer as steerCommand,
   alwaysAllow,
+  type ContextUsage,
   type LlmMessage,
   type Task,
   type ToolCallDecision,
@@ -40,6 +42,10 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   const [turn, setTurn] = useState<TurnState>(emptyTurn);
   const [chatId, setChatId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the next request would cost. Not derived from the last turn's usage:
+  // that is prompt *and* completion of a request already paid for, while the
+  // question the meter answers is what the next one will weigh.
+  const [context, setContext] = useState<ContextUsage | null>(null);
   const history = useRef<LlmMessage[]>([]);
   const todos = useRef<Task[]>([]);
   // Set when something happened that is worth writing down. Without it,
@@ -90,6 +96,19 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       .catch((e) => setError(String(e)));
   }, [turn.status, turn.blocks, chatId, onSaved]);
 
+  const refreshContext = useCallback(() => {
+    contextUsage(history.current)
+      .then(setContext)
+      // A meter that cannot be drawn is not worth an error banner over the
+      // conversation it is measuring.
+      .catch(() => setContext(null));
+  }, []);
+
+  // Every point the history can have changed: a turn starting, a turn coming
+  // to rest, a chat being opened or cleared — and the first render, where an
+  // empty conversation already costs the prompt and the schemas.
+  useEffect(refreshContext, [refreshContext, turn.status, chatId]);
+
   /**
    * Folds the older part of the conversation into a summary, when the backend
    * says it is worth it — `force` is the user asking outright.
@@ -105,6 +124,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       if (!shorter) return false;
       history.current = shorter.history;
       unsaved.current = true;
+      refreshContext();
       setTurn((state) =>
         appendNotice(
           state,
@@ -121,7 +141,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       if (force) setError(String(e));
       return false;
     }
-  }, []);
+  }, [refreshContext]);
 
   /** Sends what the user typed. While a turn is running the same text steers it. */
   const send = useCallback(
@@ -206,5 +226,5 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     setTurn(emptyTurn());
   }, []);
 
-  return { turn, chatId, error, send, decide, cancel, open, reset, compact: makeRoom };
+  return { turn, chatId, error, context, send, decide, cancel, open, reset, compact: makeRoom };
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ChatPanel, Preview } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
+import type { ContextUsage } from "../lib/chat";
 
 // The transcript's own rules: who a block belongs to, and what the approval
 // card sends back. Both are decided here rather than by the backend, so both
@@ -13,17 +14,27 @@ const state = (blocks: Block[], over: Partial<TurnState> = {}): TurnState => ({
   ...over,
 });
 
+const usage = (over: Partial<ContextUsage> = {}): ContextUsage => ({
+  instructions: 1_000,
+  tools: 3_000,
+  conversation: 4_000,
+  total: 8_000,
+  limit: null,
+  compactsAt: null,
+  ...over,
+});
+
 const panel = (
   turn: TurnState,
   onDecide = () => {},
-  over: { contextLimit?: number | null; onCompact?: () => void } = {},
+  over: { context?: ContextUsage | null; onCompact?: () => void } = {},
 ) =>
   render(
     <ChatPanel
       workspace="/tmp/project"
       turn={turn}
       usage={turn.usage}
-      contextLimit={over.contextLimit ?? null}
+      context={over.context === undefined ? usage() : over.context}
       onDecide={onDecide}
       onOpenRepo={() => {}}
       onNewChat={() => {}}
@@ -210,13 +221,11 @@ describe("what a call would do", () => {
 });
 
 describe("the context meter", () => {
-  const used = { promptTokens: 8_000, completionTokens: 0, totalTokens: 8_000 };
-
   /// Without the window, a number of tokens says nothing: 8k is nothing on a
   /// 200k model and the end of the road on a 8k one.
   test("shows how much of the window is gone, once the window is known", () => {
-    panel(state([{ kind: "user", id: "u0", text: "hi" }], { usage: used }), () => {}, {
-      contextLimit: 200_000,
+    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
+      context: usage({ limit: 200_000, compactsAt: 160_000 }),
     });
 
     expect(screen.getByText("8k")).toBeTruthy();
@@ -225,7 +234,7 @@ describe("the context meter", () => {
 
   test("and asks for a compaction when clicked", () => {
     let asked = 0;
-    panel(state([{ kind: "user", id: "u0", text: "hi" }], { usage: used }), () => {}, {
+    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
       onCompact: () => (asked += 1),
     });
 
@@ -236,13 +245,54 @@ describe("the context meter", () => {
   /// Mid-turn the history is the turn's, not the window's: shortening it from
   /// under a running request is not something to offer.
   test("but not while a turn is running", () => {
-    panel(
-      state([{ kind: "user", id: "u0", text: "hi" }], { usage: used, status: "running" }),
-      () => {},
-      { onCompact: () => {} },
-    );
+    panel(state([{ kind: "user", id: "u0", text: "hi" }], { status: "running" }), () => {}, {});
 
     expect(screen.getByText("8k").closest("button")?.disabled).toBe(true);
+  });
+
+  /// The failure this closes: the meter used to read the last turn's reported
+  /// usage, so an untouched chat showed nothing at all — over a window with
+  /// the prompt and the tool schemas already in it.
+  test("is there before anything has been said", () => {
+    panel(state([]), () => {}, {
+      context: usage({ conversation: 0, total: 4_000, limit: 200_000 }),
+    });
+
+    expect(screen.getByText("4k")).toBeTruthy();
+  });
+
+  /// Folding the conversation moves one of the three numbers. Showing only
+  /// the total hides which one a click would help with.
+  test("says what the tokens are spent on", () => {
+    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
+      context: usage({ limit: 200_000, compactsAt: 160_000 }),
+    });
+
+    const title = screen.getByText("8k").closest("button")?.title ?? "";
+    expect(title).toContain("instructions and tools  4k");
+    expect(title).toContain("conversation  4k");
+    expect(title).toContain("160k");
+  });
+
+  /// This is an estimate. When the provider has said what the last request
+  /// really cost, that number belongs next to it rather than behind it.
+  test("puts the provider's own count beside the estimate", () => {
+    panel(
+      state([{ kind: "user", id: "u0", text: "hi" }], {
+        usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800 },
+      }),
+    );
+
+    const title = screen.getByText("8k").closest("button")?.title ?? "";
+    expect(title).toContain("actually cost 10k");
+  });
+
+  /// No window is a number with no scale — not a ring filled against a guess.
+  test("draws no ring without a known window", () => {
+    const { container } = panel(state([{ kind: "user", id: "u0", text: "hi" }]));
+
+    expect(container.querySelector(".context-ring")).toBeNull();
+    expect(screen.queryByText("200k")).toBeNull();
   });
 });
 

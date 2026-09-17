@@ -21,6 +21,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Runtime, State};
 
 use crate::domain::command_exec::Shell;
+use crate::domain::compaction::ContextUsage;
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
 use crate::domain::tools::{ApprovalPolicy, Task, ToolName, ToolPreview, ToolScope};
@@ -208,6 +209,19 @@ pub async fn chat_compact(
     })
     .await
     .map_err(|e| format!("the compaction thread failed: {e}"))?
+}
+
+/// What the next request will cost, for the window's meter.
+///
+/// Asked rather than computed there: the numbers on the meter have to be the
+/// ones that decide, or a reader watches a gauge that is not connected to the
+/// thing it appears to measure. Cheap — arithmetic over the history plus one
+/// serialization of the tool schemas, no provider call — so it is a plain
+/// command rather than another thread.
+#[tauri::command]
+pub fn chat_context_usage(messages: Vec<LlmMessage>) -> Result<ContextUsage, String> {
+    let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
+    Ok(context_compaction::usage(&session, &messages))
 }
 
 /// Asks the running turn to stop. Returns at once: the turn notices at its

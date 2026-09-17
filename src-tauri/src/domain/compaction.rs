@@ -115,6 +115,46 @@ fn estimate_message_tokens(message: &LlmMessage) -> usize {
     MESSAGE_OVERHEAD_TOKENS + chars.div_ceil(CHARS_PER_TOKEN)
 }
 
+/// What the next request will cost, broken into the parts that behave
+/// differently.
+///
+/// Three parts, because the reader's question is not "how many tokens" but
+/// "what can I do about it". Compacting shortens `conversation` and nothing
+/// else; the other two are paid whatever the conversation looks like, which is
+/// why a nearly-empty chat is not an empty window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextUsage {
+    /// The system prompt: instructions, the mode, this turn's facts.
+    pub instructions: usize,
+    /// The tool schemas, sent beside the messages on every request.
+    pub tools: usize,
+    /// Everything the two sides have said.
+    pub conversation: usize,
+    pub total: usize,
+    /// `None` when the window is not configured — the meter then has a number
+    /// and no scale, which is the honest picture rather than a guessed one.
+    pub limit: Option<u32>,
+    /// The total at which a pass starts happening on its own. `None` without a
+    /// limit, for the same reason.
+    pub compacts_at: Option<usize>,
+}
+
+impl ContextUsage {
+    pub fn new(instructions: usize, tools: usize, conversation: usize, limit: Option<u32>) -> Self {
+        let limit = limit.filter(|limit| *limit > 0);
+        Self {
+            instructions,
+            tools,
+            conversation,
+            total: instructions + tools + conversation,
+            limit,
+            compacts_at: limit
+                .map(|limit| (u64::from(limit) * TRIGGER_PERCENT / 100) as usize),
+        }
+    }
+}
+
 /// Whether a pass is worth making now.
 ///
 /// No configured limit means no: the app talks to gateways it knows nothing

@@ -14,7 +14,13 @@ import {
 import { ChatEmptyState } from "./ChatEmptyState";
 import { describeTool } from "../lib/describeTool";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
-import { previewCalls, type ChatUsage, type ToolCallDecision, type ToolPreview } from "../lib/chat";
+import {
+  previewCalls,
+  type ChatUsage,
+  type ContextUsage,
+  type ToolCallDecision,
+  type ToolPreview,
+} from "../lib/chat";
 import "./ChatPanel.css";
 
 const TOOL_ICON: Record<string, typeof FileText> = {
@@ -217,12 +223,41 @@ function group(blocks: Block[]): Group[] {
   return groups;
 }
 
+/**
+ * What the meter says, as a tooltip.
+ *
+ * Three lines because the three parts behave differently and the reader's
+ * question is what they can do about it: folding the conversation moves one
+ * number and leaves the other two exactly where they were. The provider's own
+ * count for the last request is shown beside them when there is one — this is
+ * an estimate, and the honest thing is to put the real number next to it
+ * rather than to imply there is no difference.
+ */
+function meterTitle(context: ContextUsage, usage: ChatUsage | null): string {
+  const lines = [
+    context.limit
+      ? `Context: about ${compact(context.total)} of ${compact(context.limit)} tokens`
+      : `Context: about ${compact(context.total)} tokens in the next request`,
+    `· instructions and tools  ${compact(context.instructions + context.tools)}`,
+    `· conversation  ${compact(context.conversation)}`,
+  ];
+  if (context.compactsAt) {
+    lines.push(`Folds the older part on its own at ${compact(context.compactsAt)}.`);
+  }
+  if (usage) {
+    lines.push(`The last request actually cost ${compact(usage.promptTokens)}.`);
+  }
+  lines.push("Click to fold the older part into a summary now.");
+  return lines.join("\n");
+}
+
 type Props = {
   workspace: string | null;
   turn: TurnState;
   usage: ChatUsage | null;
-  /** The active provider's context window, when it is configured. */
-  contextLimit: number | null;
+  /** What the next request will cost, as the backend's own estimate — the one
+      that decides when a conversation is folded. */
+  context: ContextUsage | null;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
   onOpenRepo: () => void;
   onNewChat: () => void;
@@ -233,7 +268,7 @@ export function ChatPanel({
   workspace,
   turn,
   usage,
-  contextLimit,
+  context,
   onDecide,
   onOpenRepo,
   onNewChat,
@@ -261,34 +296,35 @@ export function ChatPanel({
               {turn.retrying.maxAttempts})
             </span>
           )}
-          {usage && (
+          {/* Shown from the first render, before anything has been said: an
+              empty conversation already costs the prompt and the schemas, and
+              a meter reading zero over that is a gauge connected to nothing.
+              The scale comes from the same estimate, so the ring fills toward
+              the mark where a pass really starts. */}
+          {context && (
             <button
               type="button"
               className="context-meter"
               disabled={turn.status === "running"}
-              title={
-                contextLimit
-                  ? `Context: ${compact(usage.totalTokens)} of ${compact(contextLimit)} tokens. Click to fold the older part into a summary.`
-                  : `Context: ${compact(usage.totalTokens)} tokens in the last request. Click to fold the older part into a summary.`
-              }
+              title={meterTitle(context, usage)}
               onClick={onCompact}
             >
-              {contextLimit ? (
+              {context.limit ? (
                 <span
                   className="context-ring"
                   style={
                     {
-                      "--ring-deg": `${Math.min(360, Math.round((usage.totalTokens / contextLimit) * 360))}deg`,
+                      "--ring-deg": `${Math.min(360, Math.round((context.total / context.limit) * 360))}deg`,
                     } as React.CSSProperties
                   }
                 />
               ) : null}
               <span className="context-meter-val">
-                <span className="used">{compact(usage.totalTokens)}</span>
-                {contextLimit && (
+                <span className="used">{compact(context.total)}</span>
+                {context.limit && (
                   <>
                     <span className="sep">/</span>
-                    {compact(contextLimit)}
+                    {compact(context.limit)}
                   </>
                 )}
               </span>
