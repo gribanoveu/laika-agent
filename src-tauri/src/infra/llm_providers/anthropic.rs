@@ -13,6 +13,9 @@
 //!   rather than chunks of a completion, and an error can arrive as an event
 //!   after a `200`.
 //!
+//! Prompt caching is on for every request: three `cache_control` points,
+//! see [`mark_cache_points`].
+//!
 //! Extended thinking is not requested here, so no `thinking` block ever has
 //! to be carried back — see `docs/06-port-plan.md`, F-7.3.
 //!
@@ -207,12 +210,32 @@ fn stream_error(error: ErrorBody) -> LlmError {
 // ---------------------------------------------------------------- wire out
 
 fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
-    let system: Vec<Value> = request
-        .messages
-        .iter()
-        .filter(|m| m.role == LlmRole::System)
-        .filter_map(|m| text_block(m.content.as_deref()))
-        .collect();
+    let messages = &request.messages;
+    // What the app says before the conversation, the conversation, and what
+    // it says after it — the checklist, which changes round to round.
+    let lead = messages.iter().take_while(|m| m.role == LlmRole::System).count();
+    let end = messages.iter().rposition(|m| m.role != LlmRole::System).map_or(lead, |i| i + 1);
+
+    let mut system: Vec<Value> =
+        messages[..lead].iter().filter_map(|m| text_block(m.content.as_deref())).collect();
+    let mut conversation = wire_messages(&messages[lead..end]);
+    mark_cache_points(&mut system, &mut conversation);
+
+    // After the cache points, so the next round still finds the prefix it
+    // wrote: that one had this round's results without the checklist.
+    let tail: Vec<Value> =
+        messages[end..].iter().filter_map(|m| text_block(m.content.as_deref())).collect();
+    if !tail.is_empty() {
+        match conversation.last_mut() {
+            Some(last) if last["role"] == "user" => {
+                if let Some(content) = last["content"].as_array_mut() {
+                    content.extend(tail);
+                }
+            }
+            _ => conversation.push(json!({ "role": "user", "content": tail })),
+        }
+    }
+
     let tools: Vec<Value> = request
         .tools
         .iter()
@@ -222,7 +245,7 @@ fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Val
     let mut body = json!({
         "model": request.model,
         "max_tokens": max_tokens,
-        "messages": wire_messages(&request.messages),
+        "messages": conversation,
         "stream": true,
     });
     if !system.is_empty() {
@@ -235,6 +258,31 @@ fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Val
         body["temperature"] = json!(temperature);
     }
     body
+}
+
+/// Where the cache is written and read. Three of the four the API allows:
+///
+/// - the end of the system prompt — tools and instructions, reused across
+///   turns and after a compaction has rewritten the history;
+/// - the last user message — this request's whole prefix, for the next round;
+/// - the user message before it — exactly where the *previous* round wrote,
+///   so this request reads it. The API looks back only about twenty blocks
+///   from a point for an earlier entry, and a round of many parallel calls is
+///   more than that; pointing at it outright does not depend on the reach.
+///
+/// Ephemeral, five minutes: rounds of a turn are seconds apart. A write costs
+/// a quarter more than an uncached read, a hit a tenth; below the model's
+/// minimum length the marker is ignored rather than refused.
+fn mark_cache_points(system: &mut [Value], conversation: &mut [Value]) {
+    let ephemeral = || json!({ "type": "ephemeral" });
+    if let Some(last) = system.last_mut() {
+        last["cache_control"] = ephemeral();
+    }
+    for message in conversation.iter_mut().rev().filter(|m| m["role"] == "user").take(2) {
+        if let Some(block) = message["content"].as_array_mut().and_then(|c| c.last_mut()) {
+            block["cache_control"] = ephemeral();
+        }
+    }
 }
 
 /// The conversation without its system messages, in alternating roles.
@@ -409,6 +457,7 @@ impl From<Usage> for ChatUsage {
             prompt_tokens: prompt,
             completion_tokens: u.output_tokens,
             total_tokens: prompt + u.output_tokens,
+            cached_tokens: u.cache_read_input_tokens.unwrap_or(0),
         }
     }
 }
@@ -481,14 +530,15 @@ mod tests {
             LlmMessage::user("and now?"),
             LlmMessage::assistant("done"),
         ];
+        let wire = json!(wire_messages(&messages));
         let body = body(&request(messages), 100, Some(0.5));
 
         assert_eq!(
             body["system"],
-            json!([{"type":"text","text":"be brief"},{"type":"text","text":"the repo is /x"}])
+            json!([{"type":"text","text":"be brief"},{"type":"text","text":"the repo is /x","cache_control":{"type":"ephemeral"}}])
         );
         assert_eq!(
-            body["messages"],
+            wire,
             json!([
                 {"role":"user","content":[{"type":"text","text":"read both"}]},
                 {"role":"assistant","content":[
@@ -505,6 +555,47 @@ mod tests {
         );
         assert_eq!((body["max_tokens"].as_u64(), body["temperature"].as_f64()), (Some(100), Some(0.5)));
         assert_eq!(body["stream"], true);
+    }
+
+    /// The three points, and the checklist after them: the round that
+    /// follows sends these results again without it, and must still find
+    /// the prefix this one wrote.
+    #[test]
+    fn the_cache_points_end_the_prompt_and_the_last_two_user_messages() {
+        let messages = vec![
+            LlmMessage::system("rules"),
+            LlmMessage::user("first"),
+            LlmMessage::assistant("one"),
+            LlmMessage::user("second"),
+            LlmMessage::tool_requests(vec![call("c1", "{}")]),
+            LlmMessage::tool_result("c1", "result"),
+            LlmMessage::system("## Checklist"),
+        ];
+        let body = body(&request(messages), 1, None);
+        let cached = json!({"type":"ephemeral"});
+
+        assert_eq!(body["system"][0]["cache_control"], cached);
+        let wire = body["messages"].as_array().unwrap();
+        assert!(wire[0]["content"][0].get("cache_control").is_none(), "only the last two user messages");
+        assert_eq!(wire[2]["content"][0]["cache_control"], cached);
+        assert_eq!(
+            wire[4]["content"],
+            json!([
+                {"type":"tool_result","tool_use_id":"c1","content":"result","cache_control":{"type":"ephemeral"}},
+                {"type":"text","text":"## Checklist"}
+            ])
+        );
+        assert_eq!(wire.len(), 5);
+    }
+
+    /// Nothing to append it to: an assistant message last is never sent by
+    /// the loop, but the request must still alternate if it were.
+    #[test]
+    fn a_checklist_after_an_assistant_message_is_a_user_message_of_its_own() {
+        let messages = vec![LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::system("list")];
+        let wire = &body(&request(messages), 1, None)["messages"];
+        assert_eq!(wire[2], json!({"role":"user","content":[{"type":"text","text":"list"}]}));
+        assert_eq!(wire.as_array().unwrap().len(), 3);
     }
 
     #[test]
@@ -535,7 +626,7 @@ mod tests {
             LlmMessage::tool_result("c1", ""),
         ];
         assert_eq!(
-            body(&request(messages), 1, None)["messages"],
+            json!(wire_messages(&messages)),
             json!([
                 {"role":"user","content":[{"type":"text","text":"go"},{"type":"text","text":"on"}]},
                 {"role":"assistant","content":[
@@ -557,7 +648,7 @@ mod tests {
             LlmMessage::tool_result("functions.readFile:0", "x"),
             LlmMessage::tool_result("c2", "y"),
         ];
-        let wire = &body(&request(messages), 1, None)["messages"];
+        let wire = &json!(wire_messages(&messages));
         assert_eq!(wire[1]["content"][0]["id"], "functions_readFile_0");
         assert_eq!(wire[1]["content"][0]["input"], json!({}));
         assert_eq!(wire[1]["content"][1]["input"], json!({}), "valid JSON, but not an object");
@@ -612,7 +703,7 @@ mod tests {
         // Cached tokens are context too.
         assert_eq!(
             result.usage,
-            Some(ChatUsage { prompt_tokens: 60, completion_tokens: 7, total_tokens: 67 })
+            Some(ChatUsage { prompt_tokens: 60, completion_tokens: 7, total_tokens: 67, cached_tokens: 30 })
         );
         assert!(!result.truncated);
     }

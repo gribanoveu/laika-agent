@@ -44,7 +44,13 @@ export type Checkpoint = {
 
 export type ToolCallDecision = { id: string; approved: boolean; reason?: string | null };
 
-export type ChatUsage = { promptTokens: number; completionTokens: number; totalTokens: number };
+export type ChatUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** Of `promptTokens`, what the provider read from its prompt cache. */
+  cachedTokens?: number;
+};
 
 export type TurnResult = {
   text: string;

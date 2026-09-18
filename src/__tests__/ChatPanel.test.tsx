@@ -317,7 +317,18 @@ describe("the context meter", () => {
     );
 
     const title = screen.getByText("8k").closest("button")?.title ?? "";
-    expect(title).toContain("actually cost 10k");
+    expect(title).toContain("actually cost 10k.");
+  });
+
+  test("says how much of it came from the prompt cache", () => {
+    panel(
+      state([{ kind: "user", id: "u0", text: "hi" }], {
+        usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800, cachedTokens: 9_000 },
+      }),
+    );
+
+    const title = screen.getByText("8k").closest("button")?.title ?? "";
+    expect(title).toContain("actually cost 10k, 9k of it from the cache.");
   });
 
   /// No window is a number with no scale — not a ring filled against a guess.

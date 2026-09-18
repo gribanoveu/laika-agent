@@ -173,6 +173,11 @@ pub struct ChatUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    /// How much of `prompt_tokens` the provider read from its prompt cache
+    /// rather than processing again — the part billed at a fraction. Zero
+    /// when it said nothing, which most gateways do.
+    #[serde(default)]
+    pub cached_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

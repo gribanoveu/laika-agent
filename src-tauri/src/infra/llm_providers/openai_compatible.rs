@@ -90,7 +90,7 @@ impl OpenAiCompatibleProvider {
 
         WireRequest {
             model: &request.model,
-            messages: request.messages.iter().map(WireMessage::from).collect(),
+            messages: system_first(&request.messages).into_iter().map(WireMessage::from).collect(),
             // Only sent when tools are actually offered: an empty `tools` with
             // `tool_choice: "auto"` is pointless, and some servers reject it.
             tool_choice: (!tools.is_empty()).then_some("auto"),
@@ -290,6 +290,19 @@ pub(super) fn header_value(value: &str) -> String {
     }
 }
 
+/// Every system message moved to the front, in order.
+///
+/// The checklist comes after the conversation (`prompt::checklist_message`),
+/// and OpenAI itself would take it there — but the chat templates of several
+/// local models refuse a system message anywhere but first, and fail the
+/// whole request. So here it goes back where it always was, and this
+/// protocol keeps the cost the move saves elsewhere (F-7.2).
+fn system_first(messages: &[LlmMessage]) -> Vec<&LlmMessage> {
+    let (system, rest): (Vec<&LlmMessage>, Vec<&LlmMessage>) =
+        messages.iter().partition(|m| m.role == LlmRole::System);
+    system.into_iter().chain(rest).collect()
+}
+
 fn role_str(role: LlmRole) -> &'static str {
     match role {
         LlmRole::System => "system",
@@ -470,6 +483,16 @@ struct StreamUsage {
     completion_tokens: u32,
     #[serde(default)]
     total_tokens: u32,
+    /// OpenAI's own spelling; its caching is automatic, so this is the only
+    /// sign it happened. Gateways that do not cache leave it out.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
 }
 
 impl From<StreamUsage> for ChatUsage {
@@ -478,6 +501,7 @@ impl From<StreamUsage> for ChatUsage {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
             total_tokens: u.total_tokens,
+            cached_tokens: u.prompt_tokens_details.and_then(|d| d.cached_tokens).unwrap_or(0),
         }
     }
 }
@@ -731,6 +755,47 @@ pub(super) mod tests {
             SseLine::Chunk { usage: Some(u), .. } => assert_eq!(u.total_tokens, 15),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// OpenAI caches on its own; this field is the only sign it did.
+    #[test]
+    fn cached_tokens_are_read_when_the_provider_reports_them() {
+        let usage = |json: &str| match chunk(json) {
+            SseLine::Chunk { usage: Some(u), .. } => u,
+            other => panic!("{other:?}"),
+        };
+        let cached = usage(r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":8}}}"#);
+        assert_eq!(cached.cached_tokens, 8);
+        let silent = usage(r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":null}}"#);
+        assert_eq!(silent.cached_tokens, 0);
+    }
+
+    /// The checklist arrives after the conversation; a strict chat template
+    /// would refuse it there, so it is sent where it always was.
+    #[test]
+    fn a_system_message_after_the_conversation_is_sent_first() {
+        let p = provider("http://unused".into());
+        let body = serde_json::to_value(p.body(
+            &ChatRequest {
+                messages: vec![
+                    LlmMessage::system("rules"),
+                    LlmMessage::user("go"),
+                    LlmMessage::assistant("ok"),
+                    LlmMessage::system("checklist"),
+                ],
+                tools: vec![],
+                model: "m".into(),
+            },
+            true,
+        ))
+        .unwrap();
+        let order: Vec<&str> = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["content"].as_str().unwrap())
+            .collect();
+        assert_eq!(order, ["rules", "checklist", "go", "ok"]);
     }
 
     #[test]

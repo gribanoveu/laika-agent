@@ -157,7 +157,6 @@ pub struct TurnContext<'a> {
     /// model has to know before it writes a line that only works in one.
     pub shell: &'a str,
     pub today: &'a str,
-    pub todos: &'a [Task],
     /// The user has released the brake for this turn. Said out loud because
     /// "you will be asked to approve this" is otherwise a rule the model
     /// follows against a fact that is no longer true.
@@ -191,11 +190,17 @@ pub fn context_block(ctx: &TurnContext) -> String {
              destructive.",
         );
     }
-    if let Some(todos) = todo_block(ctx.todos) {
-        text.push_str("\n\n");
-        text.push_str(&todos);
-    }
     text
+}
+
+/// The checklist, sent *after* the conversation rather than in front of it.
+///
+/// It changes whenever the model ticks an item off, which can be every
+/// round. In front, that change would come before the whole history and
+/// leave a provider's prompt cache nothing to reuse past it; at the end it
+/// costs only itself. See `docs/06-port-plan.md`, F-7.2.
+pub fn checklist_message(todos: &[Task]) -> Option<LlmMessage> {
+    todo_block(todos).map(LlmMessage::system)
 }
 
 /// The checklist as it stands, or nothing at all.
@@ -332,13 +337,12 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(workspace: &'a Path, todos: &'a [Task]) -> TurnContext<'a> {
+    fn ctx(workspace: &Path) -> TurnContext<'_> {
         TurnContext {
             mode: ConversationMode::Agent,
             workspace,
             shell: "/bin/sh",
             today: "17 September 2026",
-            todos,
             unattended: false,
             skills: &[],
             rules: &[],
@@ -353,7 +357,7 @@ mod tests {
         let messages = system_messages(&TurnContext {
             rules: &rules,
             plan: Some("# Fix the parser\n\n1. read it"),
-            ..ctx(&workspace, &[])
+            ..ctx(&workspace)
         });
 
         assert_eq!(messages.len(), 5);
@@ -361,7 +365,7 @@ mod tests {
         assert!(text.starts_with("## Plan"), "{text}");
         assert!(text.ends_with("# Fix the parser\n\n1. read it"));
         assert!(text.contains("this one is right"));
-        assert_eq!(messages[4], LlmMessage::system(context_block(&ctx(&workspace, &[]))));
+        assert_eq!(messages[4], LlmMessage::system(context_block(&ctx(&workspace))));
     }
 
     /// A blank document is no plan; a "Plan" heading over nothing invites
@@ -377,14 +381,14 @@ mod tests {
         let workspace = PathBuf::from("/tmp/p");
         let skills = [skill("release", "Cuts a release.")];
         let rules = [RuleFile::new("AGENTS.md", "Run cargo test.\n"), RuleFile::new("CLAUDE.md", "Use bun.")];
-        let messages = system_messages(&TurnContext { skills: &skills, rules: &rules, ..ctx(&workspace, &[]) });
+        let messages = system_messages(&TurnContext { skills: &skills, rules: &rules, ..ctx(&workspace) });
 
         assert_eq!(messages.len(), 5);
         assert!(messages[2].content.as_deref().unwrap().starts_with("## Skills"));
         let text = messages[3].content.as_deref().unwrap();
         assert!(text.contains("### AGENTS.md\n\nRun cargo test.\n\n### CLAUDE.md\n\nUse bun."), "{text}");
         assert!(!text.contains("[cut here"));
-        assert_eq!(messages[4], LlmMessage::system(context_block(&ctx(&workspace, &[]))));
+        assert_eq!(messages[4], LlmMessage::system(context_block(&ctx(&workspace))));
     }
 
     /// Without the note the model takes the first 20 000 characters for the
@@ -416,13 +420,13 @@ mod tests {
     fn skills_are_listed_by_name_and_description_before_the_turn() {
         let workspace = PathBuf::from("/tmp/p");
         let skills = [skill("release", "Cuts a release."), skill("review", "Reviews a diff.")];
-        let messages = system_messages(&TurnContext { skills: &skills, ..ctx(&workspace, &[]) });
+        let messages = system_messages(&TurnContext { skills: &skills, ..ctx(&workspace) });
 
         assert_eq!(messages.len(), 4);
         let text = messages[2].content.as_deref().unwrap();
         assert!(text.contains("- release: Cuts a release.\n- review: Reviews a diff."), "{text}");
         assert!(text.contains("`skill`"));
-        assert_eq!(messages[3], LlmMessage::system(context_block(&ctx(&workspace, &[]))));
+        assert_eq!(messages[3], LlmMessage::system(context_block(&ctx(&workspace))));
     }
 
     /// No heading for an empty folder: "Skills" with nothing under it is an
@@ -471,15 +475,14 @@ mod tests {
     /// to hold on to.
     #[test]
     fn the_constant_half_is_the_same_bytes_whatever_the_turn() {
-        let todos = [task("ship it", TodoStatus::InProgress)];
         let one = PathBuf::from("/tmp/one");
         let other = PathBuf::from("/tmp/other");
 
-        let first = system_messages(&ctx(&one, &[]));
+        let first = system_messages(&ctx(&one));
         let second = system_messages(&TurnContext {
             today: "1 January 2027",
             unattended: true,
-            ..ctx(&other, &todos)
+            ..ctx(&other)
         });
 
         assert_eq!(first[0], second[0], "the cacheable prefix varies");
@@ -490,7 +493,7 @@ mod tests {
     #[test]
     fn the_varying_half_carries_the_folder_the_date_and_the_shell() {
         let workspace = PathBuf::from("/tmp/some-project");
-        let text = context_block(&ctx(&workspace, &[]));
+        let text = context_block(&ctx(&workspace));
 
         assert!(text.contains("/tmp/some-project"));
         assert!(text.contains("17 September 2026"));
@@ -522,7 +525,11 @@ mod tests {
     fn an_empty_checklist_is_left_out_entirely() {
         let workspace = PathBuf::from("/tmp/p");
         assert_eq!(todo_block(&[]), None);
-        assert!(!context_block(&ctx(&workspace, &[])).contains("Checklist"));
+        assert_eq!(checklist_message(&[]), None);
+        let one = checklist_message(&[task("ship it", TodoStatus::Pending)]).expect("a list");
+        assert_eq!(one.role, LlmRole::System);
+        assert!(one.content.is_some_and(|t| t.contains("[ ] ship it")));
+        assert!(!context_block(&ctx(&workspace)).contains("Checklist"));
     }
 
     /// Telling the model to expect an approval prompt that will not come is
@@ -530,10 +537,10 @@ mod tests {
     #[test]
     fn an_unattended_turn_says_so() {
         let workspace = PathBuf::from("/tmp/p");
-        let attended = context_block(&ctx(&workspace, &[]));
+        let attended = context_block(&ctx(&workspace));
         let unattended = context_block(&TurnContext {
             unattended: true,
-            ..ctx(&workspace, &[])
+            ..ctx(&workspace)
         });
 
         assert!(!attended.contains("approved this turn in advance"));
@@ -594,7 +601,7 @@ mod tests {
         let workspace = PathBuf::from("/tmp/p");
         let planning = system_messages(&TurnContext {
             mode: ConversationMode::Plan,
-            ..ctx(&workspace, &[])
+            ..ctx(&workspace)
         });
 
         assert_eq!(
@@ -606,7 +613,7 @@ mod tests {
     #[test]
     fn both_messages_are_system_messages_and_the_constant_one_is_first() {
         let workspace = PathBuf::from("/tmp/p");
-        let messages = system_messages(&ctx(&workspace, &[]));
+        let messages = system_messages(&ctx(&workspace));
 
         assert_eq!(messages.len(), 3);
         assert!(messages.iter().all(|m| m.role == LlmRole::System));

@@ -687,7 +687,7 @@ fn ask_the_model(
     let mut compacted = false;
     loop {
         let request = ChatRequest {
-            messages: prepend_system_prompt(turn, todos, history),
+            messages: request_messages(turn, todos, history),
             tools: tool_definitions_for(turn.mode),
             model: turn.session.model.clone(),
         };
@@ -732,7 +732,9 @@ fn tool_definitions_for(mode: ConversationMode) -> Vec<LlmToolDefinition> {
         .collect()
 }
 
-/// The request's messages: what the model is told, then the conversation.
+/// The request's messages: what the model is told, the conversation, then
+/// the checklist — last because it is the part that changes round to round
+/// (`prompt::checklist_message`).
 ///
 /// Rebuilt every round rather than pushed into `history` once. The checklist
 /// changes *within* a turn — the model ticks an item off and the next round
@@ -740,13 +742,12 @@ fn tool_definitions_for(mode: ConversationMode) -> Vec<LlmToolDefinition> {
 /// conversation would be resent, wrong, for as long as the chat exists. The
 /// history stays exactly what the two sides said to each other, which is also
 /// what keeps `plan_compaction`'s leading-system-messages count at zero.
-fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<LlmMessage> {
+fn request_messages(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<LlmMessage> {
     let context = prompt::TurnContext {
         mode: turn.mode,
         workspace: turn.scope.root(),
         shell: &turn.shell.program,
         today: &Local::now().format("%e %B %Y").to_string(),
-        todos,
         unattended: turn.approval.skip_all,
         skills: turn.skills,
         rules: turn.rules,
@@ -754,6 +755,7 @@ fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) ->
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
+    messages.extend(prompt::checklist_message(todos));
     messages
 }
 
@@ -1469,10 +1471,15 @@ mod tests {
             .expect("finishes");
 
         let requests = h.provider.requests();
-        let first = facts_of(&requests[0]);
-        let second = facts_of(&requests[1]);
-        assert!(!first.contains("read it"), "a list nobody had written yet");
-        assert!(second.contains("read it") && second.contains("rewrite it"));
+        let last = |request: &ChatRequest| request.messages.last().cloned().expect("a message");
+        assert!(!facts_of(&requests[0]).contains("Checklist") && !facts_of(&requests[1]).contains("Checklist"));
+        assert_eq!(last(&requests[0]), LlmMessage::user("go"), "a list nobody had written yet");
+        // After the conversation, not in front of it: the part that changes
+        // every round must not sit ahead of the history a cache would reuse.
+        let checklist = last(&requests[1]);
+        assert_eq!(checklist.role, LlmRole::System);
+        let text = checklist.content.expect("text");
+        assert!(text.contains("read it") && text.contains("rewrite it"));
     }
 
     /// A turn nobody is watching must not be told to expect an approval
@@ -2283,6 +2290,7 @@ mod tests {
                     prompt_tokens: 100,
                     completion_tokens: 7,
                     total_tokens: 107,
+                    cached_tokens: 90,
                 }),
                 ..Default::default()
             })],

@@ -247,7 +247,10 @@ function meterTitle(context: ContextUsage, usage: ChatUsage | null): string {
     lines.push(`Folds the older part on its own at ${compact(context.compactsAt)}.`);
   }
   if (usage) {
-    lines.push(`The last request actually cost ${compact(usage.promptTokens)}.`);
+    // The cached share is what the user pays a tenth for — the one sign the
+    // prompt cache is doing anything.
+    const cached = usage.cachedTokens ? `, ${compact(usage.cachedTokens)} of it from the cache` : "";
+    lines.push(`The last request actually cost ${compact(usage.promptTokens)}${cached}.`);
   }
   lines.push("Click to fold the older part into a summary now.");
   return lines.join("\n");
