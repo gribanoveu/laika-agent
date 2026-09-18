@@ -25,9 +25,12 @@ use thiserror::Error;
 ///
 /// Change it whenever the weights change in a way that moves vectors: old
 /// vectors then sit under a name nothing asks for, and are rebuilt rather than
-/// silently compared against new ones. Kept identical to upstream's, so an
-/// index is described the same way on both sides.
-pub const LOCAL_MODEL_ID: &str = "local-potion-multilingual-128m-int8";
+/// silently compared against new ones.
+///
+/// `-ru-en` because the vocabulary is cut to Russian and English (F-5.8b).
+/// Vectors of Russian, English and code are the same as the full model's, but
+/// not for text with other scripts — so it is a different model, and says so.
+pub const LOCAL_MODEL_ID: &str = "local-potion-multilingual-128m-int8-ru-en";
 
 /// One text's vector.
 #[derive(Debug, Clone, PartialEq)]

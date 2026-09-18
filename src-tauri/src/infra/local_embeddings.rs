@@ -1,4 +1,5 @@
-//! The bundled Model2Vec model, `potion-multilingual-128M` quantized to int8.
+//! The bundled Model2Vec model: `potion-multilingual-128M`, quantized to int8
+//! and cut down to Russian and English (F-5.8b).
 //!
 //! A *static* model: a vector per token, averaged. No network, no ONNX
 //! runtime, no GPU — embedding a chunk is a tokenizer pass and a lookup, which
@@ -10,14 +11,31 @@
 //! live in the repository under Git LFS; `scripts/embedding-model.md` says how
 //! they are built and checked.
 //!
-//! ## Cost — measured, not estimated
+//! ## Only Russian and English — a deliberate limit
 //!
-//! 146 MB on disk. **~1.3 GB resident once loaded** (release build, macOS,
-//! 2026-09-18): the `bge-m3` tokenizer is ~450 MB in `tokenizers`' structures
-//! (~600 MB at its peak while parsing), `model2vec-rs` widens the int8 table
-//! to `f32` for another 512 MB (~500k rows × 256 × 4 bytes), and the allocator
-//! keeps ~150 MB of the load's temporaries. Upstream's notes said 512 MB; that
-//! was the table alone. Loading takes ~0.7 s.
+//! The upstream model's vocabulary is 500 353 tokens in a hundred languages.
+//! `scripts/prune-embedding-vocab.py` keeps the 271 538 whose letters are all
+//! ASCII or Cyrillic, and the matching rows of the table. For text in
+//! Russian, English and code **nothing changes**: a dropped token contains a
+//! letter from another script, so it can never match such text, and the
+//! tokenizer picks exactly the same pieces. Checked over two repositories,
+//! 10 957 fragments: identical tokenization everywhere except the six that
+//! contained `é`, `à`, `µ`, `Σ` or `世界`. Those characters now embed as
+//! nothing. Going back to the full model is the build script without the
+//! prune step, the directory name below, and a new `LOCAL_MODEL_ID`.
+//!
+//! ## Cost — measured, not estimated (release, macOS, 2026-09-18)
+//!
+//! | | full model | Russian + English |
+//! |---|---|---|
+//! | on disk | 146 MB | 80 MB |
+//! | resident once loaded | ~1.07 GB | **~520 MB** |
+//! | load | 0.7 s | 0.42 s |
+//!
+//! Resident is the tokenizer — a Unigram prefix tree with a node per character
+//! of every token, about as large as the table — plus the table, which
+//! `model2vec-rs` widens from int8 to `f32` (rows × 256 × 4 bytes). Upstream's
+//! notes said 512 MB for the full model: that was the table alone.
 //!
 //! Embedding is cheap once loaded: all 1 911 chunks of this repository in
 //! 150 ms.
@@ -28,9 +46,9 @@
 //! again. A project nobody searches semantically never pays at all.
 //!
 //! Dropping is not enough on its own. The tokenizer is millions of small
-//! allocations, and the allocator keeps freed small blocks for reuse: measured,
-//! a dropped model still left **375 MB** resident. [`release_freed_memory`]
-//! asks the allocator to return them — down to ~50 MB.
+//! allocations, and the allocator keeps freed small blocks for reuse: measured
+//! on the full model, a dropped one still left **375 MB** resident.
+//! [`release_freed_memory`] asks the allocator to return them — down to ~50 MB.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,7 +61,7 @@ use model2vec_rs::model::StaticModel;
 use crate::domain::embeddings::{Embedding, EmbeddingError, EmbeddingProvider};
 
 pub const DIMENSIONS: usize = 256;
-const MODEL_DIR_NAME: &str = "potion-multilingual-128M-int8";
+const MODEL_DIR_NAME: &str = "potion-multilingual-128M-int8-ru-en";
 const LFS_POINTER_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
 /// Tokens per text before the rest is cut off — `model2vec`'s own default,
@@ -303,6 +321,30 @@ mod tests {
             // if normalisation were lost.
             let norm = got.0.iter().map(|x| x * x).sum::<f32>().sqrt();
             assert!((norm - 1.0).abs() < 1e-3, "{phrase:?}: norm {norm}");
+        }
+    }
+
+    /// The limit is part of the shipped model, not a property of the script
+    /// that made it: a rebuild that forgot the prune step would ship twice the
+    /// memory and nobody would notice until a user did.
+    #[test]
+    fn the_shipped_vocabulary_is_russian_and_english_only() {
+        let raw = fs::read_to_string(bundled_model_dir(None).join("tokenizer.json")).unwrap();
+        let tokenizer: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let vocab: Vec<&str> = tokenizer["model"]["vocab"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry[0].as_str())
+            .collect();
+
+        // The full vocabulary is 500 353 tokens; the cut one 271 538.
+        assert!((200_000..300_000).contains(&vocab.len()), "{} tokens: was the prune step skipped?", vocab.len());
+        for foreign in ["世界", "é", "Σ", "ß"] {
+            assert!(!vocab.iter().any(|piece| piece.contains(foreign)), "{foreign:?} is still in the vocabulary");
+        }
+        for kept in ["▁context", "▁контекст", "{"] {
+            assert!(vocab.contains(&kept), "{kept:?} was cut");
         }
     }
 

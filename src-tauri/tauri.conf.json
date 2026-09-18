@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "models/potion-multilingual-128M-int8"
+      "models/potion-multilingual-128M-int8-ru-en"
     ]
   }
 }
