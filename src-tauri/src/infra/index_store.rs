@@ -454,6 +454,114 @@ impl IndexStore {
         Ok(chunks)
     }
 
+    /// Keyword search: ranks the full-text index against an FTS5 `MATCH`
+    /// expression, best first.
+    ///
+    /// The column weights, positionally: `chunk_id` is `UNINDEXED` and can
+    /// never match, a hit in the chunk's name counts four times a hit in its
+    /// body, and the body is the baseline. That ratio is what makes a query
+    /// that is an identifier land on the thing carrying the name rather than
+    /// on prose mentioning it.
+    ///
+    /// **The score is flipped on the way out.** SQLite's `bm25()` returns a
+    /// negated value — lower is better — which is why the ordering is
+    /// ascending. Every other tier of this search reports higher-is-better,
+    /// and the tier that combines them multiplies, so a negative score
+    /// arriving there would turn a boost into a penalty and sink exactly the
+    /// results the boost was meant to lift.
+    pub fn search_bm25(
+        &self,
+        fts_query: &str,
+        limit: usize,
+    ) -> Result<Vec<(ChunkId, f32)>, IndexStoreError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT chunk_id, bm25(chunks_fts, 0.0, 4.0, 1.0) AS rank
+             FROM chunks_fts
+             WHERE chunks_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![fts_query, limit as i64], |row| {
+            let chunk_id: String = row.get(0)?;
+            let rank: f64 = row.get(1)?;
+            Ok((ChunkId(chunk_id), -rank as f32))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(IndexStoreError::from)
+    }
+
+    /// Records that this chunk now has a vector under this model.
+    ///
+    /// Written *after* the vector itself has landed in the model's file, and
+    /// deliberately as a separate write from the chunk row. The gap is the
+    /// feature: a sync killed between the two leaves a chunk with no
+    /// embedding record, which the next run notices and redoes. The opposite
+    /// order would leave a record claiming a vector that was never written,
+    /// and nothing would ever look for it again.
+    pub fn upsert_embedding(
+        &self,
+        chunk_id: &ChunkId,
+        chunk_hash: blake3::Hash,
+        model_id: &str,
+    ) -> Result<(), IndexStoreError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES (?1, ?2, ?3)
+             ON CONFLICT(chunk_id, model_id) DO UPDATE SET chunk_hash = excluded.chunk_hash",
+            params![chunk_id.0, model_id, chunk_hash.as_bytes().to_vec()],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_embedding(
+        &self,
+        chunk_id: &ChunkId,
+        model_id: &str,
+    ) -> Result<(), IndexStoreError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM embeddings WHERE chunk_id = ?1 AND model_id = ?2",
+            params![chunk_id.0, model_id],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets one model's vectors and leaves every other model's alone —
+    /// for when that model's weights changed underneath the index.
+    pub fn clear_embeddings(&self, model_id: &str) -> Result<(), IndexStoreError> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM embeddings WHERE model_id = ?1", params![model_id])?;
+        Ok(())
+    }
+
+    /// What this model has already embedded, as chunk id and the hash of the
+    /// chunk it was embedded from. Paired with the model's vector file, this
+    /// is what lets a sync re-embed only what actually changed.
+    ///
+    /// A damaged hash is skipped: the chunk then looks un-embedded and is
+    /// done again, which is the right answer to a row nobody can read.
+    pub fn load_all_embedding_hashes(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<(ChunkId, blake3::Hash)>, IndexStoreError> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT chunk_id, chunk_hash FROM embeddings WHERE model_id = ?1")?;
+        let rows = stmt.query_map(params![model_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (chunk_id, bytes) = row?;
+            if let Some(hash) = hash_from_bytes(&bytes) {
+                out.push((ChunkId(chunk_id), hash));
+            }
+        }
+        Ok(out)
+    }
+
     /// Replaces what an indexer found in this file.
     ///
     /// Kept so a cold start can reuse the symbols of a file whose hash has
@@ -1108,6 +1216,194 @@ mod tests {
 
         assert_eq!(count(&store, "chunks_fts"), 0, "an unreachable full-text row was left behind");
         assert_eq!(count(&store, "chunks"), 1, "the chunk row itself was touched");
+    }
+
+    // -------------------------------------------------------- keyword search
+
+    /// Three chunks: the term in a name, the term in a body, and neither.
+    fn searchable(label: &str) -> IndexStore {
+        let (store, _dir) = store(label);
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        store
+            .replace_chunks_for_file(
+                &FileId("a.md".into()),
+                &[
+                    chunk("a.md", 0, 1, Some("Install"), "run it and wait for the thing to finish"),
+                    chunk("a.md", 1, 2, None, "install it and wait for the thing to finish"),
+                    chunk("a.md", 2, 3, None, "nothing to do with any of that at all here"),
+                ],
+            )
+            .unwrap();
+        store
+    }
+
+    #[test]
+    fn keyword_search_finds_the_chunks_that_match_and_no_others() {
+        let store = searchable("store-bm25");
+
+        let hits = store.search_bm25("install", 10).unwrap();
+
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.0.as_str()).collect();
+        assert_eq!(ids.len(), 2, "matched {ids:?}");
+        assert!(!ids.contains(&"a.md#2-3"));
+    }
+
+    /// The sign flip. `bm25()` returns a negated score — lower is better —
+    /// and every other tier of this search reports higher-is-better. The tier
+    /// that combines them multiplies, so a negative arriving there turns a
+    /// boost into a penalty and sinks exactly what the boost was lifting.
+    #[test]
+    fn a_better_match_comes_back_with_a_higher_score_not_a_lower_one() {
+        let store = searchable("store-bm25-sign");
+
+        let hits = store.search_bm25("install", 10).unwrap();
+
+        assert!(hits[0].1 > 0.0, "the score is still negated: {:?}", hits[0]);
+        assert!(
+            hits[0].1 > hits[1].1,
+            "best-first ordering and the score disagree: {hits:?}"
+        );
+    }
+
+    /// The whole reason the name is a separate column. A query that is an
+    /// identifier has to land on the thing carrying the name, not on prose
+    /// that happens to mention it.
+    #[test]
+    fn a_hit_in_the_name_outranks_a_hit_in_the_body() {
+        let store = searchable("store-bm25-weights");
+
+        let hits = store.search_bm25("install", 10).unwrap();
+
+        assert_eq!(hits[0].0.0, "a.md#0-1", "the body hit outranked the name hit: {hits:?}");
+    }
+
+    #[test]
+    fn the_limit_is_respected() {
+        let store = searchable("store-bm25-limit");
+        assert_eq!(store.search_bm25("install", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_query_matching_nothing_comes_back_empty_rather_than_failing() {
+        let store = searchable("store-bm25-empty");
+        assert!(store.search_bm25("kubernetes", 10).unwrap().is_empty());
+    }
+
+    /// A chunk that was replaced must stop matching. Its full-text row is
+    /// purged by the writer, and this is that seen from the search side.
+    #[test]
+    fn a_replaced_chunk_stops_being_findable() {
+        let store = searchable("store-bm25-stale");
+        store
+            .replace_chunks_for_file(&FileId("a.md".into()), &[chunk("a.md", 0, 1, None, "something else")])
+            .unwrap();
+
+        assert!(store.search_bm25("install", 10).unwrap().is_empty());
+    }
+
+    // ---------------------------------------------------------- embeddings
+
+    /// Two chunks for an embedding record to hang off — the foreign key
+    /// refuses one otherwise.
+    fn with_two_chunks(store: &IndexStore) {
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        store
+            .replace_chunks_for_file(
+                &FileId("a.md".into()),
+                &[chunk("a.md", 0, 1, None, "one"), chunk("a.md", 1, 2, None, "two")],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn an_embedding_record_round_trips_for_its_own_model() {
+        let (store, _dir) = store("store-embeddings");
+        with_two_chunks(&store);
+        let id = ChunkId("a.md#0-1".into());
+        let hash = blake3::hash(b"chunk");
+
+        store.upsert_embedding(&id, hash, "potion").unwrap();
+
+        assert_eq!(store.load_all_embedding_hashes("potion").unwrap(), vec![(id, hash)]);
+        assert!(store.load_all_embedding_hashes("other").unwrap().is_empty());
+    }
+
+    /// Re-embedding a chunk moves its record rather than adding a second one
+    /// — a chunk has one vector per model, and two records would make "is
+    /// this current" unanswerable.
+    #[test]
+    fn re_embedding_a_chunk_replaces_its_record() {
+        let (store, _dir) = store("store-embeddings-upsert");
+        with_two_chunks(&store);
+        let id = ChunkId("a.md#0-1".into());
+
+        store.upsert_embedding(&id, blake3::hash(b"before"), "potion").unwrap();
+        store.upsert_embedding(&id, blake3::hash(b"after"), "potion").unwrap();
+
+        let loaded = store.load_all_embedding_hashes("potion").unwrap();
+        assert_eq!(loaded, vec![(id, blake3::hash(b"after"))]);
+    }
+
+    /// One chunk can be embedded by two models at once — that is what the
+    /// composite key is for, and what makes switching models cheap to undo.
+    #[test]
+    fn two_models_can_hold_a_record_for_the_same_chunk() {
+        let (store, _dir) = store("store-embeddings-models");
+        with_two_chunks(&store);
+        let id = ChunkId("a.md#0-1".into());
+
+        store.upsert_embedding(&id, blake3::hash(b"a"), "one").unwrap();
+        store.upsert_embedding(&id, blake3::hash(b"b"), "two").unwrap();
+
+        assert_eq!(store.load_all_embedding_hashes("one").unwrap().len(), 1);
+        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clearing_one_model_leaves_the_other_alone() {
+        let (store, _dir) = store("store-embeddings-clear");
+        with_two_chunks(&store);
+        store.upsert_embedding(&ChunkId("a.md#0-1".into()), blake3::hash(b"a"), "one").unwrap();
+        store.upsert_embedding(&ChunkId("a.md#1-2".into()), blake3::hash(b"b"), "two").unwrap();
+
+        store.clear_embeddings("one").unwrap();
+
+        assert!(store.load_all_embedding_hashes("one").unwrap().is_empty());
+        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_one_record_leaves_the_same_chunk_under_another_model() {
+        let (store, _dir) = store("store-embeddings-delete");
+        with_two_chunks(&store);
+        let id = ChunkId("a.md#0-1".into());
+        store.upsert_embedding(&id, blake3::hash(b"a"), "one").unwrap();
+        store.upsert_embedding(&id, blake3::hash(b"b"), "two").unwrap();
+
+        store.delete_embedding(&id, "one").unwrap();
+
+        assert!(store.load_all_embedding_hashes("one").unwrap().is_empty());
+        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+    }
+
+    /// An unreadable record means the chunk looks un-embedded and is done
+    /// again — the right answer to a row nobody can read, and better than
+    /// failing the load of every other model's records with it.
+    #[test]
+    fn a_damaged_embedding_record_is_skipped_rather_than_fatal() {
+        let (store, _dir) = store("store-embeddings-damaged");
+        with_two_chunks(&store);
+        store.upsert_embedding(&ChunkId("a.md#0-1".into()), blake3::hash(b"a"), "one").unwrap();
+        store.upsert_embedding(&ChunkId("a.md#1-2".into()), blake3::hash(b"b"), "one").unwrap();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute("UPDATE embeddings SET chunk_hash = X'00' WHERE chunk_id = 'a.md#0-1'", [])
+                .unwrap();
+        }
+
+        let loaded = store.load_all_embedding_hashes("one").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].0.0, "a.md#1-2");
     }
 
     // ------------------------------------------------------------- symbols
