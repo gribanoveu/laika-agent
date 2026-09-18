@@ -154,6 +154,107 @@ pub fn parse(text: &str) -> Result<McpConfig, McpConfigError> {
     serde_json::from_str(text).map_err(|e| McpConfigError::Parse(e.to_string()))
 }
 
+// ------------------------------------------------------------ the client
+
+/// One tool a server offers, as the model will need to see it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpTool {
+    pub name: String,
+    pub description: String,
+    /// A JSON Schema, passed through untouched like a built-in tool's.
+    pub input_schema: Value,
+}
+
+/// What a call came back with, already reduced to the text a tool result is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpCallResult {
+    pub text: String,
+    /// The tool itself reported failure (`isError`): a result for the model
+    /// to read, not a broken connection.
+    pub is_error: bool,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum McpError {
+    #[error("could not start the MCP server: {0}")]
+    NotStarted(String),
+    #[error("the MCP server exited{}{}", code.map(|c| format!(" with code {c}")).unwrap_or_default(), last_output(stderr))]
+    Exited { code: Option<i32>, stderr: String },
+    #[error("the MCP server did not answer within {0} s")]
+    Timeout(u64),
+    #[error("cancelled")]
+    Cancelled,
+    #[error("the MCP server refused to start a session: {0}")]
+    Handshake(String),
+    #[error("the MCP server answered with an error: {message} (code {code})")]
+    Server { code: i64, message: String },
+    #[error("the MCP server's answer is not what the protocol says: {0}")]
+    Protocol(String),
+}
+
+fn last_output(stderr: &str) -> String {
+    if stderr.trim().is_empty() {
+        String::new()
+    } else {
+        format!(". Its last output:\n{stderr}")
+    }
+}
+
+/// A connected server. The port between the loop and a transport: the stdio
+/// client in `infra::mcp_stdio` is one implementation, and an HTTP one (the
+/// place for `rmcp`, with OAuth) would be another — nothing above this trait
+/// learns which.
+///
+/// Blocking, like `LlmProvider`, and for the same reasons.
+pub trait McpClient: Send + Sync {
+    fn list_tools(&self) -> Result<Vec<McpTool>, McpError>;
+
+    /// `cancelled` is polled while waiting; a stop tells the server
+    /// (`notifications/cancelled`) and returns `McpError::Cancelled` without
+    /// waiting for it to agree.
+    fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<McpCallResult, McpError>;
+}
+
+/// A `tools/call` result's `content` as one text for the model.
+///
+/// Text as it is. What cannot be text here — an image, audio, a binary
+/// resource — is named in its place rather than dropped: a result that
+/// silently lost its only block reads as an empty success. Structured
+/// content is used only when there is no content at all, which the
+/// specification allows and older servers do not do.
+pub fn render_content(result: &Value) -> String {
+    let parts: Vec<String> = result["content"]
+        .as_array()
+        .map(|blocks| blocks.iter().map(render_block).collect())
+        .unwrap_or_default();
+    if parts.is_empty() {
+        return match result.get("structuredContent") {
+            Some(structured) if !structured.is_null() => structured.to_string(),
+            _ => String::new(),
+        };
+    }
+    parts.join("\n")
+}
+
+fn render_block(block: &Value) -> String {
+    let field = |name: &str| block[name].as_str().unwrap_or_default();
+    match field("type") {
+        "text" => field("text").to_string(),
+        "image" | "audio" => format!("[{} omitted: {}]", field("type"), field("mimeType")),
+        "resource" => match block["resource"]["text"].as_str() {
+            Some(text) => text.to_string(),
+            None => format!("[binary resource omitted: {}]", block["resource"]["uri"].as_str().unwrap_or_default()),
+        },
+        "resource_link" => format!("[resource: {}]", field("uri")),
+        other => format!("[{other} content omitted]"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +336,40 @@ mod tests {
     fn a_server_key_is_what_a_tool_name_may_hold() {
         assert_eq!(server_key("My Server.v2"), "my_server_v2");
         assert_eq!(server_key("git-hub"), "git-hub");
+    }
+
+    #[test]
+    fn content_becomes_one_text_and_what_cannot_be_text_is_named() {
+        let result = serde_json::json!({"content": [
+            {"type": "text", "text": "found 2"},
+            {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+            {"type": "resource", "resource": {"uri": "file:///a", "text": "body"}},
+            {"type": "resource", "resource": {"uri": "file:///b", "blob": "AAAA"}},
+            {"type": "resource_link", "uri": "file:///c", "name": "c"},
+            {"type": "hologram"}
+        ]});
+        assert_eq!(
+            render_content(&result),
+            "found 2\n[image omitted: image/png]\nbody\n[binary resource omitted: file:///b]\n[resource: file:///c]\n[hologram content omitted]"
+        );
+    }
+
+    #[test]
+    fn structured_content_stands_in_only_when_there_is_no_content() {
+        assert_eq!(render_content(&serde_json::json!({"content": [], "structuredContent": {"n": 1}})), r#"{"n":1}"#);
+        assert_eq!(
+            render_content(&serde_json::json!({"content": [{"type": "text", "text": "t"}], "structuredContent": {"n": 1}})),
+            "t"
+        );
+        assert_eq!(render_content(&serde_json::json!({})), "");
+    }
+
+    /// What the model and the tab read when a server dies.
+    #[test]
+    fn an_exit_says_the_code_and_the_last_output() {
+        let err = McpError::Exited { code: Some(1), stderr: "Error: GITHUB_TOKEN is not set".into() };
+        assert_eq!(err.to_string(), "the MCP server exited with code 1. Its last output:\nError: GITHUB_TOKEN is not set");
+        assert_eq!(McpError::Exited { code: None, stderr: " ".into() }.to_string(), "the MCP server exited");
     }
 
     #[test]

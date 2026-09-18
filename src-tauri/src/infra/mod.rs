@@ -17,3 +17,4 @@ pub mod file_watcher;
 pub mod skills_store;
 pub mod tool_call_log;
 pub mod mcp_config;
+pub mod mcp_stdio;

@@ -155,7 +155,7 @@ fn collect(
 }
 
 #[cfg(unix)]
-fn set_process_group(command: &mut Command) {
+pub(crate) fn set_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
     // 0 means "a new group led by the child", so its own children join it and
     // one signal reaches all of them.
@@ -163,10 +163,10 @@ fn set_process_group(command: &mut Command) {
 }
 
 #[cfg(not(unix))]
-fn set_process_group(_command: &mut Command) {}
+pub(crate) fn set_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
-fn kill_tree(child: &mut Child) {
+pub(crate) fn kill_tree(child: &mut Child) {
     // Negative pid addresses the group. The child leads its own group (see
     // `set_process_group`), so this is the group and nothing outside it.
     let pid = child.id() as i32;
@@ -176,7 +176,7 @@ fn kill_tree(child: &mut Child) {
 }
 
 #[cfg(not(unix))]
-fn kill_tree(child: &mut Child) {
+pub(crate) fn kill_tree(child: &mut Child) {
     // `taskkill /T` walks the process tree at the moment it runs, so a
     // grandchild whose parent has already exited is not found — a job object
     // would catch those too. Written this way deliberately: an untested
