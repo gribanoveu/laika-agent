@@ -70,6 +70,15 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
 
   switch (block.name) {
     case "readFile": {
+      if (Array.isArray(result.entries)) {
+        const entries = result.entries as Json[];
+        return {
+          name,
+          arg: str(args.path) ?? "",
+          meta: `outline · ${entries.length} entries · ${num(result.totalLines) ?? 0} lines`,
+          detail: entries.map((e) => `${num(e.startLine)}-${num(e.endLine)}  ${str(e.name)}`).join("\n"),
+        };
+      }
       const from = num(result.startLine) ?? num(args.startLine);
       const to = num(result.endLine) ?? num(args.endLine);
       return {

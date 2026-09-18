@@ -98,6 +98,7 @@ mod tests {
             path: path.to_string(),
             start_line: range.map(|(s, _)| s),
             end_line: range.map(|(_, e)| e),
+            outline: None,
         };
         read_file(scope, &args, reads).expect("read succeeds");
     }

@@ -638,6 +638,15 @@ pub enum ToolResult {
         end_line: u32,
         total_lines: u32,
     },
+    /// `readFile` with `outline`: the file's shape rather than its text.
+    /// Empty `entries` for a language with no parser, or a file declaring
+    /// nothing — `totalLines` still says what reading it would cost.
+    #[serde(rename_all = "camelCase")]
+    FileOutline {
+        path: String,
+        entries: Vec<OutlineEntry>,
+        total_lines: u32,
+    },
     /// `truncated` means "there are more hits than these" — the cap was
     /// reached with matching still to do. A search that quietly stopped at a
     /// limit reads to the model as an exhaustive answer, which is the one
@@ -728,6 +737,21 @@ pub struct ReadFileArgs {
     /// 1-indexed, inclusive. `None` reads through the end.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
     pub end_line: Option<u32>,
+    /// The file's declarations and headings with their lines, instead of its
+    /// text. The range is ignored: there is no text to slice.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub outline: Option<bool>,
+}
+
+/// One declaration or heading of a `readFile` outline, with the lines it
+/// spans — a range the next `readFile` can take as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutlineEntry {
+    /// Qualified by what encloses it: `RepoIndexer.sync`.
+    pub name: String,
+    pub start_line: u32,
+    pub end_line: u32,
 }
 
 /// `grep` arguments.

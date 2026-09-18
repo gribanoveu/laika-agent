@@ -11,7 +11,10 @@
 use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
-use crate::domain::tools::{ReadFileArgs, ReadFiles, ToolError, ToolResult, ToolScope};
+use crate::domain::chunk_index::qualified_name;
+use crate::domain::repo_index::detect_language;
+use crate::domain::tools::{OutlineEntry, ReadFileArgs, ReadFiles, ToolError, ToolResult, ToolScope};
+use crate::infra::language_indexers::indexer_for;
 
 use super::super::resolve::{relative_to_root, resolve_existing};
 
@@ -25,6 +28,9 @@ pub fn read_file(
         return Err(ToolError::NotAFile(args.path.clone()));
     }
     let content = fs::read_to_string(&path).map_err(ToolError::Io)?;
+    if args.outline == Some(true) {
+        return Ok(outline(&args.path, &content));
+    }
 
     // Recorded against the whole file even when a slice is returned, and under
     // the canonical spelling rather than whatever the model typed — otherwise
@@ -35,6 +41,25 @@ pub fn read_file(
     reads.record(&relative_to_root(scope, &path)?, &content, whole);
 
     Ok(slice_lines(content, args.start_line, args.end_line))
+}
+
+/// The file's declarations and headings, found by the same parser the index
+/// uses — on this one file, so it works before any sync and in a folder that
+/// is not indexed at all.
+///
+/// Not a read: nothing is recorded, so an outline does not unlock a write.
+/// The model has seen names and line numbers, not the text it would replace.
+fn outline(path: &str, content: &str) -> ToolResult {
+    let symbols = indexer_for(detect_language(path)).index(content);
+    let entries = symbols
+        .iter()
+        .map(|symbol| OutlineEntry {
+            name: qualified_name(symbol, &symbols),
+            start_line: symbol.start_line,
+            end_line: symbol.end_line,
+        })
+        .collect();
+    ToolResult::FileOutline { path: path.to_string(), entries, total_lines: content.lines().count() as u32 }
 }
 
 /// Clamps the requested range into the file rather than erroring.
@@ -86,7 +111,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "readFile".to_string(),
-        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is clamped, not rejected. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read."
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is clamped, not rejected. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -110,6 +135,13 @@ pub(super) fn definition() -> LlmToolDefinition {
                     ],
                     "minimum": 1,
                     "description": "1-indexed last line to return, inclusive. Omit to read to the end. Prefer a range over the whole file when only part of it matters — but read the whole file before writing it, since a partial read does not unlock a write."
+                },
+                "outline": {
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "description": "When true, return the file's declarations and headings with the lines each spans, plus its total line count, instead of its text. Use it on a large file you need only part of: read the outline, then read the one range that matters. Ignores startLine/endLine, and does not unlock a write."
                 }
             },
             "required": [
@@ -146,6 +178,7 @@ mod tests {
             path: path.to_string(),
             start_line: start,
             end_line: end,
+            outline: None,
         }
     }
 
@@ -285,5 +318,55 @@ mod tests {
 
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end), (2, 3));
+    }
+
+    // ------------------------------------------------------------ outline
+
+    fn outline_of(scope: &ToolScope, path: &str, reads: &mut ReadFiles) -> (Vec<(String, u32, u32)>, u32) {
+        let args = ReadFileArgs { path: path.into(), start_line: Some(2), end_line: Some(2), outline: Some(true) };
+        match read_file(scope, &args, reads).unwrap() {
+            ToolResult::FileOutline { entries, total_lines, .. } => {
+                (entries.into_iter().map(|e| (e.name, e.start_line, e.end_line)).collect(), total_lines)
+            }
+            other => panic!("expected an outline, got {other:?}"),
+        }
+    }
+
+    /// Names as the index qualifies them, lines as `readFile` takes them —
+    /// and the range asked for alongside is ignored.
+    #[test]
+    fn an_outline_lists_declarations_with_their_lines() {
+        let dir = temp_dir("read-outline");
+        std::fs::write(
+            dir.join("lib.rs"),
+            "use std::fs;\n\npub struct Store;\n\nimpl Store {\n    fn open() {}\n\n    fn close() {}\n}\n",
+        )
+        .unwrap();
+        let scope = ToolScope::new(&dir).unwrap();
+
+        let (entries, total) = outline_of(&scope, "lib.rs", &mut ReadFiles::default());
+
+        assert_eq!(total, 9);
+        assert!(entries.contains(&("Store.open".to_string(), 6, 6)), "{entries:?}");
+        assert!(entries.contains(&("Store.close".to_string(), 8, 8)), "{entries:?}");
+        assert!(entries.iter().any(|(name, start, end)| name == "Store" && (*start, *end) == (5, 9)), "{entries:?}");
+    }
+
+    /// A file with no parser still answers: nothing declared, and how long a
+    /// plain read would be.
+    #[test]
+    fn a_file_without_a_parser_has_an_empty_outline_and_a_size() {
+        let (scope, _) = fixture("read-outline-plain", "one\ntwo\nthree\n");
+        assert_eq!(outline_of(&scope, "file.txt", &mut ReadFiles::default()), (vec![], 3));
+    }
+
+    /// Seeing names and line numbers is not seeing the text a write would
+    /// replace.
+    #[test]
+    fn an_outline_does_not_count_as_a_read() {
+        let (scope, _) = fixture("read-outline-no-unlock", "fn a() {}\n");
+        let mut reads = ReadFiles::default();
+        outline_of(&scope, "file.txt", &mut reads);
+        assert!(reads.check("file.txt", "fn a() {}\n", true).is_err());
     }
 }

@@ -31,6 +31,26 @@ describe("what each call shows", () => {
     expect(shown.detail).toBe("line\n");
   });
 
+  test("an outline lists what the file declares, not its text", () => {
+    const shown = describeTool(
+      tool({
+        name: "readFile",
+        arguments: '{"path":"lib.rs","outline":true}',
+        result: {
+          path: "lib.rs",
+          entries: [
+            { name: "Store", startLine: 5, endLine: 9 },
+            { name: "Store.open", startLine: 6, endLine: 6 },
+          ],
+          totalLines: 9,
+        },
+      }),
+    );
+
+    expect(shown).toMatchObject({ name: "Read", arg: "lib.rs", meta: "outline · 2 entries · 9 lines" });
+    expect(shown.detail).toBe("5-9  Store\n6-6  Store.open");
+  });
+
   test("a search counts hits and the files they are in", () => {
     const shown = describeTool(
       tool({

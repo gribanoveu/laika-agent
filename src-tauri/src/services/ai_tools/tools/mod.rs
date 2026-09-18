@@ -155,6 +155,7 @@ mod definition_tests {
                     path: path(),
                     start_line: Some(1),
                     end_line: Some(9),
+                    outline: Some(false),
                 })],
             ),
             ToolName::Grep => (
