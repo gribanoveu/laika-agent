@@ -44,6 +44,21 @@ http = "1"
 tauri-plugin-dialog = "2.7.3"
 blake3 = "1.8.7"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Grammars depend on `tree-sitter-language`, not on the runtime, and declare no
+# `links` — so their versions no longer have to agree with it or each other.
+# The tests in `infra::language_indexers` load every grammar into this runtime
+# and check every node name against it; a bump that breaks either fails there.
+tree-sitter = "0.27"
+# Named directly only for the `LanguageFn` type the grammar table holds; it is
+# already in the graph through every grammar.
+tree-sitter-language = "0.1"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

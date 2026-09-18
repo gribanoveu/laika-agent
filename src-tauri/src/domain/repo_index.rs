@@ -136,17 +136,17 @@ pub fn detect_language(path: &str) -> Language {
     }
 }
 
-/// A named, ranged thing an indexer found in a file — today a Markdown
-/// heading, later a function or a type.
+/// A named, ranged thing an indexer found in a file — a heading, a function, a
+/// type, a method.
 ///
 /// Carries both line and byte ranges because a parser hands over both anyway,
 /// and throwing one away means deriving it again later for chunking, for
 /// highlighting, or for "go to symbol".
 ///
-/// There is no `kind` field. Upstream has one with six variants, five of which
-/// only its Java indexer produces; here every symbol is a section heading, and
-/// an enum whose other arms are unreachable invites a `match` arm that never
-/// runs. A structural code indexer brings its own kinds when it arrives.
+/// There is no `kind` field. Upstream has one with six variants, and nothing
+/// downstream branches on it: the chunker cuts at a range and the search
+/// weights a name, whatever declared them. An enum nobody matches on is a
+/// column to keep in step with every grammar for no reader.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
     pub name: String,
