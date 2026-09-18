@@ -8,3 +8,4 @@ pub mod repo_index;
 pub mod embedding_index;
 pub mod index_sync;
 pub mod workspace_index;
+pub mod code_search;

@@ -95,6 +95,10 @@ impl RepoIndexer {
         })
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn store(&self) -> &IndexStore {
         &self.store
     }

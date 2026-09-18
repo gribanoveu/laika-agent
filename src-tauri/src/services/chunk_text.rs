@@ -8,7 +8,7 @@
 //! A chunk whose file has changed since it was cut says so, rather than
 //! serving whatever bytes now sit at its old offsets.
 //!
-//! Upstream put a 64 MiB `moka` cache in front of [`resolve_text`]. Not
+//! Upstream put a 64 MiB `moka` cache in front of [`resolve_chunk`]. Not
 //! ported: nothing reads chunk text in a loop yet. It goes back in when a
 //! profile of search on a real repository says the disk read is the cost.
 
@@ -75,18 +75,37 @@ pub enum ChunkTextError {
     OutOfBounds(String),
 }
 
+/// A chunk's text as it is on disk, and the lines it spans — what a search
+/// hands the model, which opens files by line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedChunk {
+    pub text: String,
+    /// 1-based, inclusive.
+    pub start_line: u32,
+    /// 1-based, inclusive: the line of the chunk's last character, not the
+    /// empty one after its final newline.
+    pub end_line: u32,
+}
+
 /// `[start_byte..end_byte)` of the chunk's file, under `repo_root`, provided
 /// the file is still the one the chunk was cut from.
-pub fn resolve_text(repo_root: &Path, metadata: &ChunkMetadata) -> Result<String, ChunkTextError> {
+pub fn resolve_chunk(repo_root: &Path, metadata: &ChunkMetadata) -> Result<ResolvedChunk, ChunkTextError> {
     let content = fs::read(repo_root.join(&metadata.file_id.0)).map_err(ChunkTextError::Io)?;
     if blake3::hash(&content) != metadata.file_hash {
         return Err(ChunkTextError::Stale(metadata.file_id.0.clone()));
     }
-    content
-        .get(metadata.start_byte as usize..metadata.end_byte as usize)
+    let (start, end) = (metadata.start_byte as usize, metadata.end_byte as usize);
+    let text = content
+        .get(start..end)
         .and_then(|bytes| std::str::from_utf8(bytes).ok())
-        .map(str::to_string)
-        .ok_or_else(|| ChunkTextError::OutOfBounds(metadata.id.0.clone()))
+        .ok_or_else(|| ChunkTextError::OutOfBounds(metadata.id.0.clone()))?;
+    let lines_in = |bytes: &[u8]| bytes.iter().filter(|&&b| b == b'\n').count() as u32;
+    // A chunk cut after the previous declaration's `}` begins with the rest
+    // of that line; its lines start where its own text does.
+    let body = text.trim_start_matches(['\r', '\n']);
+    let start_line = 1 + lines_in(&content[..end - body.len()]);
+    let end_line = start_line + lines_in(body.strip_suffix('\n').unwrap_or(body).as_bytes());
+    Ok(ResolvedChunk { text: text.to_string(), start_line, end_line })
 }
 
 #[cfg(test)]
@@ -165,7 +184,7 @@ mod tests {
         assert!(matches!(read_source(&dir.join("gone.rs"), 1024), Err(SourceSkip::Io(_))));
     }
 
-    // --------------------------------------------------------- resolve_text
+    // -------------------------------------------------------- resolve_chunk
 
     fn chunks_of(dir: &Path, path: &str, content: &str) -> Vec<crate::domain::chunk_index::Chunk> {
         fs::write(dir.join(path), content).unwrap();
@@ -179,8 +198,21 @@ mod tests {
         let dir = temp_dir("resolve-ok");
         let chunks = chunks_of(&dir, "a.rs", "fn one() {}\nfn two() {}\n");
         for chunk in &chunks {
-            assert_eq!(resolve_text(&dir, &chunk.metadata).unwrap(), chunk.text);
+            assert_eq!(resolve_chunk(&dir, &chunk.metadata).unwrap().text, chunk.text);
         }
+    }
+
+    #[test]
+    fn a_chunk_knows_the_lines_it_spans() {
+        let dir = temp_dir("resolve-lines");
+        let chunks = chunks_of(&dir, "a.rs", "fn one() {}\n\nfn two() {\n    2\n}\n");
+        let lines: Vec<_> = chunks
+            .iter()
+            .map(|c| resolve_chunk(&dir, &c.metadata).map(|r| (r.start_line, r.end_line)).unwrap())
+            .collect();
+        // `two`'s chunk begins with the newline after `one`, and the blank
+        // line; its lines begin at `fn two`.
+        assert_eq!(lines, [(1, 1), (3, 5)]);
     }
 
     /// Same length, different bytes: the offsets are all still in range, and
@@ -191,7 +223,7 @@ mod tests {
         let chunks = chunks_of(&dir, "a.rs", "fn one() {}\n");
         fs::write(dir.join("a.rs"), "fn uno() {}\n").unwrap();
 
-        assert!(matches!(resolve_text(&dir, &chunks[0].metadata), Err(ChunkTextError::Stale(_))));
+        assert!(matches!(resolve_chunk(&dir, &chunks[0].metadata), Err(ChunkTextError::Stale(_))));
     }
 
     #[test]
@@ -200,7 +232,7 @@ mod tests {
         let chunks = chunks_of(&dir, "a.rs", "fn one() {}\n");
         fs::remove_file(dir.join("a.rs")).unwrap();
 
-        assert!(matches!(resolve_text(&dir, &chunks[0].metadata), Err(ChunkTextError::Io(_))));
+        assert!(matches!(resolve_chunk(&dir, &chunks[0].metadata), Err(ChunkTextError::Io(_))));
     }
 
     // ---------------------------------------------------------- end to end

@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS symbols (
   end_byte   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
+-- Search looks a name up as the query spelled it, in any case.
+CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name COLLATE NOCASE);
 "#;
 
 #[derive(Debug, Error)]
@@ -392,13 +394,40 @@ impl IndexStore {
     /// blinding the whole index would turn a stale column into an index that
     /// will not load.
     pub fn load_all_chunks(&self) -> Result<Vec<ChunkMetadata>, IndexStoreError> {
+        self.chunks_where("", [])
+    }
+
+    /// One chunk by id — what a search resolves each hit through. `None`
+    /// when a sync removed it between ranking and here.
+    pub fn load_chunk(&self, id: &ChunkId) -> Result<Option<ChunkMetadata>, IndexStoreError> {
+        Ok(self.chunks_where("WHERE chunk_id = ?1", [id.0.as_str()])?.pop())
+    }
+
+    /// The chunks holding a declaration named `name`, in any case — a symbol
+    /// maps to the chunk its first byte is in. At most `limit`, in path order;
+    /// a chunk holding two such declarations is listed twice.
+    pub fn chunks_declaring(&self, name: &str, limit: usize) -> Result<Vec<ChunkId>, IndexStoreError> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
+            "SELECT c.chunk_id FROM symbols s
+             JOIN chunks c ON c.file_id = s.file_id
+                          AND c.start_byte <= s.start_byte AND s.start_byte < c.end_byte
+             WHERE s.name = ?1 COLLATE NOCASE
+             ORDER BY s.file_id, s.start_byte
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![name, limit as i64], |row| row.get::<_, String>(0).map(ChunkId))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    fn chunks_where<P: rusqlite::Params>(&self, filter: &str, params: P) -> Result<Vec<ChunkMetadata>, IndexStoreError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare_cached(&format!(
             "SELECT chunk_id, file_id, language, kind, start_byte, end_byte,
                     file_hash, chunk_hash, qualified_name, ordinal
-             FROM chunks",
-        )?;
-        let rows = stmt.query_map([], |row| {
+             FROM chunks {filter}"
+        ))?;
+        let rows = stmt.query_map(params, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

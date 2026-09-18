@@ -282,7 +282,7 @@ fn path_stem(s: &str) -> Option<&str> {
 /// as "no identifiers in the query", with a hint telling the model to add one.
 /// `ALLCAPS` and `Title` alone are not identifiers: they are how prose
 /// capitalises too.
-fn looks_like_identifier(s: &str) -> bool {
+pub fn looks_like_identifier(s: &str) -> bool {
     if s.len() < 2 || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return false;
     }

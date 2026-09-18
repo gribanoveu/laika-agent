@@ -14,3 +14,4 @@ pub mod chunk_index;
 pub mod repo_index;
 pub mod search_query;
 pub mod workspace_index;
+pub mod code_search;
