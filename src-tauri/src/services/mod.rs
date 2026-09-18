@@ -7,3 +7,4 @@ pub mod chunk_text;
 pub mod repo_index;
 pub mod embedding_index;
 pub mod index_sync;
+pub mod workspace_index;

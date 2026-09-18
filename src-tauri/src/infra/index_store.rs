@@ -838,6 +838,27 @@ mod tests {
     use super::*;
     use crate::testing::temp_dir;
 
+    /// Two indexers can share a store for a moment — a folder reopened while
+    /// its previous sync is finishing, or two clones of one remote. Every
+    /// write is a short transaction, so the other one waits rather than
+    /// failing with "database is locked". `rusqlite` opens with a 5 s busy
+    /// timeout by default; this holds it to that.
+    #[test]
+    fn a_write_waits_for_another_connection_instead_of_failing() {
+        let dir = temp_dir("store-busy");
+        let store = IndexStore::open(&dir).unwrap();
+        let other = Connection::open(dir.join(DB_FILE_NAME)).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            other.execute_batch("COMMIT").unwrap();
+        });
+
+        store.write_meta("probe", "1").unwrap();
+
+        holder.join().unwrap();
+    }
+
     fn store(label: &str) -> (IndexStore, std::path::PathBuf) {
         let dir = temp_dir(label);
         (IndexStore::open(&dir).expect("a store"), dir)

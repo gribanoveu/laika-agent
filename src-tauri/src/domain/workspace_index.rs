@@ -29,6 +29,11 @@ pub enum IndexEvent {
         /// model, say. Keyword search is unaffected.
         embedding_error: Option<String>,
     },
+    /// The index is not current and will not become so by itself: the walk
+    /// or the store failed, or the folder cannot be watched. The next change
+    /// on disk retries a failed sync; a failed watch stays failed until the
+    /// folder is opened again.
+    Failed { error: String },
 }
 
 pub type IndexEventSink = Arc<dyn Fn(IndexEvent) + Send + Sync>;

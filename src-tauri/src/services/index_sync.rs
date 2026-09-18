@@ -139,7 +139,9 @@ impl RepoIndexer {
 
     fn run_once(&self, sink: &IndexEventSink) -> Result<(), RepoSyncError> {
         sink(IndexEvent::SyncStarted);
-        let report = repo_index::sync(&self.root, &self.store, &self.options)?;
+        let report = repo_index::sync(&self.root, &self.store, &self.options).inspect_err(|error| {
+            sink(IndexEvent::Failed { error: error.to_string() });
+        })?;
         let skipped: Vec<(String, String)> =
             report.skipped.iter().map(|s| (s.path.clone(), s.reason.to_string())).collect();
         sink(IndexEvent::KeywordsReady {
@@ -284,6 +286,7 @@ mod tests {
                 IndexEvent::KeywordsReady { .. } => "keywords",
                 IndexEvent::EmbeddingProgress { .. } => "progress",
                 IndexEvent::SyncFinished { .. } => "finished",
+                IndexEvent::Failed { .. } => "failed",
             })
             .collect()
     }
@@ -368,9 +371,11 @@ mod tests {
     #[test]
     fn a_failed_sync_does_not_block_the_next_one() {
         let (indexer, root) = indexer("indexer-failed", Arc::new(FakeModel::default()));
-        let (sink, _) = recorder();
+        let (sink, events) = recorder();
         fs::remove_dir_all(&root).unwrap();
         assert!(indexer.sync(&sink).is_err());
+        // A window showing "syncing" would otherwise show it for good.
+        assert_eq!(kinds(&events.lock().unwrap()), ["started", "failed"]);
 
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("a.rs"), "fn alpha() {}\n").unwrap();

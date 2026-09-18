@@ -16,6 +16,23 @@ pub fn run() {
         // reach a turn while it runs. `Arc` because a turn runs on a blocking
         // thread that outlives the command call that started it.
         .manage(std::sync::Arc::new(commands::chat::AgentState::default()))
+        // The index of the open folder, and the one embedding model every
+        // folder shares. Built in `setup` because the model's location is
+        // Tauri's to know: the resource directory of the installed app.
+        .setup(|app| {
+            use tauri::Manager;
+            let resources = app.path().resource_dir().ok();
+            let model = infra::local_embeddings::LocalEmbeddings::new(
+                infra::local_embeddings::bundled_model_dir(resources.as_deref()),
+                infra::local_embeddings::DEFAULT_IDLE_UNLOAD,
+            );
+            let index_dir = infra::app_dir::ensure()?.join("index");
+            app.manage(std::sync::Arc::new(services::workspace_index::WorkspaceIndex::new(
+                index_dir,
+                std::sync::Arc::new(model),
+            )));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::chat::workspace_open,
             commands::chat::workspace_current,

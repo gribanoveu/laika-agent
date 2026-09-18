@@ -32,8 +32,10 @@ use crate::services::ai_tools::preview;
 use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
 use crate::services::context_compaction;
 use crate::services::llm_session;
+use crate::services::workspace_index::WorkspaceIndex;
 
 use super::chat_events::chat_event_sink;
+use super::workspace_events::index_event_sink;
 
 #[derive(Default)]
 pub struct AgentState {
@@ -87,8 +89,18 @@ impl AgentState {
 /// Opens a folder as the workspace. Canonicalized here, once, so every path a
 /// tool resolves later is measured against a real directory rather than
 /// against whatever spelling the caller used.
+///
+/// Also makes it the indexed folder. The index opening is awaited — it reads
+/// what was embedded before, off the UI thread — and its first sync is not.
+/// An index that cannot open does not stop the folder opening: the reason
+/// arrives on `workspace-index:event`, and the agent works without search.
 #[tauri::command]
-pub fn workspace_open(path: String, state: State<'_, Arc<AgentState>>) -> Result<String, String> {
+pub async fn workspace_open(
+    path: String,
+    app: AppHandle,
+    state: State<'_, Arc<AgentState>>,
+    index: State<'_, Arc<WorkspaceIndex>>,
+) -> Result<String, String> {
     let resolved = PathBuf::from(&path)
         .canonicalize()
         .map_err(|e| format!("cannot open {path}: {e}"))?;
@@ -99,7 +111,13 @@ pub fn workspace_open(path: String, state: State<'_, Arc<AgentState>>) -> Result
         .workspace
         .lock()
         .map_err(|_| "workspace lock poisoned".to_string())? = Some(resolved.clone());
-    Ok(resolved.display().to_string())
+
+    let shown = resolved.display().to_string();
+    let index = Arc::clone(&index);
+    let sink = index_event_sink(&app, shown.clone());
+    // Reported through the sink; see above.
+    let _ = tauri::async_runtime::spawn_blocking(move || index.open(&resolved, sink)).await;
+    Ok(shown)
 }
 
 #[tauri::command]
