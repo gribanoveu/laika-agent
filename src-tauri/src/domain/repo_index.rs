@@ -86,9 +86,11 @@ pub enum Language {
 }
 
 impl Language {
-    /// Every variant. The registries in `infra::language_indexers` and
-    /// `infra::chunk_strategies` are written by hand, and their tests walk
-    /// this to prove neither forgot one.
+    /// Every variant, for tests that need to visit each one. The two places
+    /// that map a language to behaviour — `infra::language_indexers::indexer_for`
+    /// and `chunk_index::spans_for` — are exhaustive `match`es, so a new
+    /// variant cannot be forgotten there; this list can, which is what
+    /// `all_is_complete` is for.
     pub const ALL: &'static [Language] = &[
         Language::PlainText,
         Language::Json,

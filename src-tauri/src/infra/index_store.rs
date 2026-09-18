@@ -708,6 +708,7 @@ fn hash_from_bytes(bytes: &[u8]) -> Option<blake3::Hash> {
 fn chunk_kind_to_str(kind: ChunkKind) -> &'static str {
     match kind {
         ChunkKind::Section => "section",
+        ChunkKind::Declaration => "declaration",
         ChunkKind::File => "file",
     }
 }
@@ -715,6 +716,7 @@ fn chunk_kind_to_str(kind: ChunkKind) -> &'static str {
 fn str_to_chunk_kind(value: &str) -> Option<ChunkKind> {
     match value {
         "section" => Some(ChunkKind::Section),
+        "declaration" => Some(ChunkKind::Declaration),
         "file" => Some(ChunkKind::File),
         _ => None,
     }
@@ -1140,7 +1142,7 @@ mod tests {
 
     #[test]
     fn every_chunk_kind_round_trips() {
-        for kind in [ChunkKind::Section, ChunkKind::File] {
+        for kind in [ChunkKind::Section, ChunkKind::Declaration, ChunkKind::File] {
             assert_eq!(str_to_chunk_kind(chunk_kind_to_str(kind)), Some(kind), "{kind:?}");
         }
     }

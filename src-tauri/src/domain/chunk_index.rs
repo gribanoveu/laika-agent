@@ -1,10 +1,14 @@
 //! Cutting an indexed file into addressable pieces.
 //!
-//! A [`ChunkStrategy`] only decides *where* the cuts go — a kind, a byte
-//! range, and which symbol drove it. Turning a range into a [`Chunk`] (slicing
-//! the text, hashing it, naming it, numbering it) belongs to
-//! `services::chunk_builder`, once, for every language, rather than to each
-//! strategy separately.
+//! [`spans_for`] decides *where* the cuts go — a kind, a byte range, and which
+//! symbol drove it — and [`build_chunks`] turns the ranges into [`Chunk`]s
+//! (slicing, hashing, naming, numbering), once, for every language.
+//!
+//! Both are pure. Upstream kept the strategies in `infra/chunk_strategies/`
+//! behind a trait and a `HashMap`, and the builder in a service because it
+//! read the file through the repository index; neither needs anything but the
+//! text and the symbols, so neither leaves the domain here. Reading the file —
+//! the size limit, the binary check — is `services::chunk_text`.
 //!
 //! No embeddings here and no search. This layer answers "what are the pieces",
 //! and nothing about what is done with them.
@@ -24,15 +28,26 @@ pub const CHUNK_VERSION: u32 = 1;
 /// embedding stage, where a tokenizer actually exists.
 pub const DEFAULT_MAX_CHUNK_BYTES: usize = 16 * 1024;
 
+/// Past this a file is not indexed at all, and says so. The same ceiling as
+/// the `grep` tool's, on purpose: what the agent will not search by pattern
+/// it should not find by meaning either. A minified bundle under it would
+/// otherwise produce more full-text rows than every hand-written file in the
+/// repository together.
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 1_048_576;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkBuildOptions {
     pub max_chunk_bytes: usize,
+    /// Enforced by `services::chunk_text::read_source` **before** the file is
+    /// read, not by the builder after — by then the megabytes are in memory.
+    pub max_file_bytes: u64,
 }
 
 impl Default for ChunkBuildOptions {
     fn default() -> Self {
         Self {
             max_chunk_bytes: DEFAULT_MAX_CHUNK_BYTES,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
         }
     }
 }
@@ -46,14 +61,16 @@ pub struct ChunkId(pub String);
 
 /// What a chunk is a piece of.
 ///
-/// Two variants, not upstream's four. `Method` and `Field` are produced only
-/// by its Java indexer; a section and a whole file are what this port can
-/// actually make today, and an arm nothing constructs is an arm somebody
-/// writes a `match` for and never sees run. A structural code indexer brings
-/// its own kinds when it lands.
+/// Three variants, not upstream's four: its `Method` and `Field` were Java's
+/// words for what every code grammar here produces, and nothing downstream
+/// tells a method from a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChunkKind {
+    /// Prose under a heading.
     Section,
+    /// One innermost declaration in code — a function, a method, a type.
+    Declaration,
+    /// The whole file: no parser, or a parser that found nothing.
     File,
 }
 
@@ -64,13 +81,6 @@ pub struct ChunkSpan {
     pub start_byte: u32,
     pub end_byte: u32,
     pub anchor_symbol: Option<Symbol>,
-}
-
-/// One language's idea of where the cuts go.
-pub trait ChunkStrategy: Send + Sync {
-    /// `symbols` arrives sorted by `start_byte` — `ChunkBuilder` sorts once,
-    /// so no strategy re-derives the order or silently assumes it.
-    fn build_spans(&self, symbols: &[Symbol], content_len: usize) -> Vec<ChunkSpan>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +101,8 @@ pub struct ChunkMetadata {
     /// span moves, which is exactly when an embedding has to be recomputed,
     /// and it costs nothing to compute from a file hash already in hand.
     pub hash: blake3::Hash,
-    /// The heading trail for a section chunk; `None` for a whole file.
+    /// The heading trail for a section (`Install > macOS`), the enclosing
+    /// declarations for code (`UserService.find`); `None` for a whole file.
     pub qualified_name: Option<String>,
     /// 0-based position in this file's final chunk sequence, assigned after
     /// every split.
@@ -174,6 +185,149 @@ fn ordered_anchors(anchors: &[Symbol], content_len: usize) -> Vec<&Symbol> {
         }
     }
     kept
+}
+
+/// Code: one chunk per **innermost** declaration, and each owns the gap
+/// *before* it, so a doc comment, an attribute, an annotation or a decorator
+/// travels with what it describes. The first chunk is pulled back to byte 0
+/// (imports and a class header go with the first member) and the last runs to
+/// the end of the file (closing braces go with the last).
+///
+/// Innermost, because the indexer reports containers too: a class *and* its
+/// methods. Cutting at both would give the class a chunk covering its methods'
+/// chunks. A container with no members is innermost itself and gets its own.
+///
+/// The B-1 guard, backward-gap edition: this is the function upstream's
+/// `spans_from_backward_gap_symbols` was, and it crashed on a nested anchor.
+/// Here anchors are sorted and a symbol is kept only if the next one starts at
+/// or after its end. That one test drops containers *and* the earlier of two
+/// symbols that cross without nesting (a parser recovering from broken syntax
+/// can produce those) — and since everything after the next starts later
+/// still, no kept anchor can overlap another. Whatever arrives, the spans are
+/// contiguous and forward.
+pub fn spans_from_declarations(symbols: &[Symbol], content_len: usize) -> Vec<ChunkSpan> {
+    let mut ordered: Vec<&Symbol> = symbols
+        .iter()
+        .filter(|sym| sym.start_byte < sym.end_byte && (sym.end_byte as usize) <= content_len)
+        .collect();
+    // Containers before what they contain, so "the next one starts inside
+    // me" is the test for "I am a container".
+    ordered.sort_by_key(|sym| (sym.start_byte, std::cmp::Reverse(sym.end_byte)));
+
+    let mut anchors: Vec<&Symbol> = Vec::with_capacity(ordered.len());
+    for (i, sym) in ordered.iter().enumerate() {
+        if ordered.get(i + 1).is_none_or(|next| next.start_byte >= sym.end_byte) {
+            anchors.push(sym);
+        }
+    }
+    if anchors.is_empty() {
+        return whole_file_span(content_len);
+    }
+
+    let last = anchors.len() - 1;
+    let mut start = 0;
+    anchors
+        .iter()
+        .enumerate()
+        .map(|(i, sym)| {
+            let end = if i == last { content_len as u32 } else { sym.end_byte };
+            let span = ChunkSpan {
+                kind: ChunkKind::Declaration,
+                start_byte: start,
+                end_byte: end,
+                anchor_symbol: Some((*sym).clone()),
+            };
+            start = end;
+            span
+        })
+        .collect()
+}
+
+/// `UserService.find` — the anchor's name after every symbol that strictly
+/// encloses it, outermost first. `.` in every language: it is a separator to
+/// the full-text tokenizer, so `find` and `UserService` are both words, and a
+/// Rust reader recognises `Turn.new` as readily as `Turn::new`.
+pub fn qualified_name(anchor: &Symbol, symbols: &[Symbol]) -> String {
+    let mut enclosing: Vec<&Symbol> = symbols
+        .iter()
+        .filter(|sym| {
+            sym.start_byte <= anchor.start_byte
+                && anchor.end_byte <= sym.end_byte
+                && (sym.start_byte, sym.end_byte) != (anchor.start_byte, anchor.end_byte)
+        })
+        .collect();
+    enclosing.sort_by_key(|sym| (sym.start_byte, std::cmp::Reverse(sym.end_byte)));
+    enclosing
+        .iter()
+        .map(|sym| sym.name.as_str())
+        .chain(std::iter::once(anchor.name.as_str()))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Where the cuts go for `language` — the only place that mapping is written,
+/// and a `match` so a new language cannot be forgotten.
+pub fn spans_for(language: Language, symbols: &[Symbol], content_len: usize) -> Vec<ChunkSpan> {
+    match language {
+        Language::PlainText | Language::Json | Language::Yaml => whole_file_span(content_len),
+        Language::Markdown => spans_from_forward_gap_symbols(symbols, content_len),
+        Language::Rust
+        | Language::TypeScript
+        | Language::Tsx
+        | Language::JavaScript
+        | Language::Python
+        | Language::Go
+        | Language::Java => spans_from_declarations(symbols, content_len),
+    }
+}
+
+/// A file's text and symbols, as the chunks search and the model work with.
+///
+/// Covers the file: every byte is in exactly one chunk, in order, whatever
+/// the symbols were. A span that does not fall on character boundaries — a
+/// symbol stored for other content — is dropped rather than sliced into a
+/// panic; the hash check upstream of this makes that unreachable in practice,
+/// and a missing piece is the lesser failure than a dead worker.
+pub fn build_chunks(
+    file_id: &FileId,
+    language: Language,
+    content: &str,
+    symbols: &[Symbol],
+    options: &ChunkBuildOptions,
+) -> Vec<Chunk> {
+    let file_hash = blake3::hash(content.as_bytes());
+    let mut sorted = symbols.to_vec();
+    sorted.sort_by_key(|sym| sym.start_byte);
+    let headings = section_headings(&sorted, content, language);
+
+    let chunks = spans_for(language, &sorted, content.len())
+        .into_iter()
+        .filter_map(|span| {
+            let text = content.get(span.start_byte as usize..span.end_byte as usize)?;
+            let qualified_name = span.anchor_symbol.as_ref().and_then(|anchor| match span.kind {
+                ChunkKind::Section => section_breadcrumb(anchor, &headings),
+                ChunkKind::Declaration => Some(qualified_name(anchor, &sorted)),
+                ChunkKind::File => None,
+            });
+            Some(Chunk {
+                metadata: ChunkMetadata {
+                    id: ChunkId(format!("{}#{}-{}", file_id.0, span.start_byte, span.end_byte)),
+                    file_id: file_id.clone(),
+                    language,
+                    kind: span.kind,
+                    start_byte: span.start_byte,
+                    end_byte: span.end_byte,
+                    file_hash,
+                    hash: chunk_hash(file_hash, span.start_byte, span.end_byte),
+                    qualified_name,
+                    ordinal: 0,
+                },
+                text: text.to_string(),
+            })
+        })
+        .collect();
+
+    finalize_ordinals(split_oversized_chunks(chunks, options.max_chunk_bytes))
 }
 
 /// One span over everything — for a language with no parser, and for a file
@@ -446,6 +600,173 @@ mod tests {
             },
             text: text.to_string(),
         }
+    }
+
+    /// Every byte in exactly one span, in order — the contract whatever the
+    /// symbols were.
+    fn assert_covers(spans: &[(u32, u32)], len: u32) {
+        assert_eq!(spans.first().map(|s| s.0), Some(0), "{spans:?}");
+        for pair in spans.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "gap or overlap in {spans:?}");
+            assert!(pair[0].0 < pair[0].1, "empty or backwards span in {spans:?}");
+        }
+        assert_eq!(spans.last().map(|s| s.1), Some(len), "{spans:?}");
+    }
+
+    fn ranges(spans: &[ChunkSpan]) -> Vec<(u32, u32)> {
+        spans.iter().map(|s| (s.start_byte, s.end_byte)).collect()
+    }
+
+    fn anchors(spans: &[ChunkSpan]) -> Vec<&str> {
+        spans.iter().map(|s| s.anchor_symbol.as_ref().map_or("", |a| a.name.as_str())).collect()
+    }
+
+    // ------------------------------------------------------------ code
+
+    /// A class and its methods both arrive. Cutting at the class too would
+    /// give it a chunk covering its methods' chunks.
+    #[test]
+    fn code_is_cut_at_the_innermost_declarations() {
+        let symbols = [symbol("Service", 10, 100), symbol("find", 30, 50), symbol("save", 60, 90)];
+        let spans = spans_from_declarations(&symbols, 120);
+
+        assert_eq!(anchors(&spans), ["find", "save"]);
+        assert!(spans.iter().all(|s| s.kind == ChunkKind::Declaration));
+        assert_eq!(ranges(&spans), [(0, 50), (50, 120)]);
+    }
+
+    /// Each declaration owns the gap before it: the doc comment and the
+    /// attribute above `save` are in `save`'s chunk, not in `find`'s.
+    #[test]
+    fn a_declaration_takes_the_comment_above_it() {
+        let content = "fn find() {}\n/// Saves.\n#[inline]\nfn save() {}\n";
+        let save_at = content.find("fn save").unwrap() as u32;
+        let symbols = [symbol("find", 0, 12), symbol("save", save_at, content.len() as u32 - 1)];
+        let spans = spans_from_declarations(&symbols, content.len());
+
+        let second = &content[spans[1].start_byte as usize..spans[1].end_byte as usize];
+        assert!(second.starts_with("\n/// Saves.\n#[inline]"), "{second:?}");
+    }
+
+    #[test]
+    fn a_container_with_no_members_is_its_own_chunk() {
+        let symbols = [symbol("Empty", 0, 10), symbol("Full", 20, 80), symbol("run", 30, 70)];
+        assert_eq!(anchors(&spans_from_declarations(&symbols, 80)), ["Empty", "run"]);
+    }
+
+    /// B-1 in its original habitat. Upstream's backward-gap builder took
+    /// anchors as given, and a nested one sent `end` before `start`. Symbols
+    /// out of order, nested, crossing, empty and past the end go in; spans
+    /// that cover the file come out.
+    #[test]
+    fn no_arrangement_of_symbols_produces_a_bad_span() {
+        let symbols = [
+            symbol("late", 70, 90),
+            symbol("outer", 0, 60),
+            symbol("inner", 10, 20),
+            symbol("crossing", 15, 40),
+            symbol("empty", 45, 45),
+            symbol("beyond", 95, 200),
+        ];
+        let spans = spans_from_declarations(&symbols, 100);
+
+        assert_covers(&ranges(&spans), 100);
+        // Which of two crossing symbols wins is arbitrary; that both cannot,
+        // and that the untangled one after them survives, is not.
+        let kept = anchors(&spans);
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[1], "late");
+    }
+
+    #[test]
+    fn code_with_no_declarations_is_one_chunk() {
+        let spans = spans_from_declarations(&[], 40);
+        assert_eq!(ranges(&spans), [(0, 40)]);
+        assert_eq!(spans[0].kind, ChunkKind::File);
+    }
+
+    #[test]
+    fn a_declaration_is_named_after_what_encloses_it() {
+        let symbols = [symbol("Service", 0, 100), symbol("Listener", 10, 50), symbol("changed", 20, 40)];
+        assert_eq!(qualified_name(&symbols[2], &symbols), "Service.Listener.changed");
+        assert_eq!(qualified_name(&symbols[0], &symbols), "Service");
+    }
+
+    // --------------------------------------------------- per language
+
+    #[test]
+    fn each_language_is_cut_its_own_way() {
+        let symbols = [symbol("A", 0, 5), symbol("B", 10, 15)];
+
+        let json = spans_for(Language::Json, &symbols, 20);
+        assert_eq!((json.len(), json[0].kind), (1, ChunkKind::File), "config is never cut at symbols");
+
+        let markdown = spans_for(Language::Markdown, &symbols, 20);
+        assert_eq!(ranges(&markdown), [(0, 10), (10, 20)], "a section owns what follows");
+
+        let rust = spans_for(Language::Rust, &symbols, 20);
+        assert_eq!(ranges(&rust), [(0, 5), (5, 20)], "a declaration owns what precedes");
+    }
+
+    // ---------------------------------------------------- the builder
+
+    #[test]
+    fn built_chunks_cover_the_file_and_carry_their_names() {
+        let content = "use x;\n\nimpl Turn {\n    fn new() {}\n    fn run() {}\n}\n";
+        let at = |needle: &str| content.find(needle).unwrap() as u32;
+        let symbols = [
+            symbol("run", at("fn run"), at("fn run") + 11),
+            symbol("Turn", at("impl"), content.len() as u32 - 1),
+            symbol("new", at("fn new"), at("fn new") + 11),
+        ];
+        let chunks = build_chunks(&FileId("src/turn.rs".into()), Language::Rust, content, &symbols, &ChunkBuildOptions::default());
+
+        let names: Vec<_> = chunks.iter().map(|c| c.metadata.qualified_name.as_deref().unwrap_or("")).collect();
+        assert_eq!(names, ["Turn.new", "Turn.run"]);
+        assert_eq!(chunks.iter().map(|c| c.text.as_str()).collect::<String>(), content);
+        assert_covers(&chunks.iter().map(|c| (c.metadata.start_byte, c.metadata.end_byte)).collect::<Vec<_>>(), content.len() as u32);
+        assert_eq!(chunks.iter().map(|c| c.metadata.ordinal).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(chunks[0].metadata.id.0, format!("src/turn.rs#0-{}", chunks[0].metadata.end_byte));
+        assert_eq!(chunks[0].metadata.file_hash, blake3::hash(content.as_bytes()));
+    }
+
+    #[test]
+    fn built_sections_are_named_by_their_breadcrumb() {
+        let content = "# Install\n\n## macOS\n\nbrew\n";
+        let symbols = [symbol("Install", 0, 9), symbol("macOS", 11, 19)];
+        let chunks = build_chunks(&FileId("README.md".into()), Language::Markdown, content, &symbols, &ChunkBuildOptions::default());
+
+        assert_eq!(chunks[1].metadata.qualified_name.as_deref(), Some("Install > macOS"));
+    }
+
+    #[test]
+    fn a_huge_declaration_is_split_under_its_own_name() {
+        let body = "    step();\n".repeat(3000);
+        let content = format!("fn big() {{\n{body}}}\n");
+        let symbols = [symbol("big", 0, content.len() as u32 - 1)];
+        let options = ChunkBuildOptions::default();
+        let chunks = build_chunks(&FileId("big.rs".into()), Language::Rust, &content, &symbols, &options);
+
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|c| c.text.len() <= options.max_chunk_bytes));
+        assert!(chunks.iter().all(|c| c.metadata.qualified_name.as_deref() == Some("big")));
+    }
+
+    /// A symbol stored for other content can land inside a character. Slicing
+    /// there panics; the builder drops the span instead.
+    #[test]
+    fn a_span_inside_a_character_is_dropped_not_sliced() {
+        // `é` is bytes 0..2; the first symbol ends, and so the second span
+        // starts, at byte 1.
+        let content = "é fn a() {}";
+        let symbols = [symbol("x", 0, 1), symbol("a", 3, 11)];
+        let chunks = build_chunks(&FileId("a.rs".into()), Language::Rust, content, &symbols, &ChunkBuildOptions::default());
+        assert!(chunks.iter().all(|c| content.is_char_boundary(c.metadata.start_byte as usize)));
+    }
+
+    #[test]
+    fn an_empty_file_builds_no_chunks() {
+        assert!(build_chunks(&FileId("a.rs".into()), Language::Rust, "", &[], &ChunkBuildOptions::default()).is_empty());
     }
 
     // ------------------------------------------------------- the span builder
