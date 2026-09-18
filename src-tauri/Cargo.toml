@@ -68,6 +68,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # inference only. model2vec-rs itself is gone (F-5.8c): it widened the int8
 # table to f32, and the pooling it did is thirty lines here.
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+notify = "8"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

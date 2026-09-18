@@ -425,4 +425,27 @@ mod tests {
         assert_eq!(status.embedded, 101, "the file written during the sync was left out");
         assert!(!indexer.status().syncing);
     }
+
+    // ------------------------------------------------------ with the watcher
+
+    /// The wiring F-5.12 will do, end to end: a file saved on disk becomes
+    /// findable with nobody calling `sync`.
+    #[test]
+    fn a_saved_file_becomes_findable_through_the_watcher() {
+        let (indexer, root) = indexer("indexer-watched", Arc::new(FakeModel::default()));
+        let indexer = Arc::new(indexer);
+        let (sink, _) = recorder();
+        let (synced_tx, synced) = mpsc::channel();
+        let watched = Arc::clone(&indexer);
+        let _watcher = crate::infra::file_watcher::FileWatcher::start(&root, move || {
+            let _ = synced_tx.send(watched.sync(&sink).map(|status| status.is_some()));
+        })
+        .unwrap();
+
+        fs::write(root.join("a.rs"), "fn saved_while_watched() {}\n").unwrap();
+
+        assert!(matches!(synced.recv_timeout(std::time::Duration::from_secs(10)), Ok(Ok(true))));
+        let query = crate::domain::search_query::fts5_query("saved_while_watched").unwrap();
+        assert_eq!(indexer.store().search_bm25(&query, 5).unwrap().len(), 1);
+    }
 }
