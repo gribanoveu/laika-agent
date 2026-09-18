@@ -15,3 +15,4 @@ pub mod repository_identity;
 pub mod chat_store;
 pub mod file_watcher;
 pub mod skills_store;
+pub mod tool_call_log;

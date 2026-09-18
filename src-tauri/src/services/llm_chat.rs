@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 
@@ -22,6 +22,7 @@ use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
 use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
+use crate::domain::tool_call_log::{self, CallStatus, ToolCallLogEntry};
 use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::SkillMeta;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
@@ -176,7 +177,14 @@ pub struct Turn<'a> {
     pub skills: &'a [SkillMeta],
     /// The open folder's instruction files, read once per turn like the skills.
     pub rules: &'a [RuleFile],
+    /// Where each settled call's redacted record goes — the log on disk in
+    /// the app, a list in a test. A port rather than a direct write so that
+    /// a turn under test never touches whatever app directory another test
+    /// has installed.
+    pub log_call: &'a dyn Fn(ToolCallLogEntry),
 }
+
+
 
 /// Notes typed while a turn is running, waiting for the next round.
 ///
@@ -474,6 +482,11 @@ fn run(
                     Ok(()) => runnable.push(call.clone()),
                     Err(e) => {
                         report_call(&events, round, call);
+                        // Refused before running — a path out of the folder,
+                        // a write without a read — which is exactly what an
+                        // audit trail is read for.
+                        let args = parse_tool_call(call).map_or(serde_json::Value::Null, |p| tool_call_log::redact_args(&p));
+                        log_call(turn, round, call, args, CallStatus::Error, Some(tool_call_log::redact_error(&e)), None, Instant::now());
                         let message = format!("Error: {e}");
                         report_result(&events, round, &call.id, None, Some(&message));
                         state.history.push(tool_message(
@@ -527,10 +540,17 @@ fn run(
             report_call(&events, round, call);
 
             let decision = decisions.iter().find(|d| d.id == call.id);
+            let started = Instant::now();
+            // What the log may keep, gathered on the way: the arguments once
+            // they have parsed, the error before it is flattened to text.
+            let mut logged_args = serde_json::Value::Null;
+            let mut logged_error = None;
+            let denied = matches!(decision, Some(d) if !d.approved);
             let outcome = match decision {
                 Some(d) if !d.approved => Err(denial(d)),
                 _ => parse_tool_call(call)
                     .and_then(|parsed| {
+                        logged_args = tool_call_log::redact_args(&parsed);
                         // Built per call, because the id is what pairs a line
                         // of output with the call that produced it — a round
                         // may have started more than one.
@@ -548,8 +568,20 @@ fn run(
                             &deps,
                         )
                     })
-                    .map_err(|e| format!("Error: {e}")),
+                    .map_err(|e| {
+                        logged_error = Some(tool_call_log::redact_error(&e));
+                        format!("Error: {e}")
+                    }),
             };
+            let status = match &outcome {
+                Ok(_) => CallStatus::Ok,
+                Err(_) if denied => CallStatus::Denied,
+                Err(_) => CallStatus::Error,
+            };
+            // A denial's text is the user's own reason, not the tool's.
+            let error = if denied { outcome.as_ref().err().cloned() } else { logged_error };
+            let result = outcome.as_ref().ok().map(tool_call_log::redact_result);
+            log_call(turn, round, call, logged_args, status, error, result, started);
 
             report_result(
                 &events,
@@ -832,6 +864,34 @@ fn needs_approval(policy: &ApprovalPolicy, call: &LlmToolCall) -> bool {
 
 /// What a refused call tells the model. The reason is the point: a model told
 /// only "denied" tries the same call again, then a near variant of it.
+/// One settled call, as the log keeps it. `args`, `error` and `result`
+/// arrive already redacted.
+#[allow(clippy::too_many_arguments)]
+fn log_call(
+    turn: &Turn,
+    round: u32,
+    call: &LlmToolCall,
+    args: serde_json::Value,
+    status: CallStatus,
+    error: Option<String>,
+    result: Option<serde_json::Value>,
+    started: Instant,
+) {
+    (turn.log_call)(ToolCallLogEntry {
+        ts_ms: crate::infra::tool_call_log::now_ms(),
+        repo_root: turn.scope.root().display().to_string(),
+        round,
+        provider_id: turn.session.provider_id.clone(),
+        model: turn.session.model.clone(),
+        tool: call.name.clone(),
+        args,
+        status,
+        error,
+        result,
+        duration_ms: started.elapsed().as_millis() as i64,
+    });
+}
+
 fn denial(decision: &ToolCallDecision) -> String {
     match &decision.reason {
         Some(reason) if !reason.trim().is_empty() => {
@@ -1048,6 +1108,7 @@ mod tests {
         search: Option<CodeSearchFn>,
         skills: Vec<SkillMeta>,
         rules: Vec<RuleFile>,
+        logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1084,6 +1145,7 @@ mod tests {
             search: None,
             skills: Vec::new(),
             rules: Vec::new(),
+            logged: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -1111,6 +1173,8 @@ mod tests {
             let shell = Shell::default();
             let queue = self.steering.clone();
             let take_steering = move || queue.take();
+            let logged = self.logged.clone();
+            let log_call = move |entry: ToolCallLogEntry| logged.lock().unwrap().push(entry);
             let turn = Turn {
                 events: &self.events,
                 session: &self.session,
@@ -1124,6 +1188,7 @@ mod tests {
                 shell: &shell,
                 skills: &self.skills,
                 rules: &self.rules,
+                log_call: &log_call,
             };
             f(&turn)
         }
@@ -1812,6 +1877,78 @@ mod tests {
         assert!(!h.root.join("a.rs").exists(), "a denied call must not run");
         let told = tool_contents(h.provider.requests().last().unwrap());
         assert!(told[0].contains("use the existing helper"), "{}", told[0]);
+    }
+
+    /// Every settled call reaches the log, each with how it ended — and none
+    /// of the text the calls carried, whichever way they ended.
+    #[test]
+    fn every_call_is_logged_without_its_content() {
+        const LEAK: &str = "LEAK-marker";
+        let mut h = harness(
+            "loop-log",
+            vec![
+                asks(vec![
+                    wants("w1", "writeFile", &format!(r#"{{"path":"a.rs","content":"{LEAK}"}}"#)),
+                    wants("r1", "readFile", r#"{"path":"a.rs"}"#),
+                    wants("e1", "editFile", &format!(r#"{{"path":"a.rs","edits":[{{"old":"absent {LEAK}","new":"x"}}]}}"#)),
+                    wants("b1", "writeFile", &format!(r#"{{"path":"b.rs","content":["{LEAK}"]}}"#)),
+                ]),
+                asks(vec![wants("w2", "writeFile", &format!(r#"{{"path":"c.rs","content":"{LEAK}"}}"#))]),
+                text("done"),
+            ],
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let logged = h.logged.lock().unwrap().clone();
+        let summary: Vec<(&str, CallStatus)> = logged.iter().map(|e| (e.tool.as_str(), e.status)).collect();
+        // In the order they settled: the broken one is refused before the
+        // rest of its round runs.
+        assert_eq!(
+            summary,
+            [
+                ("writeFile", CallStatus::Error),
+                ("writeFile", CallStatus::Ok),
+                ("readFile", CallStatus::Ok),
+                ("editFile", CallStatus::Error),
+                ("writeFile", CallStatus::Ok),
+            ]
+        );
+        for entry in &logged {
+            let text = serde_json::to_string(entry).unwrap();
+            assert!(!text.contains(LEAK), "{text}");
+            assert_eq!((entry.provider_id.as_str(), entry.model.as_str()), ("test", "m"));
+        }
+        assert_eq!(logged[1].args["args"]["path"], "a.rs");
+        assert_eq!(logged[0].args, serde_json::Value::Null, "unparsed arguments are not kept");
+        assert!(logged[0].error.as_deref().is_some_and(|e| e.starts_with("invalid arguments for writeFile")));
+        assert_eq!((logged[1].round, logged[4].round), (1, 2));
+        assert_eq!(logged[3].error.as_deref(), Some("edit text not found"));
+    }
+
+    #[test]
+    fn a_denial_is_logged_as_one_with_the_users_reason() {
+        let mut h = harness(
+            "loop-log-denied",
+            vec![asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]), text("ok")],
+        );
+        h.approval = asking();
+        let ChatStreamOutcome::PendingApproval(pending) =
+            h.run(|turn| stream(turn, vec![LlmMessage::user("write it")], vec![])).expect("pauses")
+        else {
+            panic!("expected a pause");
+        };
+        assert!(h.logged.lock().unwrap().is_empty(), "a paused call has not settled");
+
+        h.run(|turn| {
+            resume(turn, pending, vec![ToolCallDecision { id: "w1".into(), approved: false, reason: Some("not now".into()) }])
+        })
+        .expect("finishes");
+
+        let logged = h.logged.lock().unwrap().clone();
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].status, CallStatus::Denied);
+        assert_eq!(logged[0].error.as_deref(), Some("Denied by the user: not now"));
+        assert!(logged[0].result.is_none());
     }
 
     /// Pausing must not be a way to buy more budget: the resumed pass charges
