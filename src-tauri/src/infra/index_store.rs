@@ -1196,6 +1196,70 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------ the query builder's side
+
+    /// The schema builds prefix indexes for 4, 5 and 6 characters because
+    /// that is what the query builder emits. Change one without the other and
+    /// prefix lookups still work — by walking the whole term list, which is
+    /// the slowdown nobody traces back to a constant.
+    #[test]
+    fn the_prefix_index_matches_the_prefixes_queries_use() {
+        use crate::domain::search_query::{FTS_PREFIX_MIN_CHARS, FTS_STEM_PREFIX_CHARS};
+        let expected: Vec<String> =
+            (FTS_PREFIX_MIN_CHARS..=FTS_STEM_PREFIX_CHARS).map(|n| n.to_string()).collect();
+        assert!(
+            SCHEMA_SQL.contains(&format!("prefix = '{}'", expected.join(" "))),
+            "schema prefix list is not {expected:?}"
+        );
+    }
+
+    /// Whatever the user typed, the built query is valid FTS5 — SQLite
+    /// rejects a stray quote or a bare operator with an error, not an empty
+    /// result.
+    #[test]
+    fn every_built_query_runs() {
+        let (store, _dir) = store("store-query-syntax");
+        with_two_chunks(&store);
+        for typed in ["\"unclosed", "NOT", "a AND OR b", "col:value", "star*", "(paren", "уведомления", "compact_if_needed"] {
+            let query = crate::domain::search_query::fts5_query(typed).unwrap();
+            assert!(store.search_bm25(&query, 5).is_ok(), "{typed:?} -> {query}");
+        }
+    }
+
+    /// A model asks for `readSource`; the Rust code says `read_source`. The
+    /// phrase finds it, and ranks it above text where the two words merely
+    /// both occur.
+    #[test]
+    fn a_camel_case_query_finds_the_snake_case_name() {
+        let (store, _dir) = store("store-query-camel");
+        store.upsert_files(&[file("a.rs", "x"), file("b.md", "y")]).unwrap();
+        store
+            .replace_chunks_for_file(&FileId("a.rs".into()), &[chunk("a.rs", 0, 9, None, "pub fn read_source(path: &Path) {}")])
+            .unwrap();
+        store
+            .replace_chunks_for_file(&FileId("b.md".into()), &[chunk("b.md", 0, 9, None, "Read the guide. The source is on GitHub, source maps too.")])
+            .unwrap();
+
+        let query = crate::domain::search_query::fts5_query("readSource").unwrap();
+        let hits = store.search_bm25(&query, 5).unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].0 .0.starts_with("a.rs#"));
+    }
+
+    /// Russian is inflected and `unicode61` does not stem it; the prefix is
+    /// what joins a plural question to singular text.
+    #[test]
+    fn an_inflected_word_finds_its_other_forms() {
+        let (store, _dir) = store("store-query-russian");
+        store.upsert_files(&[file("guide.md", "x")]).unwrap();
+        store
+            .replace_chunks_for_file(&FileId("guide.md".into()), &[chunk("guide.md", 0, 9, None, "Сроки рассмотрения уведомления")])
+            .unwrap();
+
+        let query = crate::domain::search_query::fts5_query("уведомлений").unwrap();
+        assert_eq!(store.search_bm25(&query, 5).unwrap().len(), 1);
+    }
+
     // ------------------------------------------------------ replace_file
 
     #[test]

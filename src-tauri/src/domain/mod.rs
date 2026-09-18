@@ -11,3 +11,4 @@ pub mod conversation_mode;
 pub mod prompt;
 pub mod chunk_index;
 pub mod repo_index;
+pub mod search_query;
