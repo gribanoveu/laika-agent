@@ -35,6 +35,7 @@ pub mod read_file;
 pub mod run_command;
 pub mod semantic_search;
 pub mod skill;
+pub mod write_plan;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -58,6 +59,7 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::DeleteFile, delete_file::definition),
     (ToolName::DeleteDirectory, delete_directory::definition),
     (ToolName::Move, move_path::definition),
+    (ToolName::WritePlan, write_plan::definition),
     (ToolName::Todo, todo::definition),
     (ToolName::RunCommand, run_command::definition),
     (ToolName::Skill, skill::definition),
@@ -99,6 +101,7 @@ pub fn execute_tool(
         ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
         ToolCall::Skill(args) => skill::skill(args, deps),
+        ToolCall::WritePlan(args) => write_plan::write_plan(args),
     }
 }
 
@@ -108,7 +111,7 @@ mod definition_tests {
     use crate::domain::llm::LlmToolCall;
     use crate::domain::tools::{
         DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs,
-        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, TodoUpdateStatus,
+        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, WritePlanArgs, TodoUpdateStatus,
         WriteFileArgs,
         CreateDirectoryArgs,
     };
@@ -259,6 +262,10 @@ mod definition_tests {
                     top_k: Some(5),
                     preview: Some(true),
                 })],
+            ),
+            ToolName::WritePlan => (
+                r##"{"content":"# Fix"}"##,
+                vec![ToolCall::WritePlan(WritePlanArgs { content: "# Fix".to_string() })],
             ),
             ToolName::Skill => (
                 r#"{"name":"release"}"#,

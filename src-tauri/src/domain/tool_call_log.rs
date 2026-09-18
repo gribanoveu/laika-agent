@@ -244,6 +244,10 @@ mod tests {
                     meta: crate::domain::code_search::SearchMeta { tiers_used: vec![], weak: false, hint: None },
                 },
             ),
+            ToolName::WritePlan => (
+                Some(ToolCall::WritePlan(WritePlanArgs { content: LEAK.into() })),
+                ToolResult::PlanWritten { lines: 3 },
+            ),
             ToolName::Skill => (
                 Some(ToolCall::Skill(SkillArgs { name: "release".into(), path: None })),
                 ToolResult::Skill { name: "release".into(), instructions: LEAK.into(), files: vec![] },

@@ -268,6 +268,8 @@ type Props = {
   onCompact: () => void;
   /** Present while the conversation is in Plan mode: hands the plan to Agent mode. */
   onImplement?: () => void;
+  /** Opens the Plan tab, where the plan is read and edited before handing it over. */
+  onOpenPlan?: () => void;
 };
 
 export function ChatPanel({
@@ -281,6 +283,7 @@ export function ChatPanel({
   onNewChat,
   onCompact,
   onImplement,
+  onOpenPlan,
 }: Props) {
   const groups = group(turn.blocks);
   // Under a finished answer only: mid-turn the plan is not written yet, and
@@ -365,7 +368,12 @@ export function ChatPanel({
             <button type="button" className="btn btn-primary" onClick={onImplement}>
               Implement in Agent mode
             </button>
-            <span>Switches to Agent and carries the checklist over.</span>
+            {onOpenPlan && (
+              <button type="button" className="btn btn-ghost" onClick={onOpenPlan}>
+                Review the plan
+              </button>
+            )}
+            <span>Switches to Agent with the plan and the checklist.</span>
           </div>
         )}
       </div>

@@ -105,6 +105,7 @@ pub fn save(
     messages: &[LlmMessage],
     blocks: &Value,
     todos: &[Task],
+    plan: Option<&str>,
 ) -> Result<ChatSummary, ChatError> {
     let path = path(id)?;
     let existing = load(id).ok();
@@ -119,6 +120,7 @@ pub fn save(
         messages: messages.to_vec(),
         blocks: blocks.clone(),
         todos: todos.to_vec(),
+        plan: plan.map(str::to_string),
     };
 
     let text = serde_json::to_string(&record).map_err(ChatError::Parse)?;
@@ -152,6 +154,7 @@ mod tests {
             &[LlmMessage::user(said)],
             &blocks(said),
             &[],
+            Some("# Plan"),
         )
         .unwrap()
     }
@@ -166,6 +169,7 @@ mod tests {
             assert_eq!(record.title, "why does it drop the token?");
             assert_eq!(record.messages, vec![LlmMessage::user("why does it drop the token?")]);
             assert_eq!(record.blocks, blocks("why does it drop the token?"));
+            assert_eq!(record.plan.as_deref(), Some("# Plan"));
         });
     }
 
@@ -223,6 +227,7 @@ mod tests {
                 &[LlmMessage::user("first"), LlmMessage::assistant("done")],
                 &blocks("first"),
                 &[],
+                None,
             )
             .unwrap();
 
@@ -284,7 +289,7 @@ mod tests {
         with_app_dir("chat-store-bad-id", || {
             assert!(matches!(load("../settings"), Err(ChatError::BadId(_))));
             assert!(matches!(
-                save("../settings", "/repo", &[], &Value::Null, &[]),
+                save("../settings", "/repo", &[], &Value::Null, &[], None),
                 Err(ChatError::BadId(_))
             ));
         });

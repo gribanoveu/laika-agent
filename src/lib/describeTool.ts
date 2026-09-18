@@ -39,6 +39,7 @@ export const LABELS: Record<string, string> = {
   runCommand: "Bash",
   semanticSearch: "Search",
   skill: "Skill",
+  writePlan: "Plan",
 };
 
 /** A tool this build does not know is shown by its wire name rather than hidden. */
@@ -166,6 +167,18 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         // captured output is authoritative — and shorter, being truncated in
         // the middle rather than cut off wherever the turn ended.
         detail: settled || streamed,
+      };
+    }
+
+    case "writePlan": {
+      // The text is in the arguments; the result only counts its lines.
+      const content = str(args.content) ?? "";
+      const title = content.split("\n").find((line) => line.trim())?.replace(/^#+\s*/, "") ?? "";
+      return {
+        name,
+        arg: title,
+        meta: num(result.lines) === undefined ? undefined : `${num(result.lines)} lines`,
+        detail: content,
       };
     }
 

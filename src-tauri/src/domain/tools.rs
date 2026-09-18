@@ -39,6 +39,7 @@ pub enum ToolName {
     GitStatus,
     SemanticSearch,
     Skill,
+    WritePlan,
 }
 
 impl ToolName {
@@ -61,6 +62,7 @@ impl ToolName {
         ToolName::RunCommand,
         ToolName::SemanticSearch,
         ToolName::Skill,
+        ToolName::WritePlan,
     ];
 
     /// The name the model calls this tool by. Must match what `Serialize`
@@ -83,6 +85,7 @@ impl ToolName {
             ToolName::GitStatus => "gitStatus",
             ToolName::SemanticSearch => "semanticSearch",
             ToolName::Skill => "skill",
+            ToolName::WritePlan => "writePlan",
         }
     }
 
@@ -130,7 +133,9 @@ impl ToolName {
             | ToolName::DeleteDirectory
             | ToolName::Todo
             // A file or two out of the app directory.
-            | ToolName::Skill => 1,
+            | ToolName::Skill
+            // Chat state, like the checklist.
+            | ToolName::WritePlan => 1,
             // A gitignore-aware walk plus a regex over many files.
             ToolName::Grep => 3,
             // Local git2 I/O plus diff/blame compaction.
@@ -191,7 +196,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            16,
+            17,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -601,6 +606,7 @@ pub enum ToolCall {
     RunCommand(crate::domain::command_exec::CommandRequest),
     SemanticSearch(SemanticSearchArgs),
     Skill(SkillArgs),
+    WritePlan(WritePlanArgs),
 }
 
 impl ToolCall {
@@ -622,6 +628,7 @@ impl ToolCall {
             ToolCall::SemanticSearch(_) => ToolName::SemanticSearch,
             ToolCall::RunCommand(_) => ToolName::RunCommand,
             ToolCall::Skill(_) => ToolName::Skill,
+            ToolCall::WritePlan(_) => ToolName::WritePlan,
         }
     }
 
@@ -748,6 +755,16 @@ pub enum ToolResult {
         path: String,
         content: String,
     },
+    /// The plan was replaced. The text is in the call's own arguments.
+    #[serde(rename_all = "camelCase")]
+    PlanWritten { lines: u32 },
+}
+
+/// `writePlan` arguments: the whole plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WritePlanArgs {
+    pub content: String,
 }
 
 /// `skill` arguments: a skill by name, or one of its files.

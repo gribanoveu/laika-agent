@@ -5,7 +5,7 @@
 
 export type ChangedFile = { name: string; add: number; del: number };
 
-export type AsideTab = "changes" | "mcp" | "skills" | "rules" | "files" | "terminal";
+export type AsideTab = "changes" | "plan" | "mcp" | "skills" | "rules" | "files" | "terminal";
 
 export type PanelItem = {
   id: string;

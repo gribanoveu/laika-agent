@@ -182,6 +182,7 @@ export default function App() {
             onNewChat={newChat}
             onCompact={compactNow}
             onImplement={conversation.value === "plan" ? implement : undefined}
+            onOpenPlan={() => openTab("plan")}
           />
           <Composer
             onSend={send}
@@ -213,6 +214,11 @@ export default function App() {
           rules={rules.rules}
           rulesError={rules.error}
           onRuleToggle={rules.setEnabled}
+          plan={agent.plan}
+          checklist={agent.checklist}
+          onPlanEdit={agent.editPlan}
+          onImplement={conversation.value === "plan" ? implement : undefined}
+          planLocked={agent.turn.status === "running"}
         />
       </div>
 

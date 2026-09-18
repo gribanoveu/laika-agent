@@ -72,11 +72,9 @@ fn base_tools() -> HashSet<ToolName> {
 /// a tool that might. The cost is real and recorded: a plan cannot check
 /// itself against a build.
 ///
-/// `todo` is in `Plan` because a plan is a list of steps, and the checklist is
-/// the plan's list: it is saved with the chat and carries over when the user
-/// hands the plan to Agent mode. Alfa Atlas's separate plan store was not
-/// ported for that reason (`docs/06-port-plan.md`, F-6.6). It changes chat
-/// working memory and nothing on disk.
+/// `todo` and `writePlan` are in `Plan` because a plan is a document and a
+/// list of steps. Both are chat state, saved with the chat, and carry over
+/// when the user hands the plan to Agent mode; neither touches the tree.
 pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
     let mut tools = base_tools();
     match mode {
@@ -90,10 +88,14 @@ pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
                 ToolName::Move,
                 ToolName::Todo,
                 ToolName::RunCommand,
+                ToolName::WritePlan,
             ]);
         }
+        // `writePlan` is chat state, not the working tree: writing the plan
+        // is the one thing Plan mode is for. Agent has it too, so a plan
+        // that meets reality can be corrected where the user reads it.
         ConversationMode::Plan => {
-            tools.insert(ToolName::Todo);
+            tools.extend([ToolName::Todo, ToolName::WritePlan]);
         }
         ConversationMode::Ask => {}
     }
@@ -162,10 +164,12 @@ mod tests {
         assert_eq!(tools(ConversationMode::Agent).len(), ToolName::ALL.len());
     }
 
-    /// A plan is a list of steps, and the checklist is where they go.
+    /// A plan is a document and a list of steps; a question needs neither.
     #[test]
     fn a_plan_can_keep_a_checklist_and_a_question_has_no_use_for_one() {
         assert!(offers(ConversationMode::Plan, ToolName::Todo));
+        assert!(offers(ConversationMode::Plan, ToolName::WritePlan));
+        assert!(!offers(ConversationMode::Ask, ToolName::WritePlan));
         assert!(!offers(ConversationMode::Ask, ToolName::Todo));
     }
 

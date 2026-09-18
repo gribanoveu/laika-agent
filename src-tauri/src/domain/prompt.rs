@@ -134,7 +134,7 @@ You are working out *how* something should be done, and you are not doing it. Re
 
 Nothing that changes the repository is available to you here, and neither is running a command — so do not say you will edit, create, delete or run anything, and do not offer to. If the work is now clear enough to do, say the plan is ready; switching to Agent is the user's move, not yours.
 
-Once the plan is settled, write its steps into the checklist with `todo`, one item per step, in the order they should be done. The checklist carries over when the user hands the plan to Agent mode, and it is what the agent then works through — a step that is only in your prose is a step it has to rediscover.
+Once the plan is settled, write it down with `writePlan` — the user reads it in the Plan tab, may edit it there, and hands it to Agent mode from there. Then put its steps into the checklist with `todo`, one item per step, in the order they should be done: the checklist is what the agent works through, and a step that is only in prose is a step it has to rediscover. In the chat, summarize the plan in a few lines rather than repeating it.
 
 This also means you cannot check your plan against a build or a test run. Where that matters, say which step you would verify first.",
         ConversationMode::Ask => "## This conversation: Ask
@@ -166,6 +166,8 @@ pub struct TurnContext<'a> {
     pub skills: &'a [SkillMeta],
     /// The open folder's `AGENTS.md` and the like, as switched on.
     pub rules: &'a [RuleFile],
+    /// The conversation's plan as the user last left it — possibly edited.
+    pub plan: Option<&'a str>,
 }
 
 /// The varying half: what is true at this moment and nowhere else.
@@ -277,6 +279,21 @@ pub fn rules_block(rules: &[RuleFile]) -> Option<String> {
     Some(text)
 }
 
+/// The plan, or nothing when there is none.
+///
+/// Its own message, after the project's instructions: it changes when the
+/// model rewrites it or the user edits it, not from round to round. Said to
+/// be the current version, edits included, because the model's own
+/// `writePlan` call further up the history is not — and when the two
+/// disagree, the user's edit has to win.
+pub fn plan_block(plan: Option<&str>) -> Option<String> {
+    let plan = plan.map(str::trim).filter(|p| !p.is_empty())?;
+    Some(format!(
+        "## Plan\n\nThe plan for this conversation, as it stands now. The user may have edited it since it was \
+         written; where it differs from an earlier version in the conversation, this one is right.\n\n{plan}"
+    ))
+}
+
 /// What goes in front of the conversation on every request.
 ///
 /// Built here and prepended at request time rather than stored in the history:
@@ -290,6 +307,9 @@ pub fn system_messages(ctx: &TurnContext) -> Vec<LlmMessage> {
     }
     if let Some(rules) = rules_block(ctx.rules) {
         messages.push(LlmMessage::system(rules));
+    }
+    if let Some(plan) = plan_block(ctx.plan) {
+        messages.push(LlmMessage::system(plan));
     }
     messages.push(LlmMessage::system(context_block(ctx)));
     messages
@@ -322,7 +342,34 @@ mod tests {
             unattended: false,
             skills: &[],
             rules: &[],
+            plan: None,
         }
+    }
+
+    #[test]
+    fn the_plan_comes_last_before_the_turn_and_says_it_is_current() {
+        let workspace = PathBuf::from("/tmp/p");
+        let rules = [RuleFile::new("AGENTS.md", "Run cargo test.")];
+        let messages = system_messages(&TurnContext {
+            rules: &rules,
+            plan: Some("# Fix the parser\n\n1. read it"),
+            ..ctx(&workspace, &[])
+        });
+
+        assert_eq!(messages.len(), 5);
+        let text = messages[3].content.as_deref().unwrap();
+        assert!(text.starts_with("## Plan"), "{text}");
+        assert!(text.ends_with("# Fix the parser\n\n1. read it"));
+        assert!(text.contains("this one is right"));
+        assert_eq!(messages[4], LlmMessage::system(context_block(&ctx(&workspace, &[]))));
+    }
+
+    /// A blank document is no plan; a "Plan" heading over nothing invites
+    /// the model to follow one that does not exist.
+    #[test]
+    fn no_plan_or_a_blank_one_no_message() {
+        assert_eq!(plan_block(None), None);
+        assert_eq!(plan_block(Some("  \n ")), None);
     }
 
     #[test]
@@ -506,6 +553,7 @@ mod tests {
             }
         }
         assert!(mode_instructions(ConversationMode::Plan).contains("`todo`"));
+        assert!(mode_instructions(ConversationMode::Plan).contains("`writePlan`"));
     }
 
     /// The narrower modes have to say plainly that they cannot act. An

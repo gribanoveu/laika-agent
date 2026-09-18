@@ -146,9 +146,10 @@ export async function startChat(
   turnId: string,
   messages: LlmMessage[],
   todos: Task[] = [],
+  plan: string | null = null,
 ): Promise<Outcome> {
   requireBackend();
-  return invoke<Outcome>("chat_start", { turnId, messages, todos });
+  return invoke<Outcome>("chat_start", { turnId, messages, todos, plan });
 }
 
 /**
@@ -172,9 +173,10 @@ export async function resumeChat(
   turnId: string,
   checkpoint: Checkpoint,
   decisions: ToolCallDecision[],
+  plan: string | null = null,
 ): Promise<Outcome> {
   requireBackend();
-  return invoke<Outcome>("chat_resume", { turnId, checkpoint, decisions });
+  return invoke<Outcome>("chat_resume", { turnId, checkpoint, decisions, plan });
 }
 
 /** Returns at once; the turn stops at its next checkpoint. */
@@ -380,6 +382,8 @@ export type ChatRecord = {
   messages: LlmMessage[];
   blocks: Block[];
   todos: Task[];
+  /** Absent in chats saved before plans existed. */
+  plan?: string | null;
 };
 
 /** Chats of the open folder, newest first. No folder, no backend: no rows. */
@@ -398,9 +402,10 @@ export async function saveChat(
   messages: LlmMessage[],
   blocks: Block[],
   todos: Task[],
+  plan: string | null = null,
 ): Promise<ChatSummary> {
   requireBackend();
-  return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos });
+  return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos, plan });
 }
 
 export async function deleteChat(id: string): Promise<void> {

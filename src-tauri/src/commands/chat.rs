@@ -173,12 +173,13 @@ pub async fn chat_start<R: Runtime>(
     turn_id: String,
     messages: Vec<LlmMessage>,
     todos: Vec<Task>,
+    plan: Option<String>,
 ) -> Result<ChatStreamOutcome, String> {
     let state = state.inner().clone();
     // A stray stop from a turn that already finished must not end this one
     // before it starts.
     state.cancel.store(false, Ordering::SeqCst);
-    run_off_the_event_loop(app, state, turn_id, move |turn| {
+    run_off_the_event_loop(app, state, turn_id, plan, move |turn| {
         llm_chat::stream(turn, messages, todos)
     })
     .await
@@ -193,9 +194,10 @@ pub async fn chat_resume<R: Runtime>(
     turn_id: String,
     checkpoint: PendingApproval,
     decisions: Vec<ToolCallDecision>,
+    plan: Option<String>,
 ) -> Result<ChatStreamOutcome, String> {
     let state = state.inner().clone();
-    run_off_the_event_loop(app, state, turn_id, move |turn| {
+    run_off_the_event_loop(app, state, turn_id, plan, move |turn| {
         llm_chat::resume(turn, checkpoint, decisions)
     })
     .await
@@ -356,6 +358,7 @@ async fn run_off_the_event_loop<R, F>(
     app: AppHandle<R>,
     state: Arc<AgentState>,
     turn_id: String,
+    plan: Option<String>,
     run: F,
 ) -> Result<ChatStreamOutcome, String>
 where
@@ -396,6 +399,7 @@ where
             skills: &skills,
             rules: &rules,
             log_call: &log_call,
+            plan: plan.as_deref(),
         };
         run(&turn).map_err(|e| e.to_string())
     })

@@ -65,6 +65,10 @@ pub struct ChatRecord {
     /// that fails over a field Rust never uses.
     pub blocks: Value,
     pub todos: Vec<Task>,
+    /// The plan document, as last written or edited. Absent in chats saved
+    /// before plans existed, and in chats that never had one.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 /// A row in the sidebar. Deliberately not the whole record: listing a folder
@@ -167,6 +171,7 @@ mod tests {
             messages: vec![LlmMessage::user("fix the parser")],
             blocks: serde_json::json!([{ "kind": "user", "id": "user:0", "text": "fix the parser" }]),
             todos: Vec::new(),
+            plan: None,
         }
     }
 
@@ -187,6 +192,7 @@ mod tests {
                 "createdAt",
                 "id",
                 "messages",
+                "plan",
                 "schemaVersion",
                 "title",
                 "todos",
@@ -195,6 +201,16 @@ mod tests {
             ]
         );
         assert_eq!(object["schemaVersion"], 1);
+    }
+
+    /// Chats saved before plans existed have no `plan` key, and must still
+    /// open — as chats without a plan.
+    #[test]
+    fn a_chat_saved_before_plans_opens_without_one() {
+        let mut value = serde_json::to_value(record()).unwrap();
+        value.as_object_mut().unwrap().remove("plan");
+        let loaded: ChatRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(loaded.plan, None);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { writtenPlan } from "../lib/plan";
 import {
   cancelChat,
   compactHistory,
@@ -48,6 +49,21 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   const [context, setContext] = useState<ContextUsage | null>(null);
   const history = useRef<LlmMessage[]>([]);
   const todos = useRef<Task[]>([]);
+  // The checklist and the plan, as state as well as refs: the Plan tab shows
+  // them, and the callbacks below need the current value without re-binding.
+  const [checklist, setChecklist] = useState<Task[]>([]);
+  const [plan, setPlanState] = useState<string | null>(null);
+  const planRef = useRef<string | null>(null);
+  // Where the running turn's blocks begin — what `writtenPlan` looks at.
+  const turnStart = useRef(0);
+  const keepPlan = useCallback((next: string | null) => {
+    planRef.current = next;
+    setPlanState(next);
+  }, []);
+  const keepTodos = useCallback((next: Task[]) => {
+    todos.current = next;
+    setChecklist(next);
+  }, []);
   // Set when something happened that is worth writing down. Without it,
   // *opening* a chat would save it straight back and push it to the top of
   // the sidebar for having been read.
@@ -68,7 +84,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   const finish = useCallback((outcome: Awaited<ReturnType<typeof startChat>>) => {
     setTurn((state) => acceptOutcome(state, outcome));
     if (outcome.status !== "pendingApproval") {
-      todos.current = outcome.value.todos;
+      keepTodos(outcome.value.todos);
       // The assistant's answer joins the history, so the next turn sees it.
       if (outcome.value.text) {
         history.current = [
@@ -79,7 +95,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       subscribed.current?.();
       subscribed.current = null;
     }
-  }, []);
+  }, [keepTodos]);
 
   // Saved once the turn has come to rest, from the render that has the last
   // block in it — which is why this is an effect and not the tail of `finish`,
@@ -89,12 +105,14 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     if (turn.status !== "done" && turn.status !== "cancelled") return;
     unsaved.current = false;
 
+    const written = writtenPlan(turn.blocks.slice(turnStart.current));
+    if (written !== null) keepPlan(written);
     const id = chatId ?? crypto.randomUUID();
     setChatId(id);
-    saveChat(id, history.current, turn.blocks, todos.current)
+    saveChat(id, history.current, turn.blocks, todos.current, written ?? planRef.current)
       .then(() => onSaved?.())
       .catch((e) => setError(String(e)));
-  }, [turn.status, turn.blocks, chatId, onSaved]);
+  }, [turn.status, turn.blocks, chatId, onSaved, keepPlan]);
 
   const refreshContext = useCallback(() => {
     contextUsage(history.current)
@@ -156,6 +174,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
 
       setError(null);
       unsaved.current = true;
+      turnStart.current = turn.blocks.length;
       setTurn((state) => appendUserMessage(state, trimmed));
       history.current = [...history.current, { role: "user", content: trimmed }];
       // Before the turn, so the room is made once and kept — a turn that
@@ -165,13 +184,13 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       const id = `turn-${++turnId.current}`;
       try {
         await listen(id);
-        finish(await startChat(id, history.current, todos.current));
+        finish(await startChat(id, history.current, todos.current, planRef.current));
       } catch (e) {
         setError(String(e));
         setTurn((state) => ({ ...state, status: "done" }));
       }
     },
-    [turn.status, listen, finish, makeRoom],
+    [turn.status, turn.blocks.length, listen, finish, makeRoom],
   );
 
   /** Answers the approval card. `always` widens the policy before continuing. */
@@ -184,7 +203,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       const id = `turn-${turnId.current}`;
       try {
         for (const tool of always) await alwaysAllow(tool);
-        finish(await resumeChat(id, checkpoint, decisions));
+        finish(await resumeChat(id, checkpoint, decisions, planRef.current));
       } catch (e) {
         setError(String(e));
         setTurn((state) => ({ ...state, status: "done" }));
@@ -204,7 +223,8 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       subscribed.current?.();
       subscribed.current = null;
       history.current = record.messages;
-      todos.current = record.todos;
+      keepTodos(record.todos);
+      keepPlan(record.plan ?? null);
       unsaved.current = false;
       setChatId(record.id);
       setError(null);
@@ -212,19 +232,49 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [keepTodos, keepPlan]);
 
   /** Starts over. What was said is already on disk; this only stops pointing at it. */
   const reset = useCallback(() => {
     subscribed.current?.();
     subscribed.current = null;
     history.current = [];
-    todos.current = [];
+    keepTodos([]);
+    keepPlan(null);
     unsaved.current = false;
     setChatId(null);
     setError(null);
     setTurn(emptyTurn());
-  }, []);
+  }, [keepTodos, keepPlan]);
 
-  return { turn, chatId, error, context, send, decide, cancel, open, reset, compact: makeRoom };
+  /**
+   * The user's own edit to the plan. Saved at once when the chat exists —
+   * the next turn is sent this version, and so is the file. A plan typed
+   * into a chat that has not started yet is saved with its first turn.
+   */
+  const editPlan = useCallback(
+    (next: string) => {
+      const value = next.trim() ? next : null;
+      keepPlan(value);
+      if (!chatId || turn.status === "running") return;
+      saveChat(chatId, history.current, turn.blocks, todos.current, value).catch((e) => setError(String(e)));
+    },
+    [chatId, turn.status, turn.blocks, keepPlan],
+  );
+
+  return {
+    turn,
+    chatId,
+    error,
+    context,
+    send,
+    decide,
+    cancel,
+    open,
+    reset,
+    compact: makeRoom,
+    plan,
+    editPlan,
+    checklist,
+  };
 }

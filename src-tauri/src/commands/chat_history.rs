@@ -40,6 +40,7 @@ pub fn chat_save(
     messages: Vec<LlmMessage>,
     blocks: Value,
     todos: Vec<Task>,
+    plan: Option<String>,
 ) -> Result<ChatSummary, String> {
     let workspace = state.workspace()?;
     chat_store::save(
@@ -48,6 +49,7 @@ pub fn chat_save(
         &messages,
         &blocks,
         &todos,
+        plan.as_deref(),
     )
     .map_err(|e| e.to_string())
 }

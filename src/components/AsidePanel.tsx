@@ -1,5 +1,6 @@
 import {
   BookText,
+  ClipboardList,
   FolderClosed,
   PanelRight,
   Plug,
@@ -9,12 +10,14 @@ import {
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
-import type { RuleListItem, SkillsView } from "../lib/chat";
+import { PlanPanel } from "./PlanPanel";
+import type { RuleListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
 const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
   { id: "changes", label: "Changes", icon: Table2 },
+  { id: "plan", label: "Plan", icon: ClipboardList },
   { id: "mcp", label: "MCP", icon: Plug },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "rules", label: "Rules", icon: BookText },
@@ -38,6 +41,11 @@ type Props = {
   rules: RuleListItem[];
   rulesError: string | null;
   onRuleToggle: (path: string, enabled: boolean) => void;
+  plan: string | null;
+  checklist: Task[];
+  onPlanEdit: (plan: string) => void;
+  onImplement?: () => void;
+  planLocked: boolean;
 };
 
 /** Shown whole on expand: what the model is told is worth reading. The switch is keyed by path. */
@@ -103,6 +111,11 @@ export function AsidePanel({
   rules,
   rulesError,
   onRuleToggle,
+  plan,
+  checklist,
+  onPlanEdit,
+  onImplement,
+  planLocked,
 }: Props) {
   const ruleList = ruleItems(rules);
   const skillList = skillItems(skills);
@@ -154,6 +167,15 @@ export function AsidePanel({
       <div className="aside-body">
         <div className="tabpanel" role="tabpanel">
           {tab === "changes" && <ChangesPanel onNotify={onNotify} />}
+          {tab === "plan" && (
+            <PlanPanel
+              plan={plan}
+              checklist={checklist}
+              onEdit={onPlanEdit}
+              onImplement={onImplement}
+              locked={planLocked}
+            />
+          )}
           {tab === "mcp" && (
             <ItemList
               label="Connected servers"

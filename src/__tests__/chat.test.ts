@@ -55,10 +55,10 @@ describe("command wrappers", () => {
     invokeResult = { status: "done", value: { text: "hi", truncated: false, todos: [] } };
     const messages = [{ role: "user" as const, content: "go" }];
 
-    const outcome = await chat.startChat("turn-1", messages);
+    const outcome = await chat.startChat("turn-1", messages, [], "# Plan");
 
     expect(calls).toEqual([
-      { command: "chat_start", args: { turnId: "turn-1", messages, todos: [] } },
+      { command: "chat_start", args: { turnId: "turn-1", messages, todos: [], plan: "# Plan" } },
     ]);
     expect(outcome.status).toBe("done");
   });
@@ -75,7 +75,7 @@ describe("command wrappers", () => {
     };
     invokeResult = { status: "done", value: { text: "", truncated: false, todos: [] } };
 
-    await chat.resumeChat("turn-1", checkpoint, [{ id: "w1", approved: true }]);
+    await chat.resumeChat("turn-1", checkpoint, [{ id: "w1", approved: true }], "# Plan");
 
     // Every field, including the ones this side never reads: dropping one is a
     // reset round ceiling or a write refused for never having read the file.
@@ -83,6 +83,7 @@ describe("command wrappers", () => {
       turnId: "turn-1",
       checkpoint,
       decisions: [{ id: "w1", approved: true }],
+      plan: "# Plan",
     });
   });
 
@@ -161,15 +162,15 @@ describe("compaction", () => {
 });
 
 describe("saved chats", () => {
-  test("a chat is saved under its id, with both lists", async () => {
+  test("a chat is saved under its id, with both lists and the plan", async () => {
     invokeResult = { id: "c1", title: "fix the parser", updatedAt: 7 };
     const messages = [{ role: "user" as const, content: "fix the parser" }];
     const blocks = [{ kind: "user" as const, id: "user:0", text: "fix the parser" }];
 
-    const summary = await chat.saveChat("c1", messages, blocks, []);
+    const summary = await chat.saveChat("c1", messages, blocks, [], null);
 
     expect(calls).toEqual([
-      { command: "chat_save", args: { id: "c1", messages, blocks, todos: [] } },
+      { command: "chat_save", args: { id: "c1", messages, blocks, todos: [], plan: null } },
     ]);
     expect(summary.title).toBe("fix the parser");
   });

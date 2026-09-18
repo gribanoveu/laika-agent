@@ -182,6 +182,10 @@ pub struct Turn<'a> {
     /// a turn under test never touches whatever app directory another test
     /// has installed.
     pub log_call: &'a dyn Fn(ToolCallLogEntry),
+    /// The chat's plan as the window holds it — the user's edits included.
+    /// Read at the start of the turn: a `writePlan` in this turn reaches the
+    /// model through its own call in the history until the next one.
+    pub plan: Option<&'a str>,
 }
 
 
@@ -746,6 +750,7 @@ fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) ->
         unattended: turn.approval.skip_all,
         skills: turn.skills,
         rules: turn.rules,
+        plan: turn.plan,
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
@@ -1109,6 +1114,7 @@ mod tests {
         skills: Vec<SkillMeta>,
         rules: Vec<RuleFile>,
         logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
+        plan: Option<String>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1146,6 +1152,7 @@ mod tests {
             skills: Vec::new(),
             rules: Vec::new(),
             logged: Arc::new(Mutex::new(Vec::new())),
+            plan: None,
         }
     }
 
@@ -1189,6 +1196,7 @@ mod tests {
                 skills: &self.skills,
                 rules: &self.rules,
                 log_call: &log_call,
+                plan: self.plan.as_deref(),
             };
             f(&turn)
         }
@@ -2518,6 +2526,21 @@ mod tests {
             assert!(told[0].contains("Bump the version."), "{told:?}");
             assert_requests_list_release(requests);
         });
+    }
+
+    #[test]
+    fn every_request_carries_the_plan_as_the_window_holds_it() {
+        let mut h = harness("turn-plan", vec![asks(vec![wants("r1", "listFiles", r#"{"path":"."}"#)]), text("done")]);
+        h.plan = Some("# Fix\n\n1. edited by the user".into());
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        for request in h.provider.requests() {
+            assert!(
+                request.messages.iter().any(|m| m.content.as_deref().is_some_and(|c| c.contains("1. edited by the user"))),
+                "a request went out without the plan"
+            );
+        }
     }
 
     #[test]
