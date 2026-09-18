@@ -59,6 +59,16 @@ tree-sitter-python = "0.25"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 pulldown-cmark = { version = "0.13", default-features = false }
+# The `fancy-regex` feature of model2vec-rs forwards not only tokenizers' own
+# `fancy-regex` but also `esaxx_fast`, which turns on `esaxx-rs/cpp`, whose
+# build.rs compiles C++ with a hard-coded `.static_crt(true)` (/MT). Everything
+# else on MSVC links /MD, and the Windows build fails with
+# `LNK2038: mismatch detected for 'RuntimeLibrary'`. So tokenizers is declared
+# here directly with the same features minus `esaxx_fast`: that one only speeds
+# up *training* a Unigram tokenizer, and this is inference only.
+# `local-only` drops hf-hub and its HTTP client: the weights ship with the app.
+model2vec-rs = { version = "0.2.1", default-features = false, features = ["local-only"] }
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex", "progressbar"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

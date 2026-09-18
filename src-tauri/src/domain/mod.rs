@@ -8,6 +8,7 @@ pub mod command_exec;
 pub mod chat_record;
 pub mod compaction;
 pub mod conversation_mode;
+pub mod embeddings;
 pub mod prompt;
 pub mod chunk_index;
 pub mod repo_index;

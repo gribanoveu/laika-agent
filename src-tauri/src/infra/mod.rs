@@ -9,6 +9,7 @@ pub mod llm_credentials_store;
 pub mod llm_debug_log;
 pub mod index_store;
 pub mod language_indexers;
+pub mod local_embeddings;
 pub mod process_runner;
 pub mod repository_identity;
 pub mod chat_store;

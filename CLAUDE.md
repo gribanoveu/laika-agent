@@ -66,6 +66,7 @@ picking another, and `tauri dev` then fails with a blank window.
 ## Build notes
 
 - `scripts/clean-build-cache.sh` reclaims Rust target space.
-- `scripts/embedding-model.md` describes the bundled local embedding model. Neither the
-  model nor its build script is in this repository yet — both arrive with the index
-  layer (stage 5 of the port plan).
+- `scripts/embedding-model.md` describes the bundled local embedding model: its cost,
+  how to rebuild it with `scripts/build-embedding-model.py`, and what to check after.
+  The weights are Git LFS objects — `git lfs pull` after a clone, or the model tests
+  fail with a message saying so.
