@@ -11,7 +11,7 @@ import {
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
 import { PlanPanel } from "./PlanPanel";
-import type { RuleListItem, SkillsView, Task } from "../lib/chat";
+import type { McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -26,7 +26,6 @@ const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
 ];
 
 // Each list is filled by its own command wrapper once that command exists.
-const MCP_SERVERS: PanelItem[] = [];
 const WORKSPACE_FILES: string[] = [];
 
 type Props = {
@@ -35,6 +34,11 @@ type Props = {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onNotify: (msg: string) => void;
+  mcp: McpView | null;
+  mcpError: string | null;
+  onMcpToggle: (name: string, enabled: boolean) => void;
+  /** Opens the configuration editor. */
+  onMcpEdit: () => void;
   skills: SkillsView | null;
   skillsError: string | null;
   onSkillToggle: (name: string, enabled: boolean) => void;
@@ -75,6 +79,30 @@ function ruleItems(rules: RuleListItem[]): PanelItem[] {
   );
 }
 
+/** A server that cannot start says why and has no switch, like a broken skill. */
+function mcpItems(view: McpView | null): PanelItem[] {
+  return (view?.servers ?? []).map((server) =>
+    server.error
+      ? {
+          id: server.name,
+          badge: "!",
+          kind: "mcp",
+          title: server.name,
+          status: { label: "won't start", tone: "warn" },
+          desc: server.error,
+          source: server.command || undefined,
+        }
+      : {
+          id: server.name,
+          badge: server.name.slice(0, 2).toUpperCase(),
+          kind: "mcp",
+          title: server.name,
+          desc: server.command,
+          enabled: server.enabled,
+        },
+  );
+}
+
 /** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
 function skillItems(view: SkillsView | null): PanelItem[] {
   return (view?.skills ?? []).map((skill) =>
@@ -105,6 +133,10 @@ export function AsidePanel({
   collapsed,
   onToggleCollapse,
   onNotify,
+  mcp,
+  mcpError,
+  onMcpToggle,
+  onMcpEdit,
   skills,
   skillsError,
   onSkillToggle,
@@ -118,6 +150,7 @@ export function AsidePanel({
   planLocked,
 }: Props) {
   const ruleList = ruleItems(rules);
+  const mcpList = mcpItems(mcp);
   const skillList = skillItems(skills);
   return (
     <aside className="aside">
@@ -177,14 +210,18 @@ export function AsidePanel({
             />
           )}
           {tab === "mcp" && (
-            <ItemList
-              label="Connected servers"
-              count={String(MCP_SERVERS.length)}
-              items={MCP_SERVERS}
-              emptyLabel="No MCP servers connected."
-              addLabel="Add MCP server"
-              onAdd={() => onNotify("MCP setup is not wired yet")}
-            />
+            <>
+              <ItemList
+                label="Servers"
+                count={`${mcpList.filter((s) => s.enabled).length}/${mcpList.length}`}
+                items={mcpList}
+                emptyLabel="No MCP servers configured."
+                addLabel={mcpList.length ? "Edit servers" : "Add MCP server"}
+                onAdd={onMcpEdit}
+                onToggle={onMcpToggle}
+              />
+              {mcpError && <div className="empty">{mcpError}</div>}
+            </>
           )}
           {tab === "skills" && (
             <>

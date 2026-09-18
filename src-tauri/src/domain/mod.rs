@@ -18,3 +18,4 @@ pub mod code_search;
 pub mod skills;
 pub mod project_rules;
 pub mod tool_call_log;
+pub mod mcp;

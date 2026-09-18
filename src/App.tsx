@@ -6,6 +6,7 @@ import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { ToolLog } from "./components/ToolLog";
+import { McpConfig } from "./components/McpConfig";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
@@ -16,6 +17,7 @@ import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
 import { useSkills } from "./hooks/useSkills";
+import { useMcp } from "./hooks/useMcp";
 import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
@@ -47,6 +49,7 @@ export default function App() {
   const [tab, setTab] = useState<AsideTab>("changes");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [mcpEditing, setMcpEditing] = useState(false);
   // What the agent may do this turn, and whether anyone is asked before it
   // does it. Two chips, two questions — and both are enforced on the backend,
   // so these hold only what the chips read back.
@@ -56,6 +59,7 @@ export default function App() {
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
   const skills = useSkills(tab === "skills" && !asideCollapsed);
+  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing);
   const rules = useRules(tab === "rules" && !asideCollapsed, workspace.path);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
@@ -208,6 +212,10 @@ export default function App() {
           collapsed={asideCollapsed}
           onToggleCollapse={() => setAsideCollapsed((v) => !v)}
           onNotify={toast.show}
+          mcp={mcp.view}
+          mcpError={mcpEditing ? null : mcp.error}
+          onMcpToggle={mcp.setEnabled}
+          onMcpEdit={() => setMcpEditing(true)}
           skills={skills.view}
           skillsError={skills.error}
           onSkillToggle={skills.setEnabled}
@@ -285,6 +293,10 @@ export default function App() {
           onToggle={toolLog.toggle}
           error={toolLog.error}
         />
+      </Modal>
+
+      <Modal title="MCP servers" open={mcpEditing} onClose={() => setMcpEditing(false)}>
+        <McpConfig view={mcp.view} error={mcp.error} onSave={mcp.save} onClose={() => setMcpEditing(false)} />
       </Modal>
 
       <Toast message={toast.message} />

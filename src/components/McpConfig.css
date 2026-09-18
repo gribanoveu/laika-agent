@@ -1,0 +1,24 @@
+.mcp-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mcp-config-text {
+  min-height: 20em;
+  resize: vertical;
+  background: var(--bg-panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  padding: 8px 10px;
+}
+.mcp-config-error {
+  color: var(--red);
+}
+.mcp-config-actions {
+  display: flex;
+  gap: 6px;
+}

@@ -443,6 +443,29 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
   return invoke<void>("skills_set_enabled", { name, enabled });
 }
 
+// ---------------------------------------------------------------- MCP servers
+
+/** Mirrors `domain::mcp::McpServerItem`. `error` is why it will not start, when the entry alone says. */
+export type McpServerItem = { name: string; command: string; enabled: boolean; error: string | null };
+/** The file (`text`, for the editor), where it is, and its servers as rows. */
+export type McpView = { path: string; text: string; servers: McpServerItem[] };
+
+export async function mcpConfig(): Promise<McpView> {
+  if (!inTauri()) return { path: "", text: "", servers: [] };
+  return invoke<McpView>("mcp_config_get");
+}
+
+/** Refused, and the file left alone, when the text is not a valid `mcpServers` config. */
+export async function saveMcpConfig(text: string): Promise<McpView> {
+  requireBackend();
+  return invoke<McpView>("mcp_config_save", { text });
+}
+
+export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<McpView> {
+  requireBackend();
+  return invoke<McpView>("mcp_server_set_enabled", { name, enabled });
+}
+
 // ---------------------------------------------------------------- project rules
 
 /** An instruction file at the open folder's root. `error` when it cannot be sent; then it has no switch. */
