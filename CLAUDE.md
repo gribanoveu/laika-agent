@@ -44,6 +44,14 @@ cd src-tauri && cargo test              # all
 cd src-tauri && cargo test resolve      # by name substring
 ```
 
+Search quality has its own bench, ignored by default because it indexes real
+repositories (`src-tauri/bench/search-queries.json` lists them and the questions).
+Run it after touching ranking in `services/code_search.rs`:
+
+```bash
+cd src-tauri && cargo test --release search_bench -- --ignored --nocapture
+```
+
 ## Checks before done
 
 ```bash

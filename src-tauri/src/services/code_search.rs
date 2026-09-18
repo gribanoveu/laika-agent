@@ -8,18 +8,20 @@
 //! that" are different evidence, and a chunk carrying both beats one carrying
 //! either.
 //!
-//! Upstream also matched name stems (`notifications` → `NotificationService`)
-//! and path segments. Not ported: the full-text index already weighs chunk
-//! names four to one and matches prefixes, which covers the stem case, and a
-//! file name is `listFiles`' question. The quality measurement (F-5.13c)
-//! decides whether either comes back.
+//! The constants below were set by the quality bench (F-5.13c,
+//! `services/search_bench.rs`, 67 questions over three repositories), not by
+//! taste; `docs/06-port-plan.md` has the numbers. Upstream's stem tier is not
+//! ported — the full-text index matches prefixes and weighs chunk names four
+//! to one. Its path tier came back as [`PATH_BOOST`].
 
 use std::collections::{HashMap, HashSet};
 
-use crate::domain::chunk_index::ChunkId;
+use crate::domain::chunk_index::{ChunkId, ChunkMetadata};
 use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchMeta};
+use crate::domain::repo_index::Language;
 use crate::domain::search_query::{
-    SearchMetaInput, extract_search_tokens, fts5_query, looks_like_identifier, weak_search_hint,
+    SearchMetaInput, extract_search_tokens, fts5_query, looks_like_identifier, path_segment_matches,
+    weak_search_hint,
 };
 use crate::infra::index_store::IndexStoreError;
 use crate::services::chunk_text::resolve_chunk;
@@ -33,10 +35,26 @@ pub const MAX_TOP_K: usize = 50;
 /// without slack, ten asked for could come back as seven.
 const CANDIDATES_PER_MATCH: usize = 2;
 
-/// Reciprocal-rank fusion's smoothing constant, the value it was published
-/// with: large enough that rank 1 against rank 2 does not drown out a second
-/// list's opinion, small enough that being ranked at all still counts.
-const RRF_K: f32 = 60.0;
+/// Reciprocal-rank fusion's smoothing constant. Small: being first by one
+/// measure outweighs being sixth by both. The published 60 did the opposite —
+/// a long Russian design document, middling on words *and* on meaning,
+/// outranked the function that was first by meaning, and MRR fell below words
+/// alone (0.437 against 0.494).
+const RRF_K: f32 = 3.0;
+
+/// How much more a rank by words counts than the same rank by meaning. A
+/// static model is a blunt instrument next to an exact word; it earns its
+/// place on questions whose words the code does not use.
+const LEXICAL_WEIGHT: f32 = 1.5;
+
+/// Prose — Markdown, AsciiDoc, plain text — is long, and long text shares a
+/// few words and a general drift with most questions. Scaled down, not out:
+/// harder than this and questions answered by documentation lose.
+const PROSE_FACTOR: f32 = 0.75;
+
+/// A query word in a file's path (`controller` → `DocumentController.java`)
+/// says what the file is about better than any one passage of it.
+const PATH_BOOST: f32 = 1.5;
 
 /// `fts`, when given, is what the word ranking searches instead of `query` —
 /// unless it has no searchable word in it, in which case `query` is: a model
@@ -50,11 +68,11 @@ pub fn search(
     let top_k = top_k.clamp(1, MAX_TOP_K);
     let store = indexer.store();
     let tokens = extract_search_tokens(query);
-    let mut ranked: Vec<(ChunkId, MatchSource)> = Vec::new();
+    let mut ranked: Vec<(ChunkMetadata, MatchSource)> = Vec::new();
 
     for name in names_in(query, &tokens) {
         for id in store.chunks_declaring(&name, top_k)? {
-            ranked.push((id, MatchSource::Symbol));
+            ranked.extend(store.load_chunk(&id)?.map(|chunk| (chunk, MatchSource::Symbol)));
         }
     }
 
@@ -80,18 +98,28 @@ pub fn search(
         unavailable = indexer.status().embedding_error;
     }
     // Semantic first: a chunk both found is labelled by the more telling one.
-    ranked.extend(fuse_rrf([(semantic, MatchSource::Semantic), (lexical, MatchSource::Lexical)]));
+    let mut fused = Vec::new();
+    for (id, score, source) in
+        fuse_rrf([(semantic, MatchSource::Semantic, 1.0), (lexical, MatchSource::Lexical, LEXICAL_WEIGHT)])
+    {
+        if let Some(chunk) = store.load_chunk(&id)? {
+            let score = score * weight(&chunk, &tokens);
+            fused.push((chunk, score, source));
+        }
+    }
+    // Stable: equal scores keep the order fusion gave them.
+    fused.sort_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.extend(fused.into_iter().map(|(chunk, _, source)| (chunk, source)));
 
     let mut seen = HashSet::new();
     let mut matches = Vec::with_capacity(top_k);
-    for (id, source) in ranked {
+    for (chunk, source) in ranked {
         if matches.len() == top_k {
             break;
         }
-        if !seen.insert(id.clone()) {
+        if !seen.insert(chunk.id.clone()) {
             continue;
         }
-        let Some(chunk) = store.load_chunk(&id)? else { continue };
         // Changed on disk since it was indexed: the watcher is on its way.
         let Ok(resolved) = resolve_chunk(indexer.root(), &chunk) else { continue };
         matches.push(CodeMatch {
@@ -136,22 +164,31 @@ fn names_in(query: &str, tokens: &[String]) -> Vec<String> {
     names
 }
 
-/// Merges rankings by `Σ 1 / (K + rank)` over the lists that hold a chunk.
+/// What a chunk's fused score is multiplied by, for what it is rather than
+/// what it says.
+fn weight(chunk: &ChunkMetadata, tokens: &[String]) -> f32 {
+    let prose = matches!(chunk.language, Language::Markdown | Language::PlainText);
+    let named = tokens.iter().any(|token| path_segment_matches(&chunk.file_id.0, token));
+    (if prose { PROSE_FACTOR } else { 1.0 }) * (if named { PATH_BOOST } else { 1.0 })
+}
+
+/// Merges rankings by `Σ weight / (K + rank)` over the lists that hold a
+/// chunk, best first.
 ///
 /// Rank, not score: cosine similarity and BM25 measure incomparable things,
 /// and no fixed factor makes them commensurable across queries. A chunk keeps
 /// the source of the first list it is in; ties go to the earlier list.
-fn fuse_rrf<const N: usize>(lists: [(Vec<ChunkId>, MatchSource); N]) -> Vec<(ChunkId, MatchSource)> {
+fn fuse_rrf<const N: usize>(lists: [(Vec<ChunkId>, MatchSource, f32); N]) -> Vec<(ChunkId, f32, MatchSource)> {
     let mut fused: HashMap<ChunkId, (f32, (usize, usize), MatchSource)> = HashMap::new();
-    for (order, (list, source)) in lists.into_iter().enumerate() {
+    for (order, (list, source, weight)) in lists.into_iter().enumerate() {
         for (rank, id) in list.into_iter().enumerate() {
-            let contribution = 1.0 / (RRF_K + rank as f32 + 1.0);
+            let contribution = weight / (RRF_K + rank as f32 + 1.0);
             fused.entry(id).and_modify(|entry| entry.0 += contribution).or_insert((contribution, (order, rank), source));
         }
     }
     let mut out: Vec<_> = fused.into_iter().collect();
     out.sort_by(|(_, a), (_, b)| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    out.into_iter().map(|(id, (_, _, source))| (id, source)).collect()
+    out.into_iter().map(|(id, (score, _, source))| (id, score, source)).collect()
 }
 
 #[cfg(test)]
@@ -279,11 +316,12 @@ mod tests {
     fn fusion_ranks_agreement_first_and_keeps_the_first_lists_label() {
         let id = |s: &str| ChunkId(s.into());
         let fused = fuse_rrf([
-            (vec![id("a"), id("b")], MatchSource::Semantic),
-            (vec![id("b"), id("c")], MatchSource::Lexical),
+            (vec![id("a"), id("b")], MatchSource::Semantic, 1.0),
+            (vec![id("b"), id("c")], MatchSource::Lexical, 1.0),
         ]);
+        let order: Vec<_> = fused.into_iter().map(|(id, _, source)| (id, source)).collect();
         assert_eq!(
-            fused,
+            order,
             [(id("b"), MatchSource::Semantic), (id("a"), MatchSource::Semantic), (id("c"), MatchSource::Lexical)]
         );
     }
@@ -292,9 +330,83 @@ mod tests {
     fn ties_go_to_the_earlier_list() {
         let id = |s: &str| ChunkId(s.into());
         for _ in 0..20 {
-            let fused = fuse_rrf([(vec![id("z")], MatchSource::Semantic), (vec![id("a")], MatchSource::Lexical)]);
+            let fused =
+                fuse_rrf([(vec![id("z")], MatchSource::Semantic, 1.0), (vec![id("a")], MatchSource::Lexical, 1.0)]);
             assert_eq!(fused[0].0, id("z"));
         }
+    }
+
+    /// First by one measure beats sixth by both — the case the published
+    /// K of 60 got wrong.
+    #[test]
+    fn a_first_place_outweighs_two_middling_ones() {
+        let id = |s: &str| ChunkId(s.into());
+        let filler = |p: &str| (0..5).map(|i| id(&format!("{p}{i}"))).collect::<Vec<_>>();
+        let mut meaning = vec![id("top")];
+        meaning.extend(filler("m"));
+        meaning.push(id("both"));
+        let mut words = filler("w");
+        words.push(id("both"));
+
+        let fused = fuse_rrf([(meaning, MatchSource::Semantic, 1.0), (words, MatchSource::Lexical, 1.0)]);
+
+        assert_eq!(fused[0].0, id("top"));
+    }
+
+    /// Each is first by one measure and second by the other: words win.
+    #[test]
+    fn a_first_place_by_words_outweighs_one_by_meaning() {
+        let indexer = indexed(
+            "search-words-weigh",
+            &[("x.rs", "fn x() {\n    wheel(wheel, wheel);\n}\n"), ("y.rs", "fn y() {\n    car(wheel);\n}\n")],
+            Arc::default(),
+        );
+        let meaning = indexer.search_meaning("automobile wheel", 2).unwrap();
+        assert_eq!(indexer.store().load_chunk(&meaning[0].0).unwrap().unwrap().file_id.0, "y.rs", "set-up");
+
+        let result = search(&indexer, "automobile wheel", None, 2).unwrap();
+
+        assert_eq!(result.matches[0].path, "x.rs", "{:?}", summary(&result));
+    }
+
+    /// Prose — Markdown or anything read as plain text — that matches as well
+    /// as the code, or a little better, is listed after it.
+    #[test]
+    fn prose_gives_way_to_code_that_matches_as_well() {
+        for notes in ["notes.md", "notes.adoc"] {
+            let indexer = indexed(
+                "search-prose",
+                &[(notes, "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    widget(gear);\n}\n")],
+                Arc::default(),
+            );
+            let result = search(&indexer, "widget gear", None, 2).unwrap();
+            assert_eq!(result.matches[0].path, "turn.rs", "{notes}: {:?}", summary(&result));
+        }
+    }
+
+    /// Scaled down, not out: prose that is the answer by every measure stays
+    /// above code found only by a vague likeness.
+    #[test]
+    fn prose_that_matches_far_better_still_comes_first() {
+        let indexer = indexed(
+            "search-prose-wins",
+            &[("notes.md", "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    spin();\n}\n")],
+            Arc::default(),
+        );
+        let result = search(&indexer, "widget gear", None, 2).unwrap();
+        assert_eq!(result.matches[0].path, "notes.md", "{:?}", summary(&result));
+    }
+
+    /// A query word naming the file lifts it over a closer match elsewhere.
+    #[test]
+    fn a_query_word_in_the_path_lifts_the_file() {
+        let indexer = indexed(
+            "search-path",
+            &[("other.rs", "fn run() {\n    gear(gear);\n}\n"), ("widget.rs", "fn run() {\n    gear();\n}\n")],
+            Arc::default(),
+        );
+        let result = search(&indexer, "widget gear", None, 2).unwrap();
+        assert_eq!(result.matches[0].path, "widget.rs", "{:?}", summary(&result));
     }
 
     // ------------------------------------------------------------ limits

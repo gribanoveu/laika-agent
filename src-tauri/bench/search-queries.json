@@ -1,0 +1,825 @@
+{
+  "about": "Questions with known answers for the code-search quality bench (services/search_bench.rs). `expect` lists acceptable answers: a file, and optionally the declaration (a substring of the chunk's qualified name). Answers were checked by reading the code. Repositories not found on disk are skipped. Questions marked `\"answer\": \"docs\"` are answered by documentation, so that a ranking which buries prose is caught.",
+  "repos": [
+    {
+      "name": "atlas-desktop",
+      "root": "..",
+      "queries": [
+        {
+          "lang": "en",
+          "q": "debounce file system events so a burst of saves triggers one reindex",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/file_watcher.rs",
+              "name": "dispatch"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "задержка переиндексации после серии сохранений файла",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/file_watcher.rs",
+              "name": "dispatch"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "kill the whole process tree when a command times out",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/process_runner.rs",
+              "name": "kill_tree"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "убить дочерние процессы команды по таймауту",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/process_runner.rs",
+              "name": "kill_tree"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "merge keyword and vector search rankings into one list",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/code_search.rs",
+              "name": "fuse_rrf"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "unload the embedding model when it has been idle",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/local_embeddings.rs",
+              "name": "IdleCell"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "выгрузить модель эмбеддингов из памяти при простое",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/local_embeddings.rs",
+              "name": "IdleCell"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "fall back to a file when the system keychain is not usable",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/master_key.rs",
+              "name": "load_or_create"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "где хранится мастер-ключ если связка ключей недоступна",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/master_key.rs",
+              "name": "load_or_create"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "refuse to overwrite a file that changed on disk after the agent read it",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/tools.rs",
+              "name": "ReadFiles"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "запретить запись в файл, изменившийся после чтения",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/tools.rs",
+              "name": "ReadFiles"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "the text to replace must match exactly once in the file",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/ai_tools/tools/edit_file.rs",
+              "name": "find_unique"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "decide when the conversation should be compacted",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/compaction.rs",
+              "name": "should_compact"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "сжатие истории разговора при переполнении контекста",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/compaction.rs"
+            },
+            {
+              "path": "src-tauri/src/services/context_compaction.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "recognize a provider error saying the context length was exceeded",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/compaction.rs",
+              "name": "is_context_length_error"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "how long to wait before retrying a rate limited request",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/llm_retry.rs",
+              "name": "retry_delay"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "повтор запроса к модели после обрыва соединения",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/llm_retry.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "trust a custom CA certificate for HTTPS requests",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/http_agent.rs",
+              "name": "build_agent"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "order and deduplicate turn events arriving from the backend",
+          "expect": [
+            {
+              "path": "src/lib/chatTurnReducer.ts",
+              "name": "acceptEvent"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "a path from the model must stay inside the workspace root",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/ai_tools/resolve.rs",
+              "name": "ensure_under"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "проверка что путь не выходит за корень проекта",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/ai_tools/resolve.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "encrypt the API key before saving it to disk",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/secret_store.rs",
+              "name": "seal"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "stable identifier of a repository derived from its git remote",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/repository_identity.rs",
+              "name": "repository_id"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "dedupe_repeat_result",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/llm_chat.rs",
+              "name": "dedupe_repeat_result"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "how does RepoIndexer search_meaning work",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/index_sync.rs",
+              "name": "search_meaning"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "which tools are offered in each conversation mode",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/conversation_mode.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "split an oversized chunk at a safe boundary",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/chunk_index.rs",
+              "name": "split"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "разбить слишком большой фрагмент кода на части",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/chunk_index.rs",
+              "name": "split"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "dropdown menu closes on a click outside or Escape",
+          "expect": [
+            {
+              "path": "src/components/Dropdown.tsx"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "cut command output that is too long and say it was cut",
+          "expect": [
+            {
+              "path": "src-tauri/src/domain/command_exec.rs",
+              "name": "truncate_output"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "почему в продукте нет CLI",
+          "expect": [
+            {
+              "path": "docs/01-vision.md"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "known bugs found in the upstream app",
+          "expect": [
+            {
+              "path": "docs/07-upstream-findings.md"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "ru",
+          "q": "что нельзя потерять при переносе индексного слоя",
+          "expect": [
+            {
+              "path": "docs/06-port-plan.md"
+            },
+            {
+              "path": "docs/05-gaps.md"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "how to rebuild the bundled embedding model and what to check after",
+          "expect": [
+            {
+              "path": "scripts/embedding-model.md"
+            }
+          ],
+          "answer": "docs"
+        }
+      ]
+    },
+    {
+      "name": "docflow",
+      "root": "/Users/eugene/Downloads/docflow-tauri/docflow",
+      "queries": [
+        {
+          "lang": "en",
+          "q": "spell check document text and skip camelCase identifiers",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/spellcheck.rs"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "проверка орфографии в документе",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/spellcheck.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "reminders for upcoming calendar meetings",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/calendar_sync.rs",
+              "name": "claim_due_reminders"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "синхронизация событий календаря",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/calendar_sync.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "rewrite include and xref links after a file is renamed",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/reference_rewrite.rs"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "обновить ссылки в документах после переименования файла",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/reference_rewrite.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "path template parameters that are not declared by the OpenAPI operation",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/openapi_lint.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "check that required tables in a method description are filled in",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/standards_rules.rs"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "проверка документа описания метода на соответствие стандарту",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/standards_rules.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "extract facts to remember from a finished chat turn",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/memory_pipeline.rs",
+              "name": "extract_from_turn"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "не сохранять факт памяти, если похожий уже есть",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/memory_pipeline.rs",
+              "name": "reconcile_with_neighbors"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "add the app folder to the repository gitignore",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/gitignore.rs"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "send a usage metric when the app starts",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/metrics.rs",
+              "name": "app_start_event"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "клонирование git репозитория",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/git_clone.rs"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "как выпустить релиз и поднять версию",
+          "expect": [
+            {
+              "path": "doc/releasing.md"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "build-time secret for the embedding API key in CI",
+          "expect": [
+            {
+              "path": "docs/build-secrets.md"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "ru",
+          "q": "контракт события метрики",
+          "expect": [
+            {
+              "path": "METRICS.md"
+            }
+          ],
+          "answer": "docs"
+        }
+      ]
+    },
+    {
+      "name": "wowtax",
+      "about": "Java service with Russian AsciiDoc; questions 1-8 and their answers are from .atlas/tool-benchmark.md in that repository.",
+      "root": "/Users/eugene/WORK_REPOS/WOWTAX/corp-wowtax-patent-notification-api",
+      "queries": [
+        {
+          "lang": "en",
+          "q": "Kafka listener that consumes FNS decisions about patent notification",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/consumer/NotificationConsumer.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "document pack entity stored in Mongo collection",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/domain/NotificationDocPack.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "handle incoming FNS document state message and update it",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/UpdateNotificationService.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "select batches of notifications ready to be sent to FNS",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/repository/NotificationDocPackRepository.java",
+              "name": "findReadyToSend"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "exponential retry backoff and attempt limit for a notification pack",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/domain/NotificationDocPack.java",
+              "name": "scheduleRetry"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "find the manager of the organization to check access rights",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/gateway/MksPermissionsApiGateway.java",
+              "name": "getManagerXPin"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "REST controller endpoints for patent notifications",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/controller/DocumentController.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "PDF generation of tax reduction notification from a template",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/PdfGenerationService.java"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "Kafka-слушатель решений ФНС по уведомлениям",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/consumer/NotificationConsumer.java"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "выборка пакетов уведомлений, готовых к отправке в ФНС",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/repository/NotificationDocPackRepository.java",
+              "name": "findReadyToSend"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "повторные попытки отправки пакета с растущей задержкой",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/domain/NotificationDocPack.java",
+              "name": "scheduleRetry"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "найти руководителя организации для проверки прав",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/gateway/MksPermissionsApiGateway.java",
+              "name": "getManagerXPin"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "генерация PDF уведомления по шаблону",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/PdfGenerationService.java"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "описание коллекций MongoDB сервиса",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/db.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "which metrics the service exports",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/metrics.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "ru",
+          "q": "описание REST-метода отложить напоминание",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/remindLater/remindLater.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "scheduled job that sends notification packs to Kaluga Astral",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/jobs/SendToKalugaJob.java"
+            },
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/SendNotificationService.java"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "планировщик отправки пакетов в Калугу",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/jobs/SendToKalugaJob.java"
+            },
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/SendNotificationService.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "distributed lock for scheduled jobs stored in Mongo",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/config/ShedlockConfig.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "parse the base64 XML of a tax reduction notification",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/utility/XmlParser.java",
+              "name": "parseXml"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "как формируется имя файла уведомления",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/utility/FileNameGenerator.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "upload documents to the signing module",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/SignDocumentsService.java",
+              "name": "uploadDocumentsForSign"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "обновить статус документа по колбэку",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/CallbackService.java",
+              "name": "updateDocumentStatus"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "current date and time in the business time zone",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/PatentTimeService.java"
+            }
+          ]
+        },
+        {
+          "lang": "en",
+          "q": "download the submitted notification as PDF from the archive",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/ArchiveNotificationService.java",
+              "name": "downloadSubmitPdf"
+            }
+          ]
+        },
+        {
+          "lang": "ru",
+          "q": "модель доступа к методам сервиса",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/index.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "ru",
+          "q": "как сервис обрабатывает ошибки",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/index.adoc"
+            },
+            {
+              "path": "src/docs/asciidoc/CompositeException.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "sequence diagram of the send to Kaluga job",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/sendToKalugaJob/sendToKalugaJob.puml"
+            },
+            {
+              "path": "src/docs/asciidoc/sendToKalugaJob/sendToKalugaJob.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "ru",
+          "q": "описание метода обновления статуса документа ФНС",
+          "expect": [
+            {
+              "path": "src/docs/asciidoc/updateFnsDocumentState/updateFnsDocumentState.adoc"
+            }
+          ],
+          "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "how to write tests for Spring controllers in this project",
+          "expect": [
+            {
+              "path": "skills/controller-tests/SKILL.md"
+            }
+          ],
+          "answer": "docs"
+        }
+      ]
+    }
+  ]
+}
