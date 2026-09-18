@@ -5,6 +5,7 @@ import { Composer } from "./components/Composer";
 import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
 import { ProviderSettings } from "./components/ProviderSettings";
+import { ToolLog } from "./components/ToolLog";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
@@ -16,6 +17,7 @@ import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
 import { useSkills } from "./hooks/useSkills";
 import { useRules } from "./hooks/useRules";
+import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
@@ -41,6 +43,7 @@ export default function App() {
   const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [tab, setTab] = useState<AsideTab>("changes");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   // What the agent may do this turn, and whether anyone is asked before it
   // does it. Two chips, two questions — and both are enforced on the backend,
   // so these hold only what the chips read back.
@@ -51,6 +54,7 @@ export default function App() {
   const index = useIndexStatus(workspace.path);
   const skills = useSkills(tab === "skills" && !asideCollapsed);
   const rules = useRules(tab === "rules" && !asideCollapsed, workspace.path);
+  const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
@@ -235,6 +239,33 @@ export default function App() {
             ))}
           </div>
         </div>
+        <div className="modal-field">
+          <label>Tool calls</label>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false);
+              setLogOpen(true);
+            }}
+          >
+            Open the log
+          </button>
+        </div>
+      </Modal>
+
+      <Modal title="Tool calls" wide open={logOpen} onClose={() => setLogOpen(false)}>
+        <ToolLog
+          rows={toolLog.rows}
+          total={toolLog.total}
+          filter={toolLog.filter}
+          onFilter={toolLog.setFilter}
+          onMore={toolLog.more}
+          onClear={toolLog.clear}
+          enabled={toolLog.enabled}
+          onToggle={toolLog.toggle}
+          error={toolLog.error}
+        />
       </Modal>
 
       <Toast message={toast.message} />

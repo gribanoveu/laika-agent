@@ -8,9 +8,11 @@ type Props = {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** For a table rather than a form. */
+  wide?: boolean;
 };
 
-export function Modal({ title, open, onClose, children, footer }: Props) {
+export function Modal({ title, open, onClose, children, footer, wide }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -22,7 +24,7 @@ export function Modal({ title, open, onClose, children, footer }: Props) {
 
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label={title}>
+      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="modal-close" type="button" aria-label="Close" onClick={onClose}>

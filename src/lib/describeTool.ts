@@ -22,7 +22,7 @@ export type ToolDisplay = {
   detail: string;
 };
 
-const LABELS: Record<string, string> = {
+export const LABELS: Record<string, string> = {
   readFile: "Read",
   grep: "Grep",
   listFiles: "List",

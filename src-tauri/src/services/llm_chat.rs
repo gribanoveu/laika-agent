@@ -1884,7 +1884,7 @@ mod tests {
     #[test]
     fn every_call_is_logged_without_its_content() {
         const LEAK: &str = "LEAK-marker";
-        let mut h = harness(
+        let h = harness(
             "loop-log",
             vec![
                 asks(vec![

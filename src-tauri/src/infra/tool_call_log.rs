@@ -70,6 +70,19 @@ pub fn append(entry: &ToolCallLogEntry) {
     let _ = try_append(entry);
 }
 
+/// What a turn writes through: `append`, or nothing when the user switched
+/// the log off. The switch is read once, here, so a turn logs all its calls
+/// or none of them. Unreadable settings leave it on — the default, and a log
+/// with no file content in it has nothing to be careful about.
+pub fn recorder() -> impl Fn(&ToolCallLogEntry) {
+    let enabled = crate::infra::settings_store::load().map_or(true, |s| s.tool_log.enabled);
+    move |entry| {
+        if enabled {
+            append(entry)
+        }
+    }
+}
+
 fn try_append(entry: &ToolCallLogEntry) -> Result<(), ToolCallLogError> {
     let conn = open()?;
     conn.execute(
@@ -245,6 +258,22 @@ mod tests {
             append(&entry("old", CallStatus::Ok, now - RETENTION_DAYS * DAY_MS - 1));
             append(&entry("new", CallStatus::Ok, now));
             assert_eq!(tools(&query(&ToolCallLogFilter::default()).unwrap()), ["new"]);
+        });
+    }
+
+    #[test]
+    fn a_switched_off_log_records_nothing() {
+        with_app_dir("log-off", || {
+            let mut settings = crate::infra::settings_store::load().unwrap();
+            settings.tool_log.enabled = false;
+            crate::infra::settings_store::save(&settings).unwrap();
+            recorder()(&entry("readFile", CallStatus::Ok, now_ms()));
+            assert_eq!(query(&ToolCallLogFilter::default()).unwrap().total, 0);
+
+            settings.tool_log.enabled = true;
+            crate::infra::settings_store::save(&settings).unwrap();
+            recorder()(&entry("readFile", CallStatus::Ok, now_ms()));
+            assert_eq!(query(&ToolCallLogFilter::default()).unwrap().total, 1);
         });
     }
 

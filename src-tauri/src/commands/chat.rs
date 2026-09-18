@@ -379,9 +379,8 @@ where
         // the turn itself: nothing the user asked for depends on it existing.
         let skills = crate::services::skills::enabled_catalog().unwrap_or_default();
         let rules = crate::services::project_rules::load(&workspace);
-        let log_call = |entry: crate::domain::tool_call_log::ToolCallLogEntry| {
-            crate::infra::tool_call_log::append(&entry)
-        };
+        let record = crate::infra::tool_call_log::recorder();
+        let log_call = |entry: crate::domain::tool_call_log::ToolCallLogEntry| record(&entry);
 
         let turn = Turn {
             events: &events,

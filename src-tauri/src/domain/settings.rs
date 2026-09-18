@@ -105,6 +105,21 @@ pub struct AppSettings {
     /// file rather than per name, so turning off one repository's
     /// `AGENTS.md` leaves every other repository's alone.
     pub rules: OptOut,
+    pub tool_log: ToolLogSettings,
+}
+
+/// The tool-call log. On unless switched off: it keeps no file content, so
+/// there is nothing in it to be careful about by default (CA-12.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ToolLogSettings {
+    pub enabled: bool,
+}
+
+impl Default for ToolLogSettings {
+    fn default() -> Self {
+        ToolLogSettings { enabled: true }
+    }
 }
 
 /// Things that are on until the user says otherwise: a skill dropped into
@@ -166,6 +181,15 @@ mod tests {
         assert_eq!(settings.disabled, ["release"]);
         settings.set_enabled("release", true);
         assert!(settings.disabled.is_empty());
+    }
+
+    /// A default of `false` from `#[derive(Default)]` would switch the log
+    /// off for everyone whose settings predate it.
+    #[test]
+    fn the_tool_log_is_on_when_nothing_says_otherwise() {
+        assert!(AppSettings::default().tool_log.enabled);
+        let old: AppSettings = serde_json::from_str(r#"{"llm":{},"toolLog":{}}"#).unwrap();
+        assert!(old.tool_log.enabled);
     }
 
     #[test]

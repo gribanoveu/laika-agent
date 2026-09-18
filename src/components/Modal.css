@@ -23,6 +23,9 @@
   display: flex;
   flex-direction: column;
 }
+.modal.wide {
+  width: min(880px, 100%);
+}
 .modal-head,
 .modal-foot {
   flex: none;

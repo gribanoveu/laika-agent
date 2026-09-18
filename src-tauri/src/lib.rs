@@ -64,6 +64,10 @@ pub fn run() {
             commands::skills::skills_set_enabled,
             commands::skills::rules_list,
             commands::skills::rules_set_enabled,
+            commands::tool_log::tool_log_query,
+            commands::tool_log::tool_log_clear,
+            commands::tool_log::tool_log_enabled_get,
+            commands::tool_log::tool_log_enabled_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

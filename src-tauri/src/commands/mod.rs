@@ -11,3 +11,4 @@ pub mod settings;
 pub mod chat_history;
 pub mod workspace_events;
 pub mod skills;
+pub mod tool_log;
