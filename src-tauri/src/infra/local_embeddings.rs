@@ -20,29 +20,33 @@
 //! letter from another script, so it can never match such text, and the
 //! tokenizer picks exactly the same pieces. Checked over two repositories,
 //! 10 957 fragments: identical tokenization everywhere except the six that
-//! contained `é`, `à`, `µ`, `Σ` or `世界`. Those characters now embed as
-//! nothing. Going back to the full model is the build script without the
+//! contained `é`, `à`, `µ`, `Σ` or `世界`. Those characters now become
+//! `[UNK]`, which is dropped before pooling — they embed as nothing. Going back to the full model is the build script without the
 //! prune step, the directory name below, and a new `LOCAL_MODEL_ID`.
 //!
 //! ## Cost — measured, not estimated (release, macOS, 2026-09-18)
 //!
-//! | | full model | Russian + English |
-//! |---|---|---|
-//! | on disk | 146 MB | 80 MB |
-//! | resident once loaded | ~1.07 GB | **~520 MB** |
-//! | load | 0.7 s | 0.42 s |
+//! | | full, `f32` table | ru + en, `f32` table | **ru + en, int8 table** |
+//! |---|---|---|---|
+//! | on disk | 146 MB | 80 MB | 80 MB |
+//! | resident once loaded | ~1.07 GB | ~520 MB | **~320 MB** |
+//! | load | 0.7 s | 0.42 s | 0.35 s |
 //!
-//! Resident is the tokenizer — a Unigram prefix tree with a node per character
-//! of every token, about as large as the table — plus the table, which
-//! `model2vec-rs` widens from int8 to `f32` (rows × 256 × 4 bytes). Upstream's
-//! notes said 512 MB for the full model: that was the table alone.
+//! Resident is now mostly the tokenizer — a Unigram prefix tree with a node
+//! per character of every token, ~250 MB — plus the table at one byte a
+//! weight, ~70 MB. The `f32` columns are what `model2vec-rs` cost, which
+//! widened the table on load; [`Int8Model`] replaced it (F-5.8c) and pools the
+//! int8 rows directly, with the same result to the bit on every text of two
+//! repositories that has no `[UNK]` in it. Upstream's notes said 512 MB for
+//! the full model: that was the table alone.
 //!
-//! Embedding is cheap once loaded: all 1 911 chunks of this repository in
-//! 150 ms.
+//! Embedding is cheap once loaded, and cheaper with int8 (a quarter of the
+//! bytes to walk): 2 000 short texts in 13.6 ms against 19.7 ms; all 1 911
+//! chunks of this repository took 150 ms on the `f32` table.
 //!
 //! So the model is **loaded on first use and unloaded when idle**: after
 //! [`DEFAULT_IDLE_UNLOAD`] with no embedding, a background thread drops it and
-//! hands the freed memory back to the OS. The next embed pays the 0.7 s load
+//! hands the freed memory back to the OS. The next embed pays the load
 //! again. A project nobody searches semantically never pays at all.
 //!
 //! Dropping is not enough on its own. The tokenizer is millions of small
@@ -56,7 +60,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use model2vec_rs::model::StaticModel;
+use tokenizers::Tokenizer;
 
 use crate::domain::embeddings::{Embedding, EmbeddingError, EmbeddingProvider};
 
@@ -96,7 +100,7 @@ pub const DEFAULT_IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
 /// has its own slot, so two would be able to hold two copies.
 pub struct LocalEmbeddings {
     dir: PathBuf,
-    cell: IdleCell<StaticModel>,
+    cell: IdleCell<Int8Model>,
 }
 
 impl LocalEmbeddings {
@@ -222,12 +226,7 @@ fn release_freed_memory() {
 impl EmbeddingProvider for LocalEmbeddings {
     fn embed(&self, texts: &[&str]) -> Result<Vec<Embedding>, EmbeddingError> {
         let model = self.cell.get_or_load(|| load_model(&self.dir))?;
-        let sentences: Vec<String> = texts.iter().map(|text| (*text).to_string()).collect();
-        Ok(model
-            .encode_with_args(&sentences, Some(MAX_TOKENS), BATCH_SIZE)
-            .into_iter()
-            .map(Embedding)
-            .collect())
+        Ok(model.encode(texts)?.into_iter().map(Embedding).collect())
     }
 
     fn dimensions(&self) -> usize {
@@ -235,24 +234,144 @@ impl EmbeddingProvider for LocalEmbeddings {
     }
 }
 
-fn load_model(dir: &Path) -> Result<StaticModel, EmbeddingError> {
-    let tokenizer = read_model_file(&dir.join("tokenizer.json"))?;
-    let weights = read_model_file(&dir.join("model.safetensors"))?;
-    let config = read_model_file(&dir.join("config.json"))?;
-    let model = StaticModel::from_bytes(&tokenizer, &weights, &config, None)
-        .map_err(|e| EmbeddingError::Invalid(e.to_string()))?;
+/// A static embedding model with its table kept as the int8 bytes it ships
+/// as.
+///
+/// This replaces `model2vec-rs`, which widened the table to `f32` on load —
+/// four bytes a weight where one holds the same number. The arithmetic is
+/// identical: an int8 value converts to `f32` exactly, so summing converted
+/// bytes gives the same vector as summing a pre-converted table. The parity
+/// test against the Python vectors checks that; the saving is ~210 MB
+/// resident (F-5.8c).
+struct Int8Model {
+    tokenizer: Tokenizer,
+    /// The whole `model.safetensors` file, as read. Rows start at
+    /// `table_start`, each `DIMENSIONS` bytes; kept as `u8` and reinterpreted
+    /// per weight, so loading copies nothing.
+    bytes: Vec<u8>,
+    table_start: usize,
+    rows: usize,
+    /// `[UNK]`, dropped before pooling. `model2vec-rs` meant to do the same
+    /// but looked the token up by a `unk_token` field that a Unigram
+    /// tokenizer does not have, found nothing, and averaged `[UNK]` into
+    /// every text containing a character outside the vocabulary.
+    unk_id: Option<u32>,
+    /// Texts are cut to `MAX_TOKENS × this` characters before tokenizing — the
+    /// same pre-truncation `model2vec` does, so a megabyte of text is not
+    /// tokenized to keep its first 512 tokens.
+    median_token_chars: usize,
+}
 
-    // The crate exposes no dimension getter, and every vector already stored
-    // is `DIMENSIONS` wide. Weights swapped for another model's must be
-    // refused here, not discovered as a length mismatch deep in the vector
-    // store.
-    let width = model.encode_single("dimension check").len();
+impl Int8Model {
+    fn encode(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        let mut out = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(BATCH_SIZE) {
+            let truncated: Vec<String> = batch
+                .iter()
+                .map(|text| {
+                    let limit = MAX_TOKENS.saturating_mul(self.median_token_chars);
+                    text.char_indices().nth(limit).map_or(*text, |(at, _)| &text[..at]).to_string()
+                })
+                .collect();
+            let encodings = self
+                .tokenizer
+                .encode_batch_fast(truncated, false)
+                .map_err(|e| EmbeddingError::Invalid(format!("tokenization failed: {e}")))?;
+            for encoding in encodings {
+                let ids = encoding.get_ids().iter().copied().filter(|id| Some(*id) != self.unk_id).take(MAX_TOKENS);
+                out.push(self.pool(ids));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The mean of the rows at unit length — computed as the sum at unit
+    /// length, which is the same vector: scaling by the count changes the
+    /// length, and the length is then thrown away. The model's config says
+    /// `"normalize": true`; were a future model's not to, the parity test
+    /// would say so.
+    fn pool(&self, ids: impl Iterator<Item = u32>) -> Vec<f32> {
+        let mut sum = vec![0.0_f32; DIMENSIONS];
+        for id in ids {
+            let id = id as usize;
+            if id >= self.rows {
+                continue;
+            }
+            let row = &self.bytes[self.table_start + id * DIMENSIONS..][..DIMENSIONS];
+            for (acc, &byte) in sum.iter_mut().zip(row) {
+                *acc += f32::from(byte as i8);
+            }
+        }
+        let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);
+        sum.iter_mut().for_each(|x| *x /= norm);
+        sum
+    }
+}
+
+fn load_model(dir: &Path) -> Result<Int8Model, EmbeddingError> {
+    let tokenizer_bytes = read_model_file(&dir.join("tokenizer.json"))?;
+    let bytes = read_model_file(&dir.join("model.safetensors"))?;
+    let invalid = |why: String| EmbeddingError::Invalid(why);
+
+    let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes).map_err(|e| invalid(format!("tokenizer: {e}")))?;
+    drop(tokenizer_bytes);
+
+    let (table_start, rows, width) = int8_table(&bytes).map_err(invalid)?;
+    // Every stored vector is `DIMENSIONS` wide. Weights from another model
+    // are refused here, not discovered as a length mismatch in the store.
     if width != DIMENSIONS {
-        return Err(EmbeddingError::Invalid(format!(
-            "vectors are {width} wide, the index expects {DIMENSIONS}"
+        return Err(invalid(format!("vectors are {width} wide, the index expects {DIMENSIONS}")));
+    }
+    if rows != tokenizer.get_vocab_size(false) {
+        return Err(invalid(format!(
+            "the table has {rows} rows for {} tokens",
+            tokenizer.get_vocab_size(false)
         )));
     }
-    Ok(model)
+
+    let unk_id = tokenizer_unk_id(&tokenizer);
+    let mut lengths: Vec<usize> = tokenizer.get_vocab(false).keys().map(String::len).collect();
+    lengths.sort_unstable();
+    let median_token_chars = lengths.get(lengths.len() / 2).copied().unwrap_or(1);
+
+    Ok(Int8Model { tokenizer, bytes, table_start, rows, unk_id, median_token_chars })
+}
+
+/// Where the int8 `embeddings` tensor starts, and its shape. The safetensors
+/// layout is an 8-byte little-endian header length, a JSON header, then raw
+/// data at the offsets the header gives — small enough to read by hand rather
+/// than take a crate for.
+fn int8_table(bytes: &[u8]) -> Result<(usize, usize, usize), String> {
+    let header_len = bytes
+        .get(..8)
+        .and_then(|b| b.try_into().ok())
+        .map(u64::from_le_bytes)
+        .ok_or("model.safetensors is too short")? as usize;
+    let header: serde_json::Value = bytes
+        .get(8..8 + header_len)
+        .ok_or("model.safetensors header runs past the file")
+        .and_then(|h| serde_json::from_slice(h).map_err(|_| "model.safetensors header is not JSON"))?;
+    let tensor = &header["embeddings"];
+    if tensor["dtype"] != "I8" {
+        return Err(format!("expected an int8 `embeddings` tensor, found {}", tensor["dtype"]));
+    }
+    let dim = |i: usize| tensor["shape"][i].as_u64().map(|n| n as usize);
+    let offset = |i: usize| tensor["data_offsets"][i].as_u64().map(|n| n as usize);
+    let (Some(rows), Some(width), Some(begin), Some(end)) = (dim(0), dim(1), offset(0), offset(1)) else {
+        return Err("`embeddings` has no shape or offsets".to_string());
+    };
+    let start = 8 + header_len + begin;
+    if end - begin != rows * width || 8 + header_len + end > bytes.len() {
+        return Err(format!("`embeddings` is {rows}×{width} but its data does not fit"));
+    }
+    Ok((start, rows, width))
+}
+
+/// The Unigram model's `unk_id`, read from its serialized form: the only
+/// place a Unigram tokenizer keeps it.
+fn tokenizer_unk_id(tokenizer: &Tokenizer) -> Option<u32> {
+    let spec = serde_json::to_value(tokenizer).ok()?;
+    spec["model"]["unk_id"].as_u64().map(|id| id as u32)
 }
 
 fn read_model_file(path: &Path) -> Result<Vec<u8>, EmbeddingError> {
@@ -346,6 +465,19 @@ mod tests {
         for kept in ["▁context", "▁контекст", "{"] {
             assert!(vocab.contains(&kept), "{kept:?} was cut");
         }
+    }
+
+    /// A character the vocabulary does not have becomes `[UNK]`, and `[UNK]`
+    /// carries no meaning — so it is dropped, not averaged in. `model2vec-rs`
+    /// averaged it: 17 of 10 970 fragments of two repositories came out
+    /// different from their text without the stray character.
+    #[test]
+    fn a_character_outside_the_vocabulary_changes_nothing() {
+        let provider = model();
+        // No space before them: a space is a token of its own (`▁`), and a
+        // real one.
+        let plain = embed(provider, "hello world");
+        assert_eq!(embed(provider, "hello世界 world"), plain);
     }
 
     /// What the model is for, in the direction this app needs: a Russian
@@ -463,7 +595,7 @@ mod tests {
         let dir = temp_dir("model-lfs");
         fs::write(dir.join("tokenizer.json"), "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n").unwrap();
 
-        let error = load_model(&dir).unwrap_err();
+        let Err(error) = load_model(&dir) else { panic!("loaded a model from nothing") };
         assert!(matches!(error, EmbeddingError::LfsPointer(_)), "{error:?}");
         assert!(error.to_string().contains("git lfs pull"));
     }
@@ -471,17 +603,70 @@ mod tests {
     #[test]
     fn a_missing_model_says_which_file() {
         let dir = temp_dir("model-missing");
-        let error = load_model(&dir).unwrap_err();
+        let Err(error) = load_model(&dir) else { panic!("loaded a model from nothing") };
         assert!(matches!(error, EmbeddingError::NotFound(ref path) if path.ends_with("tokenizer.json")), "{error:?}");
     }
 
     #[test]
     fn files_that_are_not_a_model_are_refused() {
         let dir = temp_dir("model-garbage");
-        for name in ["tokenizer.json", "model.safetensors", "config.json"] {
+        for name in ["tokenizer.json", "model.safetensors"] {
             fs::write(dir.join(name), "not a model").unwrap();
         }
         assert!(matches!(load_model(&dir), Err(EmbeddingError::Invalid(_))));
+    }
+
+    fn safetensors(dtype: &str, rows: usize, width: usize, bytes_per: usize) -> Vec<u8> {
+        let data = rows * width * bytes_per;
+        let header = format!(
+            r#"{{"embeddings":{{"dtype":"{dtype}","shape":[{rows},{width}],"data_offsets":[0,{data}]}}}}"#
+        );
+        let mut file = (header.len() as u64).to_le_bytes().to_vec();
+        file.extend(header.as_bytes());
+        file.resize(file.len() + data, 0);
+        file
+    }
+
+    /// The real tokenizer with a table that does not belong to it. Each is a
+    /// weight file from some other model, and each must be refused at load
+    /// rather than embed with the wrong rows.
+    #[test]
+    fn a_table_that_does_not_fit_the_tokenizer_is_refused() {
+        let dir = temp_dir("model-mismatch");
+        fs::copy(bundled_model_dir(None).join("tokenizer.json"), dir.join("tokenizer.json")).unwrap();
+        let vocab = 271_538;
+        for (table, why) in [
+            (safetensors("I8", 1_000, DIMENSIONS, 1), "rows"),
+            (safetensors("F32", vocab, DIMENSIONS, 4), "int8"),
+            (safetensors("I8", vocab, 128, 1), "wide"),
+        ] {
+            fs::write(dir.join("model.safetensors"), table).unwrap();
+            let Err(EmbeddingError::Invalid(message)) = load_model(&dir) else {
+                panic!("a table refused for {why} was accepted");
+            };
+            assert!(message.contains(why), "{message}");
+        }
+    }
+
+    /// Past `MAX_TOKENS` a text is not read: two texts that agree on their
+    /// first 512 tokens are the same vector.
+    #[test]
+    fn only_the_first_tokens_count() {
+        let provider = model();
+        let head = "compact the history ".repeat(200);
+        assert_eq!(embed(provider, &format!("{head} and render the dialog")), embed(provider, &format!("{head} keyring fallback file")));
+    }
+
+    /// The text is cut before it is tokenized, not after: embedding a
+    /// five-megabyte file must cost what embedding its first page does.
+    #[test]
+    fn a_huge_text_is_not_tokenized_whole() {
+        let provider = model();
+        embed(provider, "warm");
+        let huge = "fn handler(request: Request) -> Response { compact(history) }\n".repeat(80_000);
+        let started = Instant::now();
+        embed(provider, &huge);
+        assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
     }
 
     /// A built app finds the weights under its resources; anything else —
