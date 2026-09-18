@@ -104,6 +104,43 @@ export async function currentWorkspace(): Promise<string | null> {
   return invoke<string | null>("workspace_current");
 }
 
+// --------------------------------------------------------- the folder index
+
+/**
+ * The channel the open folder's index reports on. Pinned on the Rust side by
+ * `the_channel_name_is_pinned` in `commands/workspace_events.rs`.
+ */
+export const INDEX_EVENT = "workspace-index:event";
+
+/** One report of a sync. `root` is the string `openWorkspace` returned. */
+export type IndexEvent = { root: string } & (
+  | { kind: "syncStarted" }
+  | { kind: "keywordsReady"; indexed: number; unchanged: number; removed: number; skipped: number }
+  | { kind: "embeddingProgress"; done: number; total: number }
+  | { kind: "syncFinished"; embedded: number; embeddingError: string | null }
+  | { kind: "failed"; error: string }
+);
+
+/** The index as it stands, for a window that was not listening when the sync began. */
+export type IndexSnapshot = {
+  root: string;
+  syncing: boolean;
+  embedded: number;
+  skipped: number;
+  embeddingError: string | null;
+};
+
+export async function indexStatus(): Promise<IndexSnapshot | null> {
+  if (!inTauri()) return null;
+  return invoke<IndexSnapshot | null>("workspace_index_status");
+}
+
+/** Every folder's index events: a sync can outlive its folder being open. */
+export async function onIndexEvent(handler: (event: IndexEvent) => void): Promise<UnlistenFn> {
+  if (!inTauri()) return () => {};
+  return listen<IndexEvent>(INDEX_EVENT, ({ payload }) => handler(payload));
+}
+
 /** Starts a turn. `messages` is the whole conversation: the transcript is the caller's. */
 export async function startChat(
   turnId: string,

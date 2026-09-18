@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::domain::command_exec::Shell;
@@ -128,6 +129,37 @@ pub fn workspace_current(state: State<'_, Arc<AgentState>>) -> Option<String> {
         .ok()?
         .clone()
         .map(|path| path.display().to_string())
+}
+
+/// The open folder's index as it stands — what a window that was not
+/// listening when the sync began (a reload, say) starts from before the next
+/// `workspace-index:event`.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexSnapshot {
+    /// The same string `workspace_open` returned, which the events carry too.
+    root: String,
+    syncing: bool,
+    embedded: usize,
+    skipped: usize,
+    embedding_error: Option<String>,
+}
+
+#[tauri::command]
+pub fn workspace_index_status(index: State<'_, Arc<WorkspaceIndex>>) -> Option<IndexSnapshot> {
+    snapshot(&index)
+}
+
+fn snapshot(index: &WorkspaceIndex) -> Option<IndexSnapshot> {
+    let indexer = index.current()?;
+    let status = indexer.status();
+    Some(IndexSnapshot {
+        root: indexer.root().display().to_string(),
+        syncing: status.syncing,
+        embedded: status.embedded,
+        skipped: status.skipped.len(),
+        embedding_error: status.embedding_error,
+    })
 }
 
 /// Starts a fresh turn and resolves when it ends, pauses, or is stopped.
@@ -460,5 +492,45 @@ mod tests {
 
         index.open(&temp_dir("cmd-search-repo"), Arc::new(|_| {})).unwrap();
         assert!(searcher_of(app.handle()).is_some());
+    }
+
+    /// The snapshot names the folder the way the events do, and says why
+    /// search by meaning is off once a sync has found out.
+    #[test]
+    fn the_index_snapshot_speaks_for_the_open_folder() {
+        use crate::domain::embeddings::{Embedding, EmbeddingError, EmbeddingProvider};
+        struct NoModel;
+        impl EmbeddingProvider for NoModel {
+            fn embed(&self, _: &[&str]) -> Result<Vec<Embedding>, EmbeddingError> {
+                Err(EmbeddingError::Invalid("no model in this test".into()))
+            }
+            fn dimensions(&self) -> usize {
+                2
+            }
+        }
+        let index = WorkspaceIndex::new(temp_dir("cmd-snapshot-index"), Arc::new(NoModel));
+        assert_eq!(snapshot(&index), None);
+
+        let root = temp_dir("cmd-snapshot-repo").canonicalize().unwrap();
+        std::fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(root.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+        let (tx, finished) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        index
+            .open(
+                &root,
+                Arc::new(move |event| {
+                    if matches!(event, crate::domain::workspace_index::IndexEvent::SyncFinished { .. }) {
+                        let _ = tx.lock().unwrap().send(());
+                    }
+                }),
+            )
+            .unwrap();
+        finished.recv_timeout(Duration::from_secs(10)).expect("the first sync never finished");
+
+        let shot = snapshot(&index).unwrap();
+        assert_eq!(shot.root, root.display().to_string());
+        assert_eq!((shot.syncing, shot.embedded, shot.skipped), (false, 0, 1));
+        assert!(shot.embedding_error.as_deref().is_some_and(|e| e.contains("no model")), "{shot:?}");
     }
 }

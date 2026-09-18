@@ -13,6 +13,7 @@ import { useChatHistory } from "./hooks/useChatHistory";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { useIndexStatus } from "./hooks/useIndexStatus";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
@@ -45,6 +46,7 @@ export default function App() {
   const unattended = useBackendSetting<boolean>(setUnattended, false);
   const toast = useToast();
   const workspace = useWorkspace();
+  const index = useIndexStatus(workspace.path);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
@@ -151,6 +153,7 @@ export default function App() {
         <main className="main">
           <ChatPanel
             workspace={workspace.path}
+            index={index}
             turn={agent.turn}
             usage={agent.turn.usage}
             context={agent.context}

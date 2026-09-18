@@ -12,6 +12,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
+import { IndexBadge } from "./IndexBadge";
+import type { IndexState } from "../lib/indexStatus";
 import { describeTool } from "../lib/describeTool";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
@@ -252,6 +254,8 @@ function meterTitle(context: ContextUsage, usage: ChatUsage | null): string {
 }
 
 type Props = {
+  /** The open folder's index; `null` until anything is known about it. */
+  index?: IndexState | null;
   workspace: string | null;
   turn: TurnState;
   usage: ChatUsage | null;
@@ -269,6 +273,7 @@ export function ChatPanel({
   turn,
   usage,
   context,
+  index,
   onDecide,
   onOpenRepo,
   onNewChat,
@@ -288,6 +293,7 @@ export function ChatPanel({
               {workspace}
             </span>
           )}
+          {workspace && index && <IndexBadge state={index} />}
         </div>
         <div className="head-right">
           {turn.retrying && (

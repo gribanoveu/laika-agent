@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ChatPanel, Preview } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
 import type { ContextUsage } from "../lib/chat";
+import { fromSnapshot, type IndexState } from "../lib/indexStatus";
 
 // The transcript's own rules: who a block belongs to, and what the approval
 // card sends back. Both are decided here rather than by the backend, so both
@@ -27,11 +28,12 @@ const usage = (over: Partial<ContextUsage> = {}): ContextUsage => ({
 const panel = (
   turn: TurnState,
   onDecide = () => {},
-  over: { context?: ContextUsage | null; onCompact?: () => void } = {},
+  over: { context?: ContextUsage | null; onCompact?: () => void; index?: IndexState | null } = {},
 ) =>
   render(
     <ChatPanel
       workspace="/tmp/project"
+      index={over.index}
       turn={turn}
       usage={turn.usage}
       context={over.context === undefined ? usage() : over.context}
@@ -309,5 +311,21 @@ describe("a notice", () => {
 
     expect(screen.getByText("Older history compacted")).toBeTruthy();
     expect(screen.queryByText("Agent")).toBeNull();
+  });
+});
+
+describe("the folder's index", () => {
+  test("its state is shown beside the folder, with the detail on hover", () => {
+    const index = fromSnapshot({ root: "/tmp/project", syncing: false, embedded: 3, skipped: 2, embeddingError: null });
+    panel(state([]), () => {}, { index });
+
+    const badge = screen.getByRole("status");
+    expect(badge.textContent).toBe("Indexed · 2 skipped");
+    expect(badge.getAttribute("title")).toContain("2 files not indexed");
+  });
+
+  test("nothing is shown before anything is known", () => {
+    panel(state([]));
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
