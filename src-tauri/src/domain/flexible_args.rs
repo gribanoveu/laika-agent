@@ -97,6 +97,32 @@ where
     }
 }
 
+/// `Option<Vec<String>>` that also accepts one string for a one-item list —
+/// `"fts": "read_source"` is a list of one term, not a type error. An empty
+/// list, a nullish string and `null` all mean "not set".
+pub fn opt_string_list<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let list = match value {
+        Value::Null => return Ok(None),
+        Value::String(s) if NULLISH.contains(&s.trim().to_ascii_lowercase().as_str()) => return Ok(None),
+        Value::String(s) => vec![s],
+        Value::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::String(s) => Ok(s),
+                other => Err(D::Error::custom(format!("expected a list of strings, found {}", describe(&other)))),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        other => return Err(D::Error::custom(format!("expected a list of strings, got {}", describe(&other)))),
+    };
+    Ok((!list.is_empty()).then_some(list))
+}
+
 fn opt_uint<'de, D>(deserializer: D, max: u64) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -308,5 +334,26 @@ mod tests {
         assert!(b(r#"{"b": 2}"#).is_err());
         assert!(b(r#"{"b": "maybe"}"#).is_err());
         assert!(b(r#"{"b": []}"#).is_err());
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Terms {
+        #[serde(default, deserialize_with = "super::opt_string_list")]
+        fts: Option<Vec<String>>,
+    }
+
+    fn terms(json: &str) -> Result<Option<Vec<String>>, String> {
+        serde_json::from_str::<Terms>(json).map(|t| t.fts).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_string_list_takes_one_string_as_a_list_of_one() {
+        assert_eq!(terms(r#"{"fts":["a","b"]}"#), Ok(Some(vec!["a".into(), "b".into()])));
+        assert_eq!(terms(r#"{"fts":"read_source"}"#), Ok(Some(vec!["read_source".into()])));
+        for unset in [r#"{}"#, r#"{"fts":null}"#, r#"{"fts":[]}"#, r#"{"fts":"none"}"#] {
+            assert_eq!(terms(unset), Ok(None), "{unset}");
+        }
+        assert!(terms(r#"{"fts":[1]}"#).unwrap_err().contains("list of strings"));
+        assert!(terms(r#"{"fts":3}"#).is_err());
     }
 }

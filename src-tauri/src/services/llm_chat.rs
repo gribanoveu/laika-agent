@@ -24,7 +24,7 @@ use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
-    ApprovalPolicy, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
+    ApprovalPolicy, CodeSearchFn, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
 };
 use crate::domain::turn::{
     ChatDone, ChatEventPayload, ChatEventSink, ChatStreamOutcome, ChatTurnEvent, DecisionError,
@@ -166,6 +166,9 @@ pub struct Turn<'a> {
     /// leave the queue in the same step, or a round that is retried or
     /// interrupted can deliver it twice.
     pub take_steering: &'a dyn Fn() -> Vec<SteeringNote>,
+    /// Search of the open folder's index, for `semanticSearch`; `None` when
+    /// the folder has none, and the tool says so to the model.
+    pub search: Option<CodeSearchFn>,
 }
 
 /// Notes typed while a turn is running, waiting for the next round.
@@ -527,6 +530,7 @@ fn run(
                         let deps = ToolDeps {
                             shell: turn.shell.clone(),
                             output: Some(command_output_sink(turn.events, round, &call.id)),
+                            search: turn.search.clone(),
                         };
                         execute_tool(
                             turn.scope,
@@ -1031,6 +1035,7 @@ mod tests {
         polls: Arc<Mutex<usize>>,
         slept: Arc<Mutex<Vec<Duration>>>,
         steering: Arc<SteeringQueue>,
+        search: Option<CodeSearchFn>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1064,6 +1069,7 @@ mod tests {
             polls: Arc::new(Mutex::new(0)),
             slept: Arc::new(Mutex::new(Vec::new())),
             steering,
+            search: None,
         }
     }
 
@@ -1100,6 +1106,7 @@ mod tests {
                 cancelled: &cancelled,
                 sleep: &sleep,
                 take_steering: &take_steering,
+                search: self.search.clone(),
                 shell: &shell,
             };
             f(&turn)
@@ -2308,6 +2315,35 @@ mod tests {
         let edit = told.last().expect("the edit was reported");
         assert!(edit.contains("linesAdded"), "no diff stats: {edit}");
         assert!(edit.contains("-fn one"), "no diff itself: {edit}");
+    }
+
+    /// The turn hands the tool the folder's search; without it the model gets
+    /// "unavailable" and a pointer to grep.
+    #[test]
+    fn a_turn_searches_through_the_search_it_was_given() {
+        use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchMeta};
+        let mut h = harness(
+            "turn-search",
+            vec![asks(vec![wants("s1", "semanticSearch", r#"{"query":"where sync lives"}"#)]), text("found it")],
+        );
+        h.search = Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize| {
+            Ok(CodeSearchResult {
+                matches: vec![CodeMatch {
+                    path: "src/sync.rs".into(),
+                    start_line: 1,
+                    end_line: 2,
+                    name: None,
+                    text: "fn sync() {}".into(),
+                    source: MatchSource::Lexical,
+                }],
+                meta: SearchMeta { tiers_used: vec![MatchSource::Lexical], weak: false, hint: None },
+            })
+        }));
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("where is sync")], vec![])).expect("finishes");
+
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert!(told[0].contains("src/sync.rs"), "{told:?}");
     }
 
     /// Every field of the checkpoint, exercised through a real pause rather

@@ -33,6 +33,7 @@ pub mod todo;
 pub mod write_file;
 pub mod read_file;
 pub mod run_command;
+pub mod semantic_search;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -43,6 +44,7 @@ type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
 /// test can be exact: a tool that exists but is never advertised is one the
 /// model can only reach by guessing its name.
 const DEFINITIONS: &[ToolDefinitionRow] = &[
+    (ToolName::SemanticSearch, semantic_search::definition),
     (ToolName::ListFiles, list_files::definition),
     (ToolName::ReadFile, read_file::definition),
     (ToolName::Grep, grep::definition),
@@ -93,6 +95,7 @@ pub fn execute_tool(
         ToolCall::GitDiff(args) => git::git_diff(scope, args),
         ToolCall::GitBlame(args) => git::git_blame(scope, args),
         ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
+        ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
     }
 }
 
@@ -102,7 +105,8 @@ mod definition_tests {
     use crate::domain::llm::LlmToolCall;
     use crate::domain::tools::{
         DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs,
-        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, TodoArgs, TodoUpdateStatus, WriteFileArgs,
+        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, TodoArgs, TodoUpdateStatus,
+        WriteFileArgs,
         CreateDirectoryArgs,
     };
     use crate::services::ai_tools::parse::parse_tool_call;
@@ -241,6 +245,15 @@ mod definition_tests {
                     command: "cargo test".to_string(),
                     cwd: Some("crate".to_string()),
                     timeout_seconds: Some(30),
+                })],
+            ),
+            ToolName::SemanticSearch => (
+                r#"{"query":"where the index is kept current"}"#,
+                vec![ToolCall::SemanticSearch(SemanticSearchArgs {
+                    query: "where the index is kept current".to_string(),
+                    fts: Some(vec!["sync".to_string()]),
+                    top_k: Some(5),
+                    preview: Some(true),
                 })],
             ),
             ToolName::GitBlame => (

@@ -32,6 +32,7 @@ pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
         "gitDiff" => ToolCall::GitDiff(args(call)?),
         "gitBlame" => ToolCall::GitBlame(args(call)?),
         "runCommand" => ToolCall::RunCommand(args(call)?),
+        "semanticSearch" => ToolCall::SemanticSearch(args(call)?),
         // No arguments, so nothing to deserialize — and nothing for a model to
         // get wrong. Whatever it sent alongside is ignored rather than refused.
         "gitStatus" => ToolCall::GitStatus,

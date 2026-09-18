@@ -37,6 +37,7 @@ pub enum ToolName {
     GitBlame,
     RunCommand,
     GitStatus,
+    SemanticSearch,
 }
 
 impl ToolName {
@@ -57,6 +58,7 @@ impl ToolName {
         ToolName::GitBlame,
         ToolName::GitStatus,
         ToolName::RunCommand,
+        ToolName::SemanticSearch,
     ];
 
     /// The name the model calls this tool by. Must match what `Serialize`
@@ -77,6 +79,7 @@ impl ToolName {
             ToolName::GitBlame => "gitBlame",
             ToolName::RunCommand => "runCommand",
             ToolName::GitStatus => "gitStatus",
+            ToolName::SemanticSearch => "semanticSearch",
         }
     }
 
@@ -129,6 +132,9 @@ impl ToolName {
             ToolName::GitDiff | ToolName::GitBlame => 2,
             // One walk of the working tree, no per-file blob reads.
             ToolName::GitStatus => 1,
+            // Indexed lookups and a scan of the vectors; the first search
+            // after the model was unloaded also loads it (~0.35 s).
+            ToolName::SemanticSearch => 2,
             // Read, diff against the new content, write.
             ToolName::WriteFile | ToolName::EditFile => 2,
             // A rename. Atlas charged 2 because its `move` also rewrote
@@ -180,7 +186,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            14,
+            15,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -442,6 +448,8 @@ pub struct ToolDeps {
     /// collects it and reports it only at the end, which is what a test wants
     /// and what a turn must not do.
     pub output: Option<crate::domain::command_exec::CommandSink>,
+    /// The open folder's index; `None` when there is none.
+    pub search: Option<CodeSearchFn>,
 }
 
 /// Why a tool call could not be carried out.
@@ -535,6 +543,9 @@ pub enum ToolError {
     FileChangedSinceRead(String),
     /// A git read failed. Carried as a string so git types stay out of the
     /// tool boundary.
+    /// Addressed to the model, which still has `grep` and `listFiles`.
+    #[error("search is unavailable: {0} — use grep for exact text, or listFiles to look around")]
+    SearchUnavailable(String),
     #[error("git error: {0}")]
     Git(String),
     /// The command never started, or could not be read. A command that started
@@ -578,6 +589,7 @@ pub enum ToolCall {
     GitDiff(GitDiffArgs),
     GitBlame(GitBlameArgs),
     RunCommand(crate::domain::command_exec::CommandRequest),
+    SemanticSearch(SemanticSearchArgs),
 }
 
 impl ToolCall {
@@ -596,6 +608,7 @@ impl ToolCall {
             ToolCall::GitStatus => ToolName::GitStatus,
             ToolCall::GitDiff(_) => ToolName::GitDiff,
             ToolCall::GitBlame(_) => ToolName::GitBlame,
+            ToolCall::SemanticSearch(_) => ToolName::SemanticSearch,
             ToolCall::RunCommand(_) => ToolName::RunCommand,
         }
     }
@@ -695,6 +708,11 @@ pub enum ToolResult {
     /// A command that ran. "Ran" is not "succeeded": the exit code is the
     /// answer, and a failing build is a perfectly good result.
     CommandRan(crate::domain::command_exec::CommandOutput),
+    #[serde(rename_all = "camelCase")]
+    SearchResults {
+        matches: Vec<crate::domain::code_search::CodeMatch>,
+        meta: crate::domain::code_search::SearchMeta,
+    },
 }
 
 /// `readFile` arguments.
@@ -1020,6 +1038,35 @@ pub struct GitDiffArgs {
     /// A commit hash or ref. When set, diffs that commit against its parent.
     pub commit: Option<String>,
 }
+
+/// `semanticSearch` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticSearchArgs {
+    /// Searched by meaning, whole, and for names and words.
+    pub query: String,
+    /// The words that must match as text, when they are not simply the
+    /// query's own. The two halves want different inputs: meaning does best
+    /// with a whole sentence, text ranking with its few load-bearing words —
+    /// and the model knows which those are better than a tokenizer does.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_string_list")]
+    pub fts: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_usize")]
+    pub top_k: Option<usize>,
+    /// Longer text per match. Off by default: the result goes into the
+    /// model's context, and `readFile` fetches a range more precisely.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub preview: Option<bool>,
+}
+
+/// Search of the open folder's code — `services::code_search::search` behind a
+/// port, because the tools live below the service that owns the index.
+/// `None` in [`ToolDeps`] when no folder's index is open.
+pub type CodeSearchFn = std::sync::Arc<
+    dyn Fn(&str, Option<&[String]>, usize) -> Result<crate::domain::code_search::CodeSearchResult, String>
+        + Send
+        + Sync,
+>;
 
 /// `gitBlame` arguments. The range mirrors `readFile`'s.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

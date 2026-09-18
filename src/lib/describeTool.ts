@@ -37,6 +37,7 @@ const LABELS: Record<string, string> = {
   gitDiff: "Diff",
   gitBlame: "Blame",
   runCommand: "Bash",
+  semanticSearch: "Search",
 };
 
 /** A tool this build does not know is shown by its wire name rather than hidden. */
@@ -89,6 +90,23 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
           ? `${matches.length}${result.truncated ? "+" : ""} matches · ${files.size} files`
           : undefined,
         detail: matches.map((m) => `${str(m.path)}:${num(m.line)}  ${str(m.text) ?? ""}`).join("\n"),
+      };
+    }
+
+    case "semanticSearch": {
+      const matches = Array.isArray(result.matches) ? (result.matches as Json[]) : [];
+      const meta = asObject(result.meta);
+      const lines = matches.map((m) => {
+        const name = str(m.name);
+        return `${str(m.path)}:${num(m.startLine)}-${num(m.endLine)}${name ? `  ${name}` : ""}`;
+      });
+      // The hint is what the model was told to do next; the reader should see it too.
+      const hint = str(meta.hint);
+      return {
+        name,
+        arg: str(args.query) ?? "",
+        meta: block.result === undefined ? undefined : `${matches.length} matches`,
+        detail: [...lines, ...(hint ? ["", hint] : [])].join("\n"),
       };
     }
 
@@ -163,7 +181,11 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
 
 function primaryArgument(wireName: string, args: Json): string {
   return (
-    str(args.path) ?? str(args.command) ?? str(args.pattern) ?? (wireName === "gitStatus" ? "" : "")
+    str(args.path) ??
+    str(args.command) ??
+    str(args.pattern) ??
+    str(args.query) ??
+    (wireName === "gitStatus" ? "" : "")
   );
 }
 

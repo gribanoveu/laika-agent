@@ -2,10 +2,10 @@
 //! `services::code_search`; these are the shapes the model and the window
 //! read.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Which kind of evidence put a match in the list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MatchSource {
     /// A declaration named as the query spelled it.
@@ -16,7 +16,7 @@ pub enum MatchSource {
     Lexical,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeMatch {
     /// Relative to the folder, `/`-separated.
@@ -30,7 +30,7 @@ pub struct CodeMatch {
     pub source: MatchSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchMeta {
     /// The kinds of evidence that were consulted — `semantic` is missing
@@ -42,7 +42,7 @@ pub struct SearchMeta {
     pub hint: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeSearchResult {
     pub matches: Vec<CodeMatch>,

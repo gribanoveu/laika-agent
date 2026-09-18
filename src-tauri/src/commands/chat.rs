@@ -18,13 +18,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::domain::command_exec::Shell;
 use crate::domain::compaction::ContextUsage;
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
-use crate::domain::tools::{ApprovalPolicy, Task, ToolName, ToolPreview, ToolScope};
+use crate::domain::tools::{ApprovalPolicy, CodeSearchFn, Task, ToolName, ToolPreview, ToolScope};
 use crate::domain::turn::{
     ChatStreamOutcome, PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision,
 };
@@ -309,6 +309,12 @@ pub fn approval_set_unattended(
     Ok(())
 }
 
+/// The open folder's search, for the turn's tools. `None` when no folder's
+/// index is open — or when `setup` never ran, as under a mock runtime.
+fn searcher_of<R: Runtime>(app: &AppHandle<R>) -> Option<CodeSearchFn> {
+    app.try_state::<Arc<WorkspaceIndex>>()?.searcher()
+}
+
 /// Assembles a turn and runs it on a blocking thread.
 ///
 /// Off the event loop because the whole turn is synchronous — provider calls,
@@ -327,6 +333,7 @@ where
     let workspace = state.workspace()?;
     let approval = state.approval()?;
     let mode = state.mode();
+    let search = searcher_of(&app);
 
     tauri::async_runtime::spawn_blocking(move || {
         let events = chat_event_sink(&app, turn_id);
@@ -347,6 +354,7 @@ where
             sleep: &sleep,
             take_steering: &take_steering,
             shell: &shell,
+            search,
         };
         run(&turn).map_err(|e| e.to_string())
     })
@@ -429,5 +437,28 @@ mod tests {
 
         state.cancel.store(false, Ordering::SeqCst);
         assert!(!state.cancel.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_turn_gets_the_search_of_the_open_folder() {
+        use crate::domain::embeddings::{Embedding, EmbeddingError, EmbeddingProvider};
+        struct NoModel;
+        impl EmbeddingProvider for NoModel {
+            fn embed(&self, _: &[&str]) -> Result<Vec<Embedding>, EmbeddingError> {
+                Err(EmbeddingError::Invalid("no model in this test".into()))
+            }
+            fn dimensions(&self) -> usize {
+                2
+            }
+        }
+        let app = tauri::test::mock_app();
+        assert!(searcher_of(app.handle()).is_none(), "no index state at all");
+
+        let index = Arc::new(WorkspaceIndex::new(temp_dir("cmd-search-index"), Arc::new(NoModel)));
+        tauri::Manager::manage(&app, Arc::clone(&index));
+        assert!(searcher_of(app.handle()).is_none(), "no folder open");
+
+        index.open(&temp_dir("cmd-search-repo"), Arc::new(|_| {})).unwrap();
+        assert!(searcher_of(app.handle()).is_some());
     }
 }

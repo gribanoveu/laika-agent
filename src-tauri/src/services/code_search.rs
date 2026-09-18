@@ -38,7 +38,15 @@ const CANDIDATES_PER_MATCH: usize = 2;
 /// list's opinion, small enough that being ranked at all still counts.
 const RRF_K: f32 = 60.0;
 
-pub fn search(indexer: &RepoIndexer, query: &str, top_k: usize) -> Result<CodeSearchResult, IndexStoreError> {
+/// `fts`, when given, is what the word ranking searches instead of `query` —
+/// unless it has no searchable word in it, in which case `query` is: a model
+/// that asked for more precision must not lose the ranking for it.
+pub fn search(
+    indexer: &RepoIndexer,
+    query: &str,
+    fts: Option<&[String]>,
+    top_k: usize,
+) -> Result<CodeSearchResult, IndexStoreError> {
     let top_k = top_k.clamp(1, MAX_TOP_K);
     let store = indexer.store();
     let tokens = extract_search_tokens(query);
@@ -51,7 +59,7 @@ pub fn search(indexer: &RepoIndexer, query: &str, top_k: usize) -> Result<CodeSe
     }
 
     let candidates = top_k * CANDIDATES_PER_MATCH;
-    let lexical = match fts5_query(query) {
+    let lexical = match fts.and_then(|terms| fts5_query(&terms.join(" "))).or_else(|| fts5_query(query)) {
         Some(fts) => store.search_bm25(&fts, candidates)?.into_iter().map(|(id, _)| id).collect(),
         None => Vec::new(),
     };
@@ -221,7 +229,7 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "where is parse_config", 5).unwrap();
+        let result = search(&indexer, "where is parse_config", None, 5).unwrap();
 
         let first = &result.matches[0];
         assert_eq!((first.path.as_str(), first.source), ("config.rs", MatchSource::Symbol));
@@ -232,20 +240,20 @@ mod tests {
     #[test]
     fn a_plain_word_is_not_taken_for_a_name() {
         let indexer = indexed("search-plain", &[("a.rs", "fn sync() {}\n")], Arc::default());
-        let result = search(&indexer, "how does sync work", 5).unwrap();
+        let result = search(&indexer, "how does sync work", None, 5).unwrap();
         assert!(result.matches.iter().all(|m| m.source != MatchSource::Symbol), "{:?}", summary(&result));
     }
 
     #[test]
     fn a_one_word_query_is_taken_for_a_name() {
         let indexer = indexed("search-one-word", &[("a.rs", "fn first() {}\n\nfn tokenize() {}\n")], Arc::default());
-        let result = search(&indexer, "tokenize", 5).unwrap();
+        let result = search(&indexer, "tokenize", None, 5).unwrap();
         // The chunk the declaration is in, not the file's first.
         let symbols: Vec<_> = summary(&result).into_iter().filter(|(_, s)| *s == MatchSource::Symbol).collect();
         assert_eq!(symbols, [("tokenize".to_string(), MatchSource::Symbol)]);
         assert_eq!((result.matches[0].start_line, result.matches[0].end_line), (3, 3));
         // In whatever case it was typed.
-        assert_eq!(search(&indexer, "TOKENIZE", 5).unwrap().matches[0].source, MatchSource::Symbol);
+        assert_eq!(search(&indexer, "TOKENIZE", None, 5).unwrap().matches[0].source, MatchSource::Symbol);
     }
 
     // --------------------------------------------------- words and meaning
@@ -258,12 +266,12 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "automobile", 1).unwrap();
+        let result = search(&indexer, "automobile", None, 1).unwrap();
 
         assert_eq!(summary(&result), [("start_car".to_string(), MatchSource::Semantic)]);
         assert!(result.meta.tiers_used.contains(&MatchSource::Semantic));
         // Found by words as well, it is still labelled by meaning.
-        let both = search(&indexer, "turn the key", 1).unwrap();
+        let both = search(&indexer, "turn the key", None, 1).unwrap();
         assert_eq!(summary(&both), [("start_car".to_string(), MatchSource::Semantic)]);
     }
 
@@ -300,7 +308,7 @@ mod tests {
         );
         fs::write(indexer.root().join("a.rs"), "fn widget_ONE() {}\n").unwrap();
 
-        let result = search(&indexer, "widget", 5).unwrap();
+        let result = search(&indexer, "widget", None, 5).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -319,7 +327,7 @@ mod tests {
         fs::write(indexer.root().join("a.rs"), "fn changed() {}
 ").unwrap();
 
-        let result = search(&indexer, "calls to widget", 1).unwrap();
+        let result = search(&indexer, "calls to widget", None, 1).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -328,8 +336,8 @@ mod tests {
     fn the_number_asked_for_is_held_between_one_and_the_maximum() {
         let body: String = (0..60).map(|i| format!("fn gadget_{i}() {{ gadget }}\n")).collect();
         let indexer = indexed("search-limits", &[("a.rs", &body)], Arc::default());
-        assert_eq!(search(&indexer, "gadget", 0).unwrap().matches.len(), 1);
-        assert_eq!(search(&indexer, "gadget", 500).unwrap().matches.len(), MAX_TOP_K);
+        assert_eq!(search(&indexer, "gadget", None, 0).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "gadget", None, 500).unwrap().matches.len(), MAX_TOP_K);
     }
 
     // ------------------------------------------------ meaning unavailable
@@ -343,11 +351,26 @@ mod tests {
         model.fail.store(true, Ordering::SeqCst);
 
         // A plain word, so no name lookup: only words can find it.
-        let result = search(&indexer, "what does gizmo do", 5).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(!result.meta.tiers_used.contains(&MatchSource::Semantic));
         assert!(result.meta.hint.as_deref().is_some_and(|h| h.contains("model.safetensors")), "{:?}", result.meta);
+    }
+
+    /// With the model down, only the word ranking answers — which makes what
+    /// it searched for visible.
+    #[test]
+    fn fts_is_what_the_words_are_matched_against() {
+        let model = Arc::new(FakeModel::default());
+        let indexer = indexed("search-fts", &[("a.rs", "fn gizmo() {}\n")], Arc::clone(&model));
+        model.fail.store(true, Ordering::SeqCst);
+
+        let terms = ["gizmo".to_string()];
+        assert_eq!(search(&indexer, "the thing that starts up", Some(&terms), 5).unwrap().matches.len(), 1);
+        // Nothing searchable in `fts`: the query's own words are used.
+        let noise = ["!!".to_string()];
+        assert_eq!(search(&indexer, "what does gizmo do", Some(&noise), 5).unwrap().matches.len(), 1);
     }
 
     /// Never embedded because the model would not load: nothing to search by
@@ -357,7 +380,7 @@ mod tests {
         let model = Arc::new(FakeModel { fail: AtomicBool::new(true) });
         let indexer = indexed("search-no-model", &[("a.rs", "fn gizmo() {}\n")], model);
 
-        let result = search(&indexer, "what does gizmo do", 5).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5).unwrap();
 
         let hint = result.meta.hint.unwrap();
         assert!(hint.contains("unavailable") && !hint.contains("finished building"), "{hint}");

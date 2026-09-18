@@ -55,6 +55,7 @@ fn base_tools() -> HashSet<ToolName> {
         ToolName::GitStatus,
         ToolName::GitDiff,
         ToolName::GitBlame,
+        ToolName::SemanticSearch,
     ]
     .into_iter()
     .collect()
@@ -146,6 +147,7 @@ mod tests {
                 ToolName::GitStatus,
                 ToolName::GitDiff,
                 ToolName::GitBlame,
+                ToolName::SemanticSearch,
             ] {
                 assert!(offers(mode, tool), "{mode:?} cannot use {}", tool.wire_name());
             }

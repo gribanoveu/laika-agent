@@ -63,6 +63,37 @@ describe("what each call shows", () => {
     expect(shown.meta).toContain("+");
   });
 
+  test("a search shows where each match is and passes the hint on", () => {
+    const shown = describeTool(
+      tool({
+        name: "semanticSearch",
+        arguments: '{"query":"where the index syncs"}',
+        result: {
+          matches: [
+            { path: "src/index_sync.rs", startLine: 112, endLine: 130, name: "RepoIndexer.sync", source: "symbol" },
+            { path: "docs/plan.md", startLine: 4, endLine: 9, name: null, source: "lexical" },
+          ],
+          meta: { tiersUsed: ["symbol", "lexical"], weak: true, hint: "Name a function." },
+        },
+      }),
+    );
+
+    expect(shown).toMatchObject({ name: "Search", arg: "where the index syncs", meta: "2 matches" });
+    expect(shown.detail.split("\n")).toEqual([
+      "src/index_sync.rs:112-130  RepoIndexer.sync",
+      "docs/plan.md:4-9",
+      "",
+      "Name a function.",
+    ]);
+  });
+
+  test("a failed search still shows what was asked", () => {
+    const shown = describeTool(
+      tool({ name: "semanticSearch", arguments: '{"query":"x"}', error: "search is unavailable" }),
+    );
+    expect(shown).toMatchObject({ name: "Search", arg: "x", meta: "failed" });
+  });
+
   test("a write shows the size of the change and the diff itself", () => {
     const shown = describeTool(
       tool({

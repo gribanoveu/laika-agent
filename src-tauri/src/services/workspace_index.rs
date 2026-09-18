@@ -15,10 +15,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::domain::chunk_index::ChunkBuildOptions;
 use crate::domain::embeddings::EmbeddingProvider;
+use crate::domain::tools::CodeSearchFn;
 use crate::domain::workspace_index::{IndexEvent, IndexEventSink};
 use crate::infra::file_watcher::FileWatcher;
 use crate::infra::index_store::IndexStoreError;
 use crate::infra::repository_identity::repository_id;
+use crate::services::code_search;
 use crate::services::index_sync::RepoIndexer;
 
 #[derive(Debug, thiserror::Error)]
@@ -89,6 +91,15 @@ impl WorkspaceIndex {
         };
         *open = Some(Open { root: root.to_path_buf(), indexer, _watcher: watcher });
         failed.map_or(Ok(()), |error| Err(error.into()))
+    }
+
+    /// Search of the open folder, as the tools take it. Bound to that folder's
+    /// indexer: a turn keeps searching the folder it started in.
+    pub fn searcher(&self) -> Option<CodeSearchFn> {
+        let indexer = self.current()?;
+        Some(Arc::new(move |query, fts, top_k| {
+            code_search::search(&indexer, query, fts, top_k).map_err(|error| error.to_string())
+        }))
     }
 
     /// The open folder's indexer, for search.
@@ -163,6 +174,21 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "the save never reached the index");
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    #[test]
+    fn the_searcher_searches_the_open_folder_and_is_absent_without_one() {
+        let index = workspace_index("ws-searcher");
+        assert!(index.searcher().is_none());
+        let root = temp_dir("ws-searcher-repo");
+        fs::write(root.join("a.rs"), "fn find_me_here() {}\n").unwrap();
+        let (sink, events) = channel_sink();
+        index.open(&root, sink).unwrap();
+        next_finish(&events);
+
+        let found = index.searcher().unwrap()("find_me_here", None, 5).unwrap();
+
+        assert_eq!(found.matches[0].path, "a.rs");
     }
 
     #[test]
