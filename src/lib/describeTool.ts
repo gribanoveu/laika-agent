@@ -38,6 +38,7 @@ const LABELS: Record<string, string> = {
   gitBlame: "Blame",
   runCommand: "Bash",
   semanticSearch: "Search",
+  skill: "Skill",
 };
 
 /** A tool this build does not know is shown by its wire name rather than hidden. */
@@ -165,6 +166,20 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         // captured output is authoritative — and shorter, being truncated in
         // the middle rather than cut off wherever the turn ended.
         detail: settled || streamed,
+      };
+    }
+
+    case "skill": {
+      // A skill's files are listed after its instructions, as the model got them.
+      const files = Array.isArray(result.files) ? (result.files as string[]) : [];
+      const path = str(args.path);
+      return {
+        name,
+        arg: [str(args.name) ?? "", path].filter(Boolean).join("/"),
+        meta: files.length ? `${files.length} ${files.length === 1 ? "file" : "files"}` : undefined,
+        detail: [(str(result.instructions) ?? str(result.content) ?? "").trimEnd(), files.map((f) => `· ${f}`).join("\n")]
+          .filter(Boolean)
+          .join("\n\n"),
       };
     }
 

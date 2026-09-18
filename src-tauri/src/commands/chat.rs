@@ -375,6 +375,9 @@ where
         let sleep = |d: Duration| std::thread::sleep(d);
         let take_steering = || state.steering.take();
         let shell = Shell::default();
+        // A skills folder that cannot be read costs the turn its skills, not
+        // the turn itself: nothing the user asked for depends on it existing.
+        let skills = crate::infra::skills_store::catalog().unwrap_or_default();
 
         let turn = Turn {
             events: &events,
@@ -387,6 +390,7 @@ where
             take_steering: &take_steering,
             shell: &shell,
             search,
+            skills: &skills,
         };
         run(&turn).map_err(|e| e.to_string())
     })

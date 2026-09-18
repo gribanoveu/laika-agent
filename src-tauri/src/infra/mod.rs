@@ -14,3 +14,4 @@ pub mod process_runner;
 pub mod repository_identity;
 pub mod chat_store;
 pub mod file_watcher;
+pub mod skills_store;

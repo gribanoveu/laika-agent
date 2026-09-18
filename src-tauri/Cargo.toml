@@ -69,6 +69,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # table to f32, and the pooling it did is thirty lines here.
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 notify = "8"
+yaml_serde = "0.10"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

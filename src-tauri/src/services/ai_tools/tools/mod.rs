@@ -34,6 +34,7 @@ pub mod write_file;
 pub mod read_file;
 pub mod run_command;
 pub mod semantic_search;
+pub mod skill;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -59,6 +60,7 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::Move, move_path::definition),
     (ToolName::Todo, todo::definition),
     (ToolName::RunCommand, run_command::definition),
+    (ToolName::Skill, skill::definition),
 ];
 
 /// What the model is offered for a turn.
@@ -96,6 +98,7 @@ pub fn execute_tool(
         ToolCall::GitBlame(args) => git::git_blame(scope, args),
         ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
+        ToolCall::Skill(args) => skill::skill(args),
     }
 }
 
@@ -105,7 +108,7 @@ mod definition_tests {
     use crate::domain::llm::LlmToolCall;
     use crate::domain::tools::{
         DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs,
-        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, TodoArgs, TodoUpdateStatus,
+        GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, TodoUpdateStatus,
         WriteFileArgs,
         CreateDirectoryArgs,
     };
@@ -255,6 +258,13 @@ mod definition_tests {
                     fts: Some(vec!["sync".to_string()]),
                     top_k: Some(5),
                     preview: Some(true),
+                })],
+            ),
+            ToolName::Skill => (
+                r#"{"name":"release"}"#,
+                vec![ToolCall::Skill(SkillArgs {
+                    name: "release".to_string(),
+                    path: Some("checklist.md".to_string()),
                 })],
             ),
             ToolName::GitBlame => (

@@ -56,6 +56,7 @@ fn base_tools() -> HashSet<ToolName> {
         ToolName::GitDiff,
         ToolName::GitBlame,
         ToolName::SemanticSearch,
+        ToolName::Skill,
     ]
     .into_iter()
     .collect()

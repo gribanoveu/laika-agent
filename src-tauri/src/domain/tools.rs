@@ -38,6 +38,7 @@ pub enum ToolName {
     RunCommand,
     GitStatus,
     SemanticSearch,
+    Skill,
 }
 
 impl ToolName {
@@ -59,6 +60,7 @@ impl ToolName {
         ToolName::GitStatus,
         ToolName::RunCommand,
         ToolName::SemanticSearch,
+        ToolName::Skill,
     ];
 
     /// The name the model calls this tool by. Must match what `Serialize`
@@ -80,6 +82,7 @@ impl ToolName {
             ToolName::RunCommand => "runCommand",
             ToolName::GitStatus => "gitStatus",
             ToolName::SemanticSearch => "semanticSearch",
+            ToolName::Skill => "skill",
         }
     }
 
@@ -125,7 +128,9 @@ impl ToolName {
             | ToolName::DeleteFile
             | ToolName::CreateDirectory
             | ToolName::DeleteDirectory
-            | ToolName::Todo => 1,
+            | ToolName::Todo
+            // A file or two out of the app directory.
+            | ToolName::Skill => 1,
             // A gitignore-aware walk plus a regex over many files.
             ToolName::Grep => 3,
             // Local git2 I/O plus diff/blame compaction.
@@ -186,7 +191,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            15,
+            16,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -552,6 +557,9 @@ pub enum ToolError {
     /// and failed is not this — that is a result with a non-zero exit code.
     #[error("{0}")]
     Command(String),
+    /// A skill that could not be loaded — unknown, or its `SKILL.md` broken.
+    #[error("{0}")]
+    Skill(String),
 }
 
 fn task_not_found_message(id: &str, available: &Option<Vec<String>>) -> String {
@@ -590,6 +598,7 @@ pub enum ToolCall {
     GitBlame(GitBlameArgs),
     RunCommand(crate::domain::command_exec::CommandRequest),
     SemanticSearch(SemanticSearchArgs),
+    Skill(SkillArgs),
 }
 
 impl ToolCall {
@@ -610,6 +619,7 @@ impl ToolCall {
             ToolCall::GitBlame(_) => ToolName::GitBlame,
             ToolCall::SemanticSearch(_) => ToolName::SemanticSearch,
             ToolCall::RunCommand(_) => ToolName::RunCommand,
+            ToolCall::Skill(_) => ToolName::Skill,
         }
     }
 
@@ -722,6 +732,29 @@ pub enum ToolResult {
         matches: Vec<crate::domain::code_search::CodeMatch>,
         meta: crate::domain::code_search::SearchMeta,
     },
+    /// A skill's `SKILL.md` body, frontmatter stripped, and the paths of the
+    /// files beside it that `skill` with a `path` can fetch.
+    #[serde(rename_all = "camelCase")]
+    Skill {
+        name: String,
+        instructions: String,
+        files: Vec<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SkillFile {
+        name: String,
+        path: String,
+        content: String,
+    },
+}
+
+/// `skill` arguments: a skill by name, or one of its files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillArgs {
+    pub name: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// `readFile` arguments.

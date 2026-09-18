@@ -21,6 +21,7 @@ use std::path::Path;
 
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::LlmMessage;
+use crate::domain::skills::SkillMeta;
 use crate::domain::tools::{Task, TodoStatus};
 
 /// The half that never varies.
@@ -138,6 +139,8 @@ pub struct TurnContext<'a> {
     /// "you will be asked to approve this" is otherwise a rule the model
     /// follows against a fact that is no longer true.
     pub unattended: bool,
+    /// The user's skills, as the `skill` tool can load them.
+    pub skills: &'a [SkillMeta],
 }
 
 /// The varying half: what is true at this moment and nowhere else.
@@ -191,6 +194,37 @@ pub fn todo_block(todos: &[Task]) -> Option<String> {
     Some(format!("## Checklist\n\n{}", lines.join("\n")))
 }
 
+/// Past this many characters of descriptions, the rest of the catalog is
+/// listed by name alone. A skill's description may be 1 024 characters, and
+/// this message goes out on every request; names keep every skill reachable
+/// while the text stops growing with the folder.
+const SKILL_DESCRIPTIONS_BUDGET: usize = 8_000;
+
+/// The skills the model may load, or nothing when there are none.
+///
+/// Its own message, between the mode and the turn's facts: it changes only
+/// when the user edits their skills folder, so it belongs with the prefix a
+/// cache can hold rather than with the checklist that changes every round.
+pub fn skills_block(skills: &[SkillMeta]) -> Option<String> {
+    if skills.is_empty() {
+        return None;
+    }
+    let mut text = String::from(
+        "## Skills\n\nThe user keeps these instruction packs for recurring kinds of work. \
+         When the request matches one, load it with `skill` before you start, and follow it.\n",
+    );
+    let mut spent = 0;
+    for skill in skills {
+        spent += skill.description.len();
+        if spent <= SKILL_DESCRIPTIONS_BUDGET {
+            text.push_str(&format!("\n- {}: {}", skill.name, skill.description));
+        } else {
+            text.push_str(&format!("\n- {}", skill.name));
+        }
+    }
+    Some(text)
+}
+
 /// What goes in front of the conversation on every request.
 ///
 /// Built here and prepended at request time rather than stored in the history:
@@ -198,11 +232,12 @@ pub fn todo_block(todos: &[Task]) -> Option<String> {
 /// checklist from whenever the chat was started, resent forever, and saved
 /// into the chat file besides.
 pub fn system_messages(ctx: &TurnContext) -> Vec<LlmMessage> {
-    vec![
-        LlmMessage::system(INSTRUCTIONS),
-        LlmMessage::system(mode_instructions(ctx.mode)),
-        LlmMessage::system(context_block(ctx)),
-    ]
+    let mut messages = vec![LlmMessage::system(INSTRUCTIONS), LlmMessage::system(mode_instructions(ctx.mode))];
+    if let Some(skills) = skills_block(ctx.skills) {
+        messages.push(LlmMessage::system(skills));
+    }
+    messages.push(LlmMessage::system(context_block(ctx)));
+    messages
 }
 
 #[cfg(test)]
@@ -230,7 +265,45 @@ mod tests {
             today: "17 September 2026",
             todos,
             unattended: false,
+            skills: &[],
         }
+    }
+
+    fn skill(name: &str, description: &str) -> SkillMeta {
+        SkillMeta { name: name.to_string(), description: description.to_string() }
+    }
+
+    #[test]
+    fn skills_are_listed_by_name_and_description_before_the_turn() {
+        let workspace = PathBuf::from("/tmp/p");
+        let skills = [skill("release", "Cuts a release."), skill("review", "Reviews a diff.")];
+        let messages = system_messages(&TurnContext { skills: &skills, ..ctx(&workspace, &[]) });
+
+        assert_eq!(messages.len(), 4);
+        let text = messages[2].content.as_deref().unwrap();
+        assert!(text.contains("- release: Cuts a release.\n- review: Reviews a diff."), "{text}");
+        assert!(text.contains("`skill`"));
+        assert_eq!(messages[3], LlmMessage::system(context_block(&ctx(&workspace, &[]))));
+    }
+
+    /// No heading for an empty folder: "Skills" with nothing under it is an
+    /// invitation to call `skill` with a guessed name.
+    #[test]
+    fn no_skills_no_message() {
+        assert_eq!(skills_block(&[]), None);
+    }
+
+    /// Past the budget a skill keeps its name — still reachable — and loses
+    /// only its description.
+    #[test]
+    fn past_the_budget_skills_are_listed_by_name_alone() {
+        let long = "d".repeat(SKILL_DESCRIPTIONS_BUDGET / 2);
+        let skills = [skill("one", &long), skill("two", &long), skill("three", &long)];
+        let text = skills_block(&skills).unwrap();
+
+        assert!(text.contains(&format!("- one: {long}")));
+        assert!(text.contains(&format!("- two: {long}")));
+        assert!(text.ends_with("\n- three"), "{}", &text[text.len() - 40..]);
     }
 
     /// The prompt cites tools by the name the model calls them by. A tool

@@ -107,6 +107,32 @@ describe("what each call shows", () => {
     ]);
   });
 
+  test("a loaded skill shows its instructions and the files beside them", () => {
+    const shown = describeTool(
+      tool({
+        name: "skill",
+        arguments: '{"name":"release"}',
+        result: { name: "release", instructions: "Bump the version.\n", files: ["checklist.md"] },
+      }),
+    );
+
+    expect(shown).toMatchObject({ name: "Skill", arg: "release", meta: "1 file" });
+    expect(shown.detail).toBe("Bump the version.\n\n· checklist.md");
+  });
+
+  test("a skill's file is shown by the skill and its path", () => {
+    const shown = describeTool(
+      tool({
+        name: "skill",
+        arguments: '{"name":"release","path":"checklist.md"}',
+        result: { name: "release", path: "checklist.md", content: "1. tag" },
+      }),
+    );
+
+    expect(shown).toMatchObject({ name: "Skill", arg: "release/checklist.md", detail: "1. tag" });
+    expect(shown.meta).toBeUndefined();
+  });
+
   test("a failed search still shows what was asked", () => {
     const shown = describeTool(
       tool({ name: "semanticSearch", arguments: '{"query":"x"}', error: "search is unavailable" }),

@@ -22,6 +22,7 @@ use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
 use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
+use crate::domain::skills::SkillMeta;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, CodeSearchFn, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -169,6 +170,9 @@ pub struct Turn<'a> {
     /// Search of the open folder's index, for `semanticSearch`; `None` when
     /// the folder has none, and the tool says so to the model.
     pub search: Option<CodeSearchFn>,
+    /// The user's skills, listed in the prompt for `skill` to load. Read
+    /// once per turn, so the prompt does not change between its rounds.
+    pub skills: &'a [SkillMeta],
 }
 
 /// Notes typed while a turn is running, waiting for the next round.
@@ -704,6 +708,7 @@ fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) ->
         today: &Local::now().format("%e %B %Y").to_string(),
         todos,
         unattended: turn.approval.skip_all,
+        skills: turn.skills,
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
@@ -1036,6 +1041,7 @@ mod tests {
         slept: Arc<Mutex<Vec<Duration>>>,
         steering: Arc<SteeringQueue>,
         search: Option<CodeSearchFn>,
+        skills: Vec<SkillMeta>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1070,6 +1076,7 @@ mod tests {
             slept: Arc::new(Mutex::new(Vec::new())),
             steering,
             search: None,
+            skills: Vec::new(),
         }
     }
 
@@ -1108,6 +1115,7 @@ mod tests {
                 take_steering: &take_steering,
                 search: self.search.clone(),
                 shell: &shell,
+                skills: &self.skills,
             };
             f(&turn)
         }
@@ -2344,6 +2352,28 @@ mod tests {
 
         let told = tool_contents(h.provider.requests().last().unwrap());
         assert!(told[0].contains("src/sync.rs"), "{told:?}");
+    }
+
+    /// The catalog the turn was given is what every request lists — the model
+    /// can load only what it has been told exists.
+    #[test]
+    fn every_request_lists_the_turns_skills() {
+        let mut h = harness(
+            "turn-skills",
+            vec![asks(vec![wants("r1", "listFiles", r#"{"path":"."}"#)]), text("done")],
+        );
+        h.skills = vec![SkillMeta { name: "release".into(), description: "Cuts a release.".into() }];
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("ship it")], vec![])).expect("finishes");
+
+        let requests = h.provider.requests();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(
+                request.messages.iter().any(|m| m.content.as_deref().is_some_and(|c| c.contains("- release: Cuts a release."))),
+                "a request went out without the skills"
+            );
+        }
     }
 
     /// Every field of the checkpoint, exercised through a real pause rather
