@@ -2,9 +2,11 @@
 //! needed to reload the chunk index without rescanning the working tree and to
 //! tell, file by file, what has changed since last time.
 //!
-//! It stores no vectors — those live beside it in their own file, one per
-//! embedding model. The relational tables here are ids, byte offsets and
-//! hashes.
+//! It stores the vectors too, one row per chunk and model, int8-quantized
+//! (260 bytes each). Upstream kept them in a separate `usearch` file per
+//! model and marked them in SQLite; the two could disagree after a crash, and
+//! did in the direction that loses data (`docs/07-upstream-findings.md`,
+//! B-11). One row cannot disagree with itself.
 //!
 //! The exception is `chunks_fts`, the full-text index behind keyword search.
 //! A full-text index *is* a copy of the text: there is no way to rank by term
@@ -30,7 +32,7 @@
 //! nobody can test.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -38,9 +40,17 @@ use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 use crate::domain::chunk_index::{CHUNK_VERSION, Chunk, ChunkId, ChunkKind, ChunkMetadata};
+use crate::domain::embeddings::QuantizedVector;
 use crate::domain::repo_index::{FileId, FileMetadata, INDEX_VERSION, Language, Symbol};
 
 const DB_FILE_NAME: &str = "chunks.db";
+
+/// The shape of the tables. `CREATE TABLE IF NOT EXISTS` does not alter a
+/// table that already exists, so a store from before a column was added would
+/// keep the old table and fail on the first write. On a mismatch every table
+/// is dropped and made again — the store is derived, see the module docs.
+const SCHEMA_VERSION: &str = "2";
+const META_SCHEMA_VERSION: &str = "schema_version";
 
 /// The two cheap keys under which the expensive versions are remembered. A
 /// mismatch on either means every row is meaningless, vectors included.
@@ -111,14 +121,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   prefix = '4 5 6'
 );
 
--- Written only once a vector has actually landed in the model's vector file.
--- Deliberately a separate write from `chunks.chunk_hash`: the gap between
--- them is what makes an interrupted sync resumable rather than a store that
--- claims work it never finished.
+-- A chunk's vector under one model, and the hash of the chunk it was made
+-- from. The vector and the claim that it exists are one row, written in one
+-- statement: an interrupted sync leaves a chunk either embedded or not, never
+-- marked as embedded with no vector behind it.
 CREATE TABLE IF NOT EXISTS embeddings (
   chunk_id   TEXT NOT NULL REFERENCES chunks(chunk_id) ON DELETE CASCADE,
   model_id   TEXT NOT NULL,
   chunk_hash BLOB NOT NULL,
+  -- `QuantizedVector::to_bytes`: a little-endian f32 scale, then one i8 a
+  -- dimension.
+  vector     BLOB NOT NULL,
   PRIMARY KEY (chunk_id, model_id)
 );
 
@@ -151,7 +164,6 @@ pub enum IndexStoreError {
 /// that repository's index.
 pub struct IndexStore {
     conn: Mutex<Connection>,
-    dir: PathBuf,
 }
 
 impl IndexStore {
@@ -166,11 +178,10 @@ impl IndexStore {
     pub fn open(dir: &Path) -> Result<Self, IndexStoreError> {
         std::fs::create_dir_all(dir).map_err(IndexStoreError::Io)?;
         let conn = Connection::open(dir.join(DB_FILE_NAME))?;
-        conn.execute_batch(SCHEMA_SQL)?;
+        reshape_if_stale(&conn)?;
 
         let store = Self {
             conn: Mutex::new(conn),
-            dir: dir.to_path_buf(),
         };
         store.enforce_versions()?;
         Ok(store)
@@ -191,13 +202,6 @@ impl IndexStore {
             self.write_meta(META_INDEX_VERSION, &index)?;
         }
         Ok(())
-    }
-
-    /// Where this model's vectors live. Per model, so switching models does
-    /// not silently read one model's vectors as another's — they would be
-    /// the right shape and the wrong meaning.
-    pub fn vectors_path(&self, model_id: &str) -> PathBuf {
-        self.dir.join(format!("vectors-{model_id}.usearch"))
     }
 
     /// Whether the cheap half has to be recomputed: chunk names and the
@@ -252,9 +256,12 @@ impl IndexStore {
              DELETE FROM chunks;
              DELETE FROM chunks_fts;
              DELETE FROM symbols;
-             DELETE FROM files;
-             DELETE FROM meta;",
+             DELETE FROM files;",
         )?;
+        // The content goes; the stamp of the tables' shape stays, because the
+        // shape did not change. Losing it would drop and recreate every table
+        // on the next open, for nothing.
+        conn.execute("DELETE FROM meta WHERE key != ?1", params![META_SCHEMA_VERSION])?;
         Ok(())
     }
 
@@ -470,26 +477,28 @@ impl IndexStore {
             .map_err(IndexStoreError::from)
     }
 
-    /// Records that this chunk now has a vector under this model.
-    ///
-    /// Written *after* the vector itself has landed in the model's file, and
-    /// deliberately as a separate write from the chunk row. The gap is the
-    /// feature: a sync killed between the two leaves a chunk with no
-    /// embedding record, which the next run notices and redoes. The opposite
-    /// order would leave a record claiming a vector that was never written,
-    /// and nothing would ever look for it again.
-    pub fn upsert_embedding(
+    /// Stores this chunk's vector under this model, together with the hash
+    /// of the chunk it was made from — one row, one statement. A separate
+    /// chunk row and embedding row is still the point: re-chunking a file
+    /// drops its vectors through the cascade, and renaming its chunks
+    /// (`replace_derived_for_file`) keeps them.
+    pub fn upsert_embeddings(
         &self,
-        chunk_id: &ChunkId,
-        chunk_hash: blake3::Hash,
         model_id: &str,
+        embeddings: &[(ChunkId, blake3::Hash, QuantizedVector)],
     ) -> Result<(), IndexStoreError> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES (?1, ?2, ?3)
-             ON CONFLICT(chunk_id, model_id) DO UPDATE SET chunk_hash = excluded.chunk_hash",
-            params![chunk_id.0, model_id, chunk_hash.as_bytes().to_vec()],
-        )?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        for (chunk_id, chunk_hash, vector) in embeddings {
+            tx.execute(
+                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash, vector) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(chunk_id, model_id) DO UPDATE SET
+                   chunk_hash = excluded.chunk_hash,
+                   vector     = excluded.vector",
+                params![chunk_id.0, model_id, chunk_hash.as_bytes().to_vec(), vector.to_bytes()],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -514,28 +523,32 @@ impl IndexStore {
         Ok(())
     }
 
-    /// What this model has already embedded, as chunk id and the hash of the
-    /// chunk it was embedded from. Paired with the model's vector file, this
-    /// is what lets a sync re-embed only what actually changed.
+    /// Everything this model has embedded: chunk id, the hash of the chunk it
+    /// was made from, and the vector — what a sync diffs against and what a
+    /// search ranks.
     ///
-    /// A damaged hash is skipped: the chunk then looks un-embedded and is
-    /// done again, which is the right answer to a row nobody can read.
-    pub fn load_all_embedding_hashes(
+    /// A row whose hash or vector cannot be read, or whose vector is not
+    /// `dimensions` wide, is skipped: the chunk then looks un-embedded and is
+    /// done again, which is the right answer to a row nobody can use.
+    pub fn load_all_embeddings(
         &self,
         model_id: &str,
-    ) -> Result<Vec<(ChunkId, blake3::Hash)>, IndexStoreError> {
+        dimensions: usize,
+    ) -> Result<Vec<(ChunkId, blake3::Hash, QuantizedVector)>, IndexStoreError> {
         let conn = self.lock()?;
-        let mut stmt =
-            conn.prepare("SELECT chunk_id, chunk_hash FROM embeddings WHERE model_id = ?1")?;
+        let mut stmt = conn
+            .prepare("SELECT chunk_id, chunk_hash, vector FROM embeddings WHERE model_id = ?1")?;
         let rows = stmt.query_map(params![model_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?))
         })?;
 
         let mut out = Vec::new();
         for row in rows {
-            let (chunk_id, bytes) = row?;
-            if let Some(hash) = hash_from_bytes(&bytes) {
-                out.push((ChunkId(chunk_id), hash));
+            let (chunk_id, hash, vector) = row?;
+            if let (Some(hash), Some(vector)) =
+                (hash_from_bytes(&hash), QuantizedVector::from_bytes(&vector, dimensions))
+            {
+                out.push((ChunkId(chunk_id), hash, vector));
             }
         }
         Ok(out)
@@ -629,6 +642,32 @@ impl IndexStore {
 /// Drops a file's rows from the full-text index, found through `chunks` (and
 /// so through its index on `file_id`) rather than by scanning a table that
 /// does not index the column being searched on.
+/// Drops and recreates every table when the store was made with another
+/// schema, then stamps this one. A missing stamp is a mismatch: a store from
+/// before the stamp existed has the old shape by definition.
+fn reshape_if_stale(conn: &Connection) -> Result<(), IndexStoreError> {
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+    let stamped: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = ?1", params![META_SCHEMA_VERSION], |row| row.get(0))
+        .optional()?;
+    if stamped.as_deref() != Some(SCHEMA_VERSION) {
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS embeddings;
+             DROP TABLE IF EXISTS symbols;
+             DROP TABLE IF EXISTS chunks_fts;
+             DROP TABLE IF EXISTS chunks;
+             DROP TABLE IF EXISTS files;
+             DELETE FROM meta;",
+        )?;
+    }
+    conn.execute_batch(SCHEMA_SQL)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+        params![META_SCHEMA_VERSION, SCHEMA_VERSION],
+    )?;
+    Ok(())
+}
+
 fn upsert_file_row(tx: &rusqlite::Transaction<'_>, file: &FileMetadata) -> Result<(), IndexStoreError> {
     // Before the epoch, or a clock that went backwards: the file is
     // not skippable, so it reads as "modified at the epoch" and is
@@ -799,7 +838,7 @@ mod tests {
     use super::*;
     use crate::testing::temp_dir;
 
-    fn store(label: &str) -> (IndexStore, PathBuf) {
+    fn store(label: &str) -> (IndexStore, std::path::PathBuf) {
         let dir = temp_dir(label);
         (IndexStore::open(&dir).expect("a store"), dir)
     }
@@ -832,7 +871,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES (?1, 'm', ?2)",
+            "INSERT INTO embeddings (chunk_id, model_id, chunk_hash, vector) VALUES (?1, 'm', ?2, X'00')",
             params![chunk_id, blake3::hash(b"x").as_bytes().to_vec()],
         )
         .unwrap();
@@ -1069,9 +1108,20 @@ mod tests {
 
         store.wipe().unwrap();
 
-        for table in ["files", "chunks", "chunks_fts", "embeddings", "symbols", "meta"] {
+        for table in ["files", "chunks", "chunks_fts", "embeddings", "symbols"] {
             assert_eq!(count(&store, table), 0, "{table} survived the wipe");
         }
+        // Only the stamp of the tables' shape is left: the content went, the
+        // shape did not change.
+        let conn = store.lock().unwrap();
+        let keys: Vec<String> = conn
+            .prepare("SELECT key FROM meta")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(keys, [META_SCHEMA_VERSION]);
     }
 
     // -------------------------------------------------------------- chunks
@@ -1305,7 +1355,7 @@ mod tests {
         {
             let conn = store.lock().unwrap();
             conn.execute(
-                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES ('a.md#0-9', 'm', X'00')",
+                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash, vector) VALUES ('a.md#0-9', 'm', X'00', X'00')",
                 [],
             )
             .unwrap();
@@ -1334,7 +1384,7 @@ mod tests {
         {
             let conn = store.lock().unwrap();
             conn.execute(
-                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES ('a.md#0-9', 'm', X'00')",
+                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash, vector) VALUES ('a.md#0-9', 'm', X'00', X'00')",
                 [],
             )
             .unwrap();
@@ -1461,95 +1511,160 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn an_embedding_record_round_trips_for_its_own_model() {
-        let (store, _dir) = store("store-embeddings");
-        with_two_chunks(&store);
-        let id = ChunkId("a.md#0-1".into());
-        let hash = blake3::hash(b"chunk");
-
-        store.upsert_embedding(&id, hash, "potion").unwrap();
-
-        assert_eq!(store.load_all_embedding_hashes("potion").unwrap(), vec![(id, hash)]);
-        assert!(store.load_all_embedding_hashes("other").unwrap().is_empty());
+    fn vector(seed: f32) -> QuantizedVector {
+        QuantizedVector::quantize(&[seed, 1.0 - seed, 0.5, -0.25])
     }
 
-    /// Re-embedding a chunk moves its record rather than adding a second one
-    /// — a chunk has one vector per model, and two records would make "is
-    /// this current" unanswerable.
+    fn embed(store: &IndexStore, model: &str, chunk: &str, hash: &[u8], seed: f32) {
+        store
+            .upsert_embeddings(model, &[(ChunkId(chunk.into()), blake3::hash(hash), vector(seed))])
+            .unwrap();
+    }
+
+    fn embedded(store: &IndexStore, model: &str) -> Vec<(ChunkId, blake3::Hash, QuantizedVector)> {
+        store.load_all_embeddings(model, 4).unwrap()
+    }
+
+    /// The vector comes back with the record, under its own model only.
     #[test]
-    fn re_embedding_a_chunk_replaces_its_record() {
+    fn an_embedding_round_trips_for_its_own_model() {
+        let (store, _dir) = store("store-embeddings");
+        with_two_chunks(&store);
+        embed(&store, "potion", "a.md#0-1", b"chunk", 0.3);
+
+        assert_eq!(
+            embedded(&store, "potion"),
+            vec![(ChunkId("a.md#0-1".into()), blake3::hash(b"chunk"), vector(0.3))]
+        );
+        assert!(embedded(&store, "other").is_empty());
+    }
+
+    /// Re-embedding a chunk replaces its hash *and* its vector — a new hash
+    /// over the old vector would claim a vector the chunk never had.
+    #[test]
+    fn re_embedding_a_chunk_replaces_its_hash_and_vector() {
         let (store, _dir) = store("store-embeddings-upsert");
         with_two_chunks(&store);
-        let id = ChunkId("a.md#0-1".into());
+        embed(&store, "potion", "a.md#0-1", b"before", 0.1);
+        embed(&store, "potion", "a.md#0-1", b"after", 0.9);
 
-        store.upsert_embedding(&id, blake3::hash(b"before"), "potion").unwrap();
-        store.upsert_embedding(&id, blake3::hash(b"after"), "potion").unwrap();
+        let loaded = embedded(&store, "potion");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!((loaded[0].1, &loaded[0].2), (blake3::hash(b"after"), &vector(0.9)));
+    }
 
-        let loaded = store.load_all_embedding_hashes("potion").unwrap();
-        assert_eq!(loaded, vec![(id, blake3::hash(b"after"))]);
+    /// A batch is one transaction: all of it lands or none of it does. One
+    /// row that cannot be written — here a chunk that does not exist — must
+    /// not leave the rest half-recorded.
+    #[test]
+    fn a_batch_of_embeddings_lands_whole_or_not_at_all() {
+        let (store, _dir) = store("store-embeddings-batch");
+        with_two_chunks(&store);
+        let batch = [
+            (ChunkId("a.md#0-1".into()), blake3::hash(b"a"), vector(0.1)),
+            (ChunkId("ghost#0-1".into()), blake3::hash(b"g"), vector(0.2)),
+        ];
+
+        assert!(store.upsert_embeddings("potion", &batch).is_err());
+        assert!(embedded(&store, "potion").is_empty());
     }
 
     /// One chunk can be embedded by two models at once — that is what the
     /// composite key is for, and what makes switching models cheap to undo.
     #[test]
-    fn two_models_can_hold_a_record_for_the_same_chunk() {
+    fn two_models_can_hold_a_vector_for_the_same_chunk() {
         let (store, _dir) = store("store-embeddings-models");
         with_two_chunks(&store);
-        let id = ChunkId("a.md#0-1".into());
+        embed(&store, "one", "a.md#0-1", b"a", 0.1);
+        embed(&store, "two", "a.md#0-1", b"b", 0.2);
 
-        store.upsert_embedding(&id, blake3::hash(b"a"), "one").unwrap();
-        store.upsert_embedding(&id, blake3::hash(b"b"), "two").unwrap();
-
-        assert_eq!(store.load_all_embedding_hashes("one").unwrap().len(), 1);
-        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+        assert_eq!(embedded(&store, "one")[0].2, vector(0.1));
+        assert_eq!(embedded(&store, "two")[0].2, vector(0.2));
     }
 
     #[test]
     fn clearing_one_model_leaves_the_other_alone() {
         let (store, _dir) = store("store-embeddings-clear");
         with_two_chunks(&store);
-        store.upsert_embedding(&ChunkId("a.md#0-1".into()), blake3::hash(b"a"), "one").unwrap();
-        store.upsert_embedding(&ChunkId("a.md#1-2".into()), blake3::hash(b"b"), "two").unwrap();
+        embed(&store, "one", "a.md#0-1", b"a", 0.1);
+        embed(&store, "two", "a.md#1-2", b"b", 0.2);
 
         store.clear_embeddings("one").unwrap();
 
-        assert!(store.load_all_embedding_hashes("one").unwrap().is_empty());
-        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+        assert!(embedded(&store, "one").is_empty());
+        assert_eq!(embedded(&store, "two").len(), 1);
     }
 
     #[test]
     fn deleting_one_record_leaves_the_same_chunk_under_another_model() {
         let (store, _dir) = store("store-embeddings-delete");
         with_two_chunks(&store);
-        let id = ChunkId("a.md#0-1".into());
-        store.upsert_embedding(&id, blake3::hash(b"a"), "one").unwrap();
-        store.upsert_embedding(&id, blake3::hash(b"b"), "two").unwrap();
+        embed(&store, "one", "a.md#0-1", b"a", 0.1);
+        embed(&store, "two", "a.md#0-1", b"b", 0.2);
 
-        store.delete_embedding(&id, "one").unwrap();
+        store.delete_embedding(&ChunkId("a.md#0-1".into()), "one").unwrap();
 
-        assert!(store.load_all_embedding_hashes("one").unwrap().is_empty());
-        assert_eq!(store.load_all_embedding_hashes("two").unwrap().len(), 1);
+        assert!(embedded(&store, "one").is_empty());
+        assert_eq!(embedded(&store, "two").len(), 1);
     }
 
-    /// An unreadable record means the chunk looks un-embedded and is done
-    /// again — the right answer to a row nobody can read, and better than
-    /// failing the load of every other model's records with it.
+    /// An unreadable hash, an unreadable vector, or a vector of another width
+    /// makes the chunk look un-embedded, so it is done again — and does not
+    /// fail the load of every other row with it.
     #[test]
-    fn a_damaged_embedding_record_is_skipped_rather_than_fatal() {
+    fn a_damaged_embedding_row_is_skipped_rather_than_fatal() {
         let (store, _dir) = store("store-embeddings-damaged");
         with_two_chunks(&store);
-        store.upsert_embedding(&ChunkId("a.md#0-1".into()), blake3::hash(b"a"), "one").unwrap();
-        store.upsert_embedding(&ChunkId("a.md#1-2".into()), blake3::hash(b"b"), "one").unwrap();
+        embed(&store, "one", "a.md#0-1", b"a", 0.1);
+        embed(&store, "one", "a.md#1-2", b"b", 0.2);
+
+        for damage in [
+            "UPDATE embeddings SET chunk_hash = X'00' WHERE chunk_id = 'a.md#0-1'",
+            "UPDATE embeddings SET vector = X'0000' WHERE chunk_id = 'a.md#0-1'",
+        ] {
+            store.lock().unwrap().execute(damage, []).unwrap();
+            let loaded = embedded(&store, "one");
+            assert_eq!(loaded.len(), 1, "{damage}");
+            assert_eq!(loaded[0].0 .0, "a.md#1-2");
+            embed(&store, "one", "a.md#0-1", b"a", 0.1);
+        }
+        assert!(store.load_all_embeddings("one", 256).unwrap().is_empty(), "a 4-wide vector read as 256-wide");
+    }
+
+    // --------------------------------------------------------------- schema
+
+    /// A store from before the vector column: the table exists, so
+    /// `CREATE TABLE IF NOT EXISTS` leaves it as it is, and the first write
+    /// of a vector would fail. The schema stamp makes it rebuild instead.
+    #[test]
+    fn a_store_with_an_older_schema_is_rebuilt_on_open() {
+        let dir = crate::testing::temp_dir("store-old-schema");
         {
-            let conn = store.lock().unwrap();
-            conn.execute("UPDATE embeddings SET chunk_hash = X'00' WHERE chunk_id = 'a.md#0-1'", [])
-                .unwrap();
+            let conn = Connection::open(dir.join(DB_FILE_NAME)).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE embeddings (chunk_id TEXT NOT NULL, model_id TEXT NOT NULL,
+                                          chunk_hash BLOB NOT NULL, PRIMARY KEY (chunk_id, model_id));",
+            )
+            .unwrap();
         }
 
-        let loaded = store.load_all_embedding_hashes("one").unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].0.0, "a.md#1-2");
+        let store = IndexStore::open(&dir).unwrap();
+        with_two_chunks(&store);
+        embed(&store, "potion", "a.md#0-1", b"a", 0.1);
+        assert_eq!(embedded(&store, "potion").len(), 1);
+    }
+
+    /// And a store already on this schema keeps its rows across opens.
+    #[test]
+    fn a_store_on_this_schema_is_kept() {
+        let dir = crate::testing::temp_dir("store-same-schema");
+        {
+            let store = IndexStore::open(&dir).unwrap();
+            with_two_chunks(&store);
+            embed(&store, "potion", "a.md#0-1", b"a", 0.1);
+        }
+        assert_eq!(embedded(&IndexStore::open(&dir).unwrap(), "potion").len(), 1);
     }
 
     // ------------------------------------------------------------- symbols
@@ -1607,21 +1722,5 @@ mod tests {
         store.replace_symbols_for_file(&id, &[]).unwrap();
 
         assert!(store.load_all_symbols().unwrap().is_empty());
-    }
-
-    // ------------------------------------------------------------- vectors
-
-    /// One file per model. Reading one model's vectors as another's would
-    /// give the right shape and the wrong meaning — nothing would fail, the
-    /// answers would just be nonsense.
-    #[test]
-    fn each_model_gets_its_own_vector_file() {
-        let (store, dir) = store("store-vectors");
-
-        assert_eq!(
-            store.vectors_path("potion-int8"),
-            dir.join("vectors-potion-int8.usearch")
-        );
-        assert_ne!(store.vectors_path("a"), store.vectors_path("b"));
     }
 }

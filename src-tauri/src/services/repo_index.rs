@@ -448,7 +448,9 @@ mod tests {
         f.write("a.rs", "fn backfilled() {}\n");
         f.sync();
         let chunk = f.store.load_all_chunks().unwrap().remove(0);
-        f.store.upsert_embedding(&chunk.id, chunk.hash, "model").unwrap();
+        f.store
+            .upsert_embeddings("model", &[(chunk.id.clone(), chunk.hash, crate::domain::embeddings::QuantizedVector::quantize(&[1.0, 0.0]))])
+            .unwrap();
         // What an older tokenizer left behind: the same chunk, other derived
         // text. Only a real rewrite gets rid of it.
         let outdated = crate::domain::chunk_index::Chunk {
@@ -467,7 +469,7 @@ mod tests {
 
         assert_eq!(report.indexed, 0, "the cheap rebuild re-chunked from scratch");
         assert!(!f.store.derived_needs_backfill().unwrap());
-        assert_eq!(f.store.load_all_embedding_hashes("model").unwrap().len(), 1);
+        assert_eq!(f.store.load_all_embeddings("model", 2).unwrap().len(), 1);
         assert_eq!(f.found("backfilled"), ["a.rs"]);
         assert!(f.found("outdated").is_empty(), "the derived rows were not rewritten");
         assert!(f.found("stale_name").is_empty());
