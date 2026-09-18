@@ -22,16 +22,21 @@
 //! Embedding is cheap once loaded: all 1 911 chunks of this repository in
 //! 150 ms.
 //!
-//! Loaded at most once per process, and only when something is actually
-//! embedded — a project nobody searches semantically never pays it. There is
-//! no unload: the model sits in a `OnceLock` for the life of the process.
-//! Holding it in an `Arc` that is dropped when indexing goes idle is the
-//! upgrade if the resident cost turns out to matter
-//! (`docs/06-port-plan.md`, F-5.8).
+//! So the model is **loaded on first use and unloaded when idle**: after
+//! [`DEFAULT_IDLE_UNLOAD`] with no embedding, a background thread drops it and
+//! hands the freed memory back to the OS. The next embed pays the 0.7 s load
+//! again. A project nobody searches semantically never pays at all.
+//!
+//! Dropping is not enough on its own. The tokenizer is millions of small
+//! allocations, and the allocator keeps freed small blocks for reuse: measured,
+//! a dropped model still left **375 MB** resident. [`release_freed_memory`]
+//! asks the allocator to return them — down to ~50 MB.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use model2vec_rs::model::StaticModel;
 
@@ -62,31 +67,145 @@ pub fn bundled_model_dir(resource_dir: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("models").join(MODEL_DIR_NAME))
 }
 
+/// How long the model stays loaded after its last use. Long enough that a
+/// sync followed by a few searches loads it once; short enough that a window
+/// left open overnight is not holding a gigabyte.
+pub const DEFAULT_IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
+
+/// The bundled model behind a lazy, self-unloading slot.
+///
+/// **Construct one per process** — the workspace index owns it. Each instance
+/// has its own slot, so two would be able to hold two copies.
 pub struct LocalEmbeddings {
-    model: &'static StaticModel,
+    dir: PathBuf,
+    cell: IdleCell<StaticModel>,
 }
 
-static MODEL: OnceLock<Result<StaticModel, EmbeddingError>> = OnceLock::new();
-
 impl LocalEmbeddings {
-    /// The model, loaded on first use and kept for the life of the process.
+    /// Nothing is read until the first [`embed`](EmbeddingProvider::embed).
+    /// Constructing this on every file save is free — which is what "must not
+    /// lose" item 2 of stage 5 asks of the incremental tick.
+    pub fn new(dir: PathBuf, idle: Duration) -> Self {
+        Self { dir, cell: IdleCell::new(idle) }
+    }
+
+    /// Whether the weights are in memory right now.
+    pub fn is_loaded(&self) -> bool {
+        self.cell.is_loaded()
+    }
+}
+
+/// A value loaded on first use and dropped after `idle` without use.
+///
+/// Generic only so its tests can run on a number instead of a gigabyte of
+/// weights; the model is the one thing that lives in it.
+struct IdleCell<T> {
+    idle: Duration,
+    slot: Arc<Mutex<Slot<T>>>,
+}
+
+struct Slot<T> {
+    value: Option<Arc<T>>,
+    last_used: Option<Instant>,
+    reaper_running: bool,
+}
+
+impl<T: Send + Sync + 'static> IdleCell<T> {
+    fn new(idle: Duration) -> Self {
+        Self {
+            idle,
+            slot: Arc::new(Mutex::new(Slot { value: None, last_used: None, reaper_running: false })),
+        }
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.slot.lock().is_ok_and(|slot| slot.value.is_some())
+    }
+
+    /// The value, loading it if needed and starting the reaper that will drop
+    /// it. A failed load is not remembered: the next call tries again, so a
+    /// missing model starts working after `git lfs pull` without a restart.
     ///
-    /// One per process on purpose: two copies would be a gigabyte. The first
-    /// caller's `dir` wins; there is only one bundled model, so a second
-    /// caller asking for a different directory is a bug, not a use case.
-    pub fn load(dir: &Path) -> Result<Self, EmbeddingError> {
-        match MODEL.get_or_init(|| load_model(dir)) {
-            Ok(model) => Ok(Self { model }),
-            Err(error) => Err(error.clone()),
+    /// The lock is held only to swap the `Arc`, never while the caller uses
+    /// the value: an unload during an embed drops the slot's reference, and
+    /// the embed finishes on its own.
+    fn get_or_load(&self, load: impl FnOnce() -> Result<T, EmbeddingError>) -> Result<Arc<T>, EmbeddingError> {
+        let mut slot = self.slot.lock().map_err(|_| EmbeddingError::Invalid("model slot poisoned".into()))?;
+        let value = match &slot.value {
+            Some(value) => Arc::clone(value),
+            None => {
+                let value = Arc::new(load()?);
+                slot.value = Some(Arc::clone(&value));
+                value
+            }
+        };
+        slot.last_used = Some(Instant::now());
+        if !slot.reaper_running {
+            slot.reaper_running = true;
+            spawn_reaper(Arc::downgrade(&self.slot), self.idle);
+        }
+        Ok(value)
+    }
+}
+
+/// Wakes a few times per idle period and unloads once the value has not been
+/// used for a whole one. Holds the slot weakly, so dropping the cell ends the
+/// thread at its next wake; exits after an unload, and the next load starts a
+/// new one.
+fn spawn_reaper<T: Send + Sync + 'static>(slot: Weak<Mutex<Slot<T>>>, idle: Duration) {
+    let tick = (idle / 4).max(Duration::from_millis(10));
+    thread::spawn(move || loop {
+        thread::sleep(tick);
+        let Some(slot) = slot.upgrade() else { return };
+        let Ok(mut guard) = slot.lock() else { return };
+        if guard.last_used.is_some_and(|at| at.elapsed() >= idle) {
+            guard.value = None;
+            guard.reaper_running = false;
+            drop(guard);
+            release_freed_memory();
+            return;
+        }
+    });
+}
+
+/// Asks the allocator to hand freed memory back to the OS.
+///
+/// Without it, an unloaded model left 375 MB resident — the tokenizer's small
+/// blocks, kept by the allocator for reuse. Best effort: a no-op where there
+/// is no such call. On Windows the process heap has none that decommits, and
+/// the unload returns only what was allocated in large blocks (the 512 MB
+/// table), not the tokenizer.
+fn release_freed_memory() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: a null zone means "all zones" and a zero goal means "as much
+        // as possible"; the call only returns free pages and touches no live
+        // allocation.
+        unsafe {
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+        }
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> std::ffi::c_int;
+        }
+        // SAFETY: glibc's own call; trims free memory from the heap top and
+        // arenas, and touches no live allocation.
+        unsafe {
+            malloc_trim(0);
         }
     }
 }
 
 impl EmbeddingProvider for LocalEmbeddings {
     fn embed(&self, texts: &[&str]) -> Result<Vec<Embedding>, EmbeddingError> {
+        let model = self.cell.get_or_load(|| load_model(&self.dir))?;
         let sentences: Vec<String> = texts.iter().map(|text| (*text).to_string()).collect();
-        Ok(self
-            .model
+        Ok(model
             .encode_with_args(&sentences, Some(MAX_TOKENS), BATCH_SIZE)
             .into_iter()
             .map(Embedding)
@@ -143,9 +262,11 @@ mod tests {
         dot / (norm(a) * norm(b)).max(1e-12)
     }
 
-    fn model() -> LocalEmbeddings {
-        LocalEmbeddings::load(&bundled_model_dir(None))
-            .unwrap_or_else(|e| panic!("the bundled model must load in tests: {e}"))
+    /// One loaded model for the whole suite: a gigabyte per test would be the
+    /// slowest thing in it.
+    fn model() -> &'static LocalEmbeddings {
+        static SHARED: std::sync::OnceLock<LocalEmbeddings> = std::sync::OnceLock::new();
+        SHARED.get_or_init(|| LocalEmbeddings::new(bundled_model_dir(None), DEFAULT_IDLE_UNLOAD))
     }
 
     fn embed(provider: &LocalEmbeddings, text: &str) -> Vec<f32> {
@@ -171,7 +292,7 @@ mod tests {
             .map(|row| row.as_array().unwrap().iter().map(|n| n.as_f64().unwrap() as f32).collect())
             .collect();
 
-        let got = model().embed(&phrases).unwrap();
+        let got = model().embed(&phrases).unwrap_or_else(|e| panic!("the bundled model must load in tests: {e}"));
         assert_eq!(got.len(), expected.len());
         for ((phrase, got), expected) in phrases.iter().zip(&got).zip(&expected) {
             assert_eq!(got.0.len(), DIMENSIONS);
@@ -206,6 +327,90 @@ mod tests {
 
         assert_eq!(vectors.len(), 3);
         assert_eq!(vectors[1].0, embed(&provider, "keyring fallback"));
+    }
+
+    // ------------------------------------------------------ the lifecycle
+
+    /// Constructing is free: the incremental tick builds one on every save,
+    /// and a project without semantic search must never read the weights.
+    #[test]
+    fn nothing_is_loaded_until_something_is_embedded() {
+        let provider = LocalEmbeddings::new(temp_dir("model-lazy"), DEFAULT_IDLE_UNLOAD);
+        assert!(!provider.is_loaded());
+        // An empty directory: had construction loaded, it would have failed.
+    }
+
+    fn wait_until_unloaded<T: Send + Sync + 'static>(cell: &IdleCell<T>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while cell.is_loaded() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// The decision this module carries: a gigabyte is held while it is being
+    /// used, and let go once it is not. The next use loads it again.
+    #[test]
+    fn an_idle_value_is_dropped_and_comes_back_on_the_next_use() {
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        let load = || {
+            loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(42)
+        };
+        let cell = IdleCell::new(Duration::from_millis(50));
+
+        assert_eq!(*cell.get_or_load(load).unwrap(), 42);
+        assert!(cell.is_loaded());
+        wait_until_unloaded(&cell);
+        assert!(!cell.is_loaded(), "still loaded after the idle period");
+
+        cell.get_or_load(load).unwrap();
+        assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(cell.is_loaded());
+
+        // ...and the second load is dropped too: the reaper that ended with
+        // the first unload must be replaced, or a reload is resident forever.
+        wait_until_unloaded(&cell);
+        assert!(!cell.is_loaded(), "the second load was never unloaded");
+    }
+
+    /// Use resets the clock: a value in steady use is loaded once and never
+    /// dropped between two uses.
+    #[test]
+    fn a_value_in_use_is_loaded_once_and_stays() {
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        let cell = IdleCell::new(Duration::from_millis(120));
+        for _ in 0..10 {
+            cell.get_or_load(|| {
+                loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap();
+            thread::sleep(Duration::from_millis(30));
+        }
+        assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A missing model is an error on every embed — not a remembered one
+    /// that outlives `git lfs pull`.
+    #[test]
+    fn a_failed_load_is_tried_again() {
+        let cell: IdleCell<u8> = IdleCell::new(DEFAULT_IDLE_UNLOAD);
+        let missing = || Err(EmbeddingError::NotFound(PathBuf::from("tokenizer.json")));
+        assert!(cell.get_or_load(missing).is_err());
+        assert!(!cell.is_loaded());
+        assert_eq!(*cell.get_or_load(|| Ok(7)).unwrap(), 7);
+    }
+
+    /// Dropping the cell ends its reaper instead of leaving a thread that
+    /// holds the value alive.
+    #[test]
+    fn a_dropped_cell_takes_its_value_with_it() {
+        let cell = IdleCell::new(Duration::from_secs(3600));
+        let value = cell.get_or_load(|| Ok(vec![0u8; 16])).unwrap();
+        let weak = Arc::downgrade(&value);
+        drop(value);
+        drop(cell);
+        assert!(weak.upgrade().is_none());
     }
 
     // ------------------------------------------------------- the files

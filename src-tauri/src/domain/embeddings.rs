@@ -36,9 +36,7 @@ pub struct Embedding(pub Vec<f32>);
 /// Why the model could not be used. Every variant is about the *files*: once
 /// loaded, a static model cannot fail to embed.
 ///
-/// `Clone` because the load result is cached for the life of the process, so
-/// the second caller gets the first caller's error rather than a second
-/// half-gigabyte attempt.
+/// Plain data, so `Clone`: a caller that reports it and keeps it can do both.
 #[derive(Debug, Clone, Error)]
 pub enum EmbeddingError {
     #[error("the embedding model is missing: {0} not found")]
