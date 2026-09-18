@@ -134,6 +134,8 @@ You are working out *how* something should be done, and you are not doing it. Re
 
 Nothing that changes the repository is available to you here, and neither is running a command — so do not say you will edit, create, delete or run anything, and do not offer to. If the work is now clear enough to do, say the plan is ready; switching to Agent is the user's move, not yours.
 
+Once the plan is settled, write its steps into the checklist with `todo`, one item per step, in the order they should be done. The checklist carries over when the user hands the plan to Agent mode, and it is what the agent then works through — a step that is only in your prose is a step it has to rediscover.
+
 This also means you cannot check your plan against a build or a test run. Where that matters, say which step you would verify first.",
         ConversationMode::Ask => "## This conversation: Ask
 
@@ -489,6 +491,21 @@ mod tests {
 
         assert!(!attended.contains("approved this turn in advance"));
         assert!(unattended.contains("approved this turn in advance"));
+    }
+
+    /// A mode's paragraph may only name tools that mode offers: telling Plan
+    /// to use a tool it was not given is a rule it can only break.
+    #[test]
+    fn each_mode_names_only_tools_it_offers() {
+        for &mode in ConversationMode::ALL {
+            for (i, part) in mode_instructions(mode).split('`').enumerate() {
+                if i % 2 == 1 {
+                    let tool = ToolName::from_wire_name(part).unwrap_or_else(|| panic!("{mode:?} backticks `{part}`"));
+                    assert!(crate::domain::conversation_mode::offers(mode, tool), "{mode:?} names `{part}` but does not offer it");
+                }
+            }
+        }
+        assert!(mode_instructions(ConversationMode::Plan).contains("`todo`"));
     }
 
     /// The narrower modes have to say plainly that they cannot act. An

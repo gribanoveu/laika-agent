@@ -28,7 +28,7 @@ const usage = (over: Partial<ContextUsage> = {}): ContextUsage => ({
 const panel = (
   turn: TurnState,
   onDecide = () => {},
-  over: { context?: ContextUsage | null; onCompact?: () => void; index?: IndexState | null } = {},
+  over: { context?: ContextUsage | null; onCompact?: () => void; index?: IndexState | null; onImplement?: () => void } = {},
 ) =>
   render(
     <ChatPanel
@@ -41,8 +41,39 @@ const panel = (
       onOpenRepo={() => {}}
       onNewChat={() => {}}
       onCompact={over.onCompact ?? (() => {})}
+      onImplement={over.onImplement}
     />,
   );
+
+describe("handing a plan to Agent mode", () => {
+  const answered = [
+    { kind: "user", id: "u0", text: "plan the fix" },
+    { kind: "message", id: "m1", round: 1, text: "1. read 2. fix" },
+  ] as Block[];
+
+  test("offered under a finished answer, and pressing it hands the plan over", () => {
+    let handed = 0;
+    panel(state(answered, { status: "done" }), undefined, { onImplement: () => handed++ });
+    fireEvent.click(screen.getByText("Implement in Agent mode"));
+    expect(handed).toBe(1);
+  });
+
+  test("not while the plan is being written, waiting, stopped, or outside Plan mode", () => {
+    for (const status of ["running", "awaitingApproval", "cancelled"] as const) {
+      const { unmount } = panel(state(answered, { status }), undefined, { onImplement: () => {} });
+      expect(screen.queryByText("Implement in Agent mode")).toBeNull();
+      unmount();
+    }
+    panel(state(answered, { status: "done" }));
+    expect(screen.queryByText("Implement in Agent mode")).toBeNull();
+  });
+
+  test("not when the last thing shown is not the plan — a compaction note, say", () => {
+    const noted = [...answered, { kind: "notice", id: "n1", text: "Earlier messages were summarized." }] as Block[];
+    panel(state(noted, { status: "done" }), undefined, { onImplement: () => {} });
+    expect(screen.queryByText("Implement in Agent mode")).toBeNull();
+  });
+});
 
 describe("grouping", () => {
   test("everything after a question belongs to the answer", () => {

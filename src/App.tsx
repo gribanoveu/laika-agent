@@ -38,6 +38,9 @@ const dragOrMaximize = (e: React.MouseEvent) => {
   else startWindowDrag();
 };
 
+/** What "Implement in Agent mode" says on the user's behalf. Shown in the transcript like anything they type. */
+const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in order.";
+
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
@@ -123,6 +126,15 @@ export default function App() {
     agent.send(text);
   };
 
+  // The mode first, and only then the message: the backend reads the mode
+  // when the turn starts, and a turn sent a moment early would still be a
+  // plan that cannot write.
+  const implement = async () => {
+    const failed = await conversation.pick("agent");
+    if (failed) return toast.show(failed);
+    agent.send(IMPLEMENT_PLAN);
+  };
+
   return (
     <div
       className={`window${collapsed ? " collapsed" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}
@@ -169,6 +181,7 @@ export default function App() {
             onOpenRepo={chooseFolder}
             onNewChat={newChat}
             onCompact={compactNow}
+            onImplement={conversation.value === "plan" ? implement : undefined}
           />
           <Composer
             onSend={send}

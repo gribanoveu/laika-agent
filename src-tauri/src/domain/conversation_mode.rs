@@ -72,8 +72,10 @@ fn base_tools() -> HashSet<ToolName> {
 /// a tool that might. The cost is real and recorded: a plan cannot check
 /// itself against a build.
 ///
-/// `todo` is in `Plan` because a plan is a list of steps, and this is the only
-/// list the app has until `services/plans` arrives in stage 6. It changes chat
+/// `todo` is in `Plan` because a plan is a list of steps, and the checklist is
+/// the plan's list: it is saved with the chat and carries over when the user
+/// hands the plan to Agent mode. Alfa Atlas's separate plan store was not
+/// ported for that reason (`docs/06-port-plan.md`, F-6.6). It changes chat
 /// working memory and nothing on disk.
 pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
     let mut tools = base_tools();
@@ -160,7 +162,7 @@ mod tests {
         assert_eq!(tools(ConversationMode::Agent).len(), ToolName::ALL.len());
     }
 
-    /// A plan is a list of steps, and until stage 6 this is the only list.
+    /// A plan is a list of steps, and the checklist is where they go.
     #[test]
     fn a_plan_can_keep_a_checklist_and_a_question_has_no_use_for_one() {
         assert!(offers(ConversationMode::Plan, ToolName::Todo));

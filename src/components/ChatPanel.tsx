@@ -266,6 +266,8 @@ type Props = {
   onOpenRepo: () => void;
   onNewChat: () => void;
   onCompact: () => void;
+  /** Present while the conversation is in Plan mode: hands the plan to Agent mode. */
+  onImplement?: () => void;
 };
 
 export function ChatPanel({
@@ -278,8 +280,12 @@ export function ChatPanel({
   onOpenRepo,
   onNewChat,
   onCompact,
+  onImplement,
 }: Props) {
   const groups = group(turn.blocks);
+  // Under a finished answer only: mid-turn the plan is not written yet, and
+  // after a stop or a failure it may be half of one.
+  const planReady = onImplement && turn.status === "done" && groups[groups.length - 1]?.role === "agent";
   const name = workspace?.split("/").filter(Boolean).pop() ?? null;
 
   return (
@@ -353,6 +359,14 @@ export function ChatPanel({
               {turnGroup.blocks.map((block) => renderBlock(block, onDecide))}
             </div>
           ))
+        )}
+        {planReady && (
+          <div className="plan-handoff">
+            <button type="button" className="btn btn-primary" onClick={onImplement}>
+              Implement in Agent mode
+            </button>
+            <span>Switches to Agent and carries the checklist over.</span>
+          </div>
         )}
       </div>
     </section>
