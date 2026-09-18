@@ -1,5 +1,5 @@
 {
-  "about": "Questions with known answers for the code-search quality bench (services/search_bench.rs). `expect` lists acceptable answers: a file, and optionally the declaration (a substring of the chunk's qualified name). Answers were checked by reading the code. Repositories not found on disk are skipped. Questions marked `\"answer\": \"docs\"` are answered by documentation, so that a ranking which buries prose is caught.",
+  "about": "Questions with known answers for the code-search quality bench (services/search_bench.rs). `expect` lists acceptable answers: a file, and optionally the declaration (a substring of the chunk's qualified name). Answers were checked by reading the code. Repositories not found on disk are skipped. Questions marked `\"answer\": \"docs\"` are answered by documentation, so that a ranking which buries prose is caught; `\"caller\"` name an identifier whose use, not declaration, is the answer.",
   "repos": [
     {
       "name": "atlas-desktop",
@@ -345,6 +345,60 @@
             }
           ],
           "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "where is dedupe_repeat_result called in the turn loop",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/llm_chat.rs",
+              "name": "run"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "where does the index store directory get its name from repository_id",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/workspace_index.rs",
+              "name": "try_open"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "who calls is_context_length_error",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/llm_chat.rs",
+              "name": "too_long"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "where is truncate_output applied to process output",
+          "expect": [
+            {
+              "path": "src-tauri/src/infra/process_runner.rs"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "how search uses chunks_declaring to put names first",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/code_search.rs",
+              "name": "search"
+            }
+          ],
+          "answer": "caller"
         }
       ]
     },
@@ -511,6 +565,37 @@
             }
           ],
           "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "where claim_due_reminders is polled on a timer",
+          "expect": [
+            {
+              "path": "src-tauri/src/lib.rs"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "command that calls ensure_atlas_gitignore",
+          "expect": [
+            {
+              "path": "src-tauri/src/commands/project.rs"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "where is extract_from_turn called",
+          "expect": [
+            {
+              "path": "src-tauri/src/services/memory_pipeline.rs",
+              "name": "run_turn"
+            }
+          ],
+          "answer": "caller"
         }
       ]
     },
@@ -818,6 +903,49 @@
             }
           ],
           "answer": "docs"
+        },
+        {
+          "lang": "en",
+          "q": "where is scheduleRetry called when sending fails",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/SendNotificationService.java"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "who calls uploadDocumentsForSign when creating a notification",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/CreateNotificationService.java"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "where XmlParser parseXml is used to build the PDF",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/ArchiveNotificationService.java"
+            },
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/DownloadNotificationService.java"
+            }
+          ],
+          "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "q": "which service uses generateFileName for the archive",
+          "expect": [
+            {
+              "path": "src/main/java/ru/alfabank/corp/api/wowtax/service/ArchiveNotificationService.java"
+            }
+          ],
+          "answer": "caller"
         }
       ]
     }

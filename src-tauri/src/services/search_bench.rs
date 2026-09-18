@@ -15,8 +15,7 @@
 //!
 //! What it measures is `code_search::search` itself, the ranking the tool
 //! ships. The grid that chose its constants was a variant of the pipeline
-//! beside it; its results are in `docs/06-port-plan.md` (F-5.13c) and its code
-//! in the history of that commit.
+//! beside it; its results are in `docs/06-port-plan.md` (F-5.13c, F-5.13c-2).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -46,7 +45,8 @@ struct Repo {
 #[derive(Deserialize)]
 struct Query {
     lang: String,
-    /// `"docs"` when the answer is documentation rather than code.
+    /// `"docs"` when the answer is documentation, `"caller"` when it is the
+    /// use of a name the question gives rather than its declaration.
     #[serde(default)]
     answer: String,
     q: String,
@@ -211,8 +211,8 @@ fn search_bench() {
                 tally.add(file, decl);
                 all.add(file, decl);
                 by_lang.entry(query.lang.clone()).or_default().add(file, decl);
-                if query.answer == "docs" {
-                    by_lang.entry("answered by docs".into()).or_default().add(file, decl);
+                if !query.answer.is_empty() {
+                    by_lang.entry(format!("answer: {}", query.answer)).or_default().add(file, decl);
                 }
                 let show = |r: Rank| r.map_or("-".to_string(), |r| r.to_string());
                 let meaning = meaning.map_or(String::new(), |(rank, top, hit)| {
@@ -233,5 +233,6 @@ fn search_bench() {
         println!("{}", all.row(&format!("ALL {model}")));
     }
 }
+
 
 
