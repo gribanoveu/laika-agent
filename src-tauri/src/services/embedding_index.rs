@@ -35,6 +35,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::{PoisonError, RwLock};
 
 use thiserror::Error;
 
@@ -70,11 +71,20 @@ pub struct EmbedStats {
     pub stale_files: usize,
 }
 
+type Entries = HashMap<ChunkId, (blake3::Hash, QuantizedVector)>;
+
 /// One model's vectors, in memory, mirroring the store.
+///
+/// Shared, not owned: a search can run while a sync is filling the index in.
+/// The sync takes the write lock only to drop gone chunks and to add each
+/// finished batch — never while the model is embedding — so a search during a
+/// first sync answers from what is embedded so far instead of waiting for all
+/// of it. That is "must not lose" item 8 of stage 5 without upstream's
+/// background backlog, which existed because embedding used to be slow.
 pub struct EmbeddingIndex {
     model_id: String,
     dimensions: usize,
-    entries: HashMap<ChunkId, (blake3::Hash, QuantizedVector)>,
+    entries: RwLock<Entries>,
 }
 
 impl EmbeddingIndex {
@@ -85,15 +95,26 @@ impl EmbeddingIndex {
             .into_iter()
             .map(|(id, hash, vector)| (id, (hash, vector)))
             .collect();
-        Ok(Self { model_id: model_id.to_string(), dimensions, entries })
+        Ok(Self { model_id: model_id.to_string(), dimensions, entries: RwLock::new(entries) })
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.read().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.read().is_empty()
+    }
+
+    /// A poisoned lock means a panic mid-insert. The map is still a valid
+    /// map — the worst case is one batch missing, which the next sync redoes —
+    /// so it is used rather than turned into a second failure.
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Entries> {
+        self.entries.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Entries> {
+        self.entries.write().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Embeds every chunk of the store that has no vector for its current
@@ -107,7 +128,7 @@ impl EmbeddingIndex {
     /// `on_progress(done, total)` after every batch, over the chunks that
     /// needed embedding this time.
     pub fn sync(
-        &mut self,
+        &self,
         root: &Path,
         store: &IndexStore,
         provider: &dyn EmbeddingProvider,
@@ -120,18 +141,21 @@ impl EmbeddingIndex {
         // already, through the cascade from `chunks`; this is the in-memory
         // half.
         let current: HashSet<&ChunkId> = chunks.iter().map(|c| &c.id).collect();
-        let before = self.entries.len();
-        self.entries.retain(|id, _| current.contains(id));
-        stats.removed = before - self.entries.len();
-
-        // Grouped by file so each file is read and hashed once, not once per
-        // chunk.
         let mut pending: HashMap<&FileId, Vec<&ChunkMetadata>> = HashMap::new();
-        for chunk in &chunks {
-            if self.entries.get(&chunk.id).is_some_and(|(hash, _)| *hash == chunk.hash) {
-                stats.unchanged += 1;
-            } else {
-                pending.entry(&chunk.file_id).or_default().push(chunk);
+        {
+            let mut entries = self.write();
+            let before = entries.len();
+            entries.retain(|id, _| current.contains(id));
+            stats.removed = before - entries.len();
+
+            // Grouped by file so each file is read and hashed once, not once
+            // per chunk.
+            for chunk in &chunks {
+                if entries.get(&chunk.id).is_some_and(|(hash, _)| *hash == chunk.hash) {
+                    stats.unchanged += 1;
+                } else {
+                    pending.entry(&chunk.file_id).or_default().push(chunk);
+                }
             }
         }
 
@@ -169,9 +193,11 @@ impl EmbeddingIndex {
                 .collect();
             store.upsert_embeddings(&self.model_id, &rows)?;
             stats.embedded += rows.len();
+            let mut entries = self.write();
             for (id, hash, vector) in rows {
-                self.entries.insert(id, (hash, vector));
+                entries.insert(id, (hash, vector));
             }
+            drop(entries);
             on_progress(stats.embedded, total);
         }
         Ok(stats)
@@ -186,8 +212,9 @@ impl EmbeddingIndex {
         if query.len() != self.dimensions || top_k == 0 {
             return Vec::new();
         }
+        let entries = self.read();
         let mut scored: Vec<(f32, &ChunkId)> =
-            self.entries.iter().map(|(id, (_, vector))| (vector.dot(query), id)).collect();
+            entries.iter().map(|(id, (_, vector))| (vector.dot(query), id)).collect();
         let by_score_desc = |a: &(f32, &ChunkId), b: &(f32, &ChunkId)| b.0.total_cmp(&a.0).then_with(|| a.1 .0.cmp(&b.1 .0));
         if scored.len() > top_k {
             scored.select_nth_unstable_by(top_k - 1, by_score_desc);
@@ -267,7 +294,7 @@ mod tests {
         fn index(&self) -> EmbeddingIndex {
             EmbeddingIndex::load(&self.store, "fake", DIMS).unwrap()
         }
-        fn embed(&self, index: &mut EmbeddingIndex, model: &FakeModel) -> Result<EmbedStats, EmbedSyncError> {
+        fn embed(&self, index: &EmbeddingIndex, model: &FakeModel) -> Result<EmbedStats, EmbedSyncError> {
             index.sync(&self.root.canonicalize().unwrap(), &self.store, model, &mut |_, _| {})
         }
     }
@@ -285,15 +312,15 @@ mod tests {
         f.write("store.rs", "fn open_store() {}\nfn close_store() {}\n");
         f.write("notes.md", "# Keyring\n\nfallback file\n");
         f.lexical();
-        let mut index = f.index();
+        let index = f.index();
         let model = FakeModel::new();
 
-        let first = f.embed(&mut index, &model).unwrap();
+        let first = f.embed(&index, &model).unwrap();
         assert_eq!(first.embedded, f.store.load_all_chunks().unwrap().len());
         assert_eq!(index.len(), first.embedded);
 
         let calls = model.calls.load(Ordering::SeqCst);
-        let second = f.embed(&mut index, &model).unwrap();
+        let second = f.embed(&index, &model).unwrap();
         assert_eq!((second.embedded, second.unchanged), (0, first.embedded));
         assert_eq!(model.calls.load(Ordering::SeqCst), calls, "the model was asked again for nothing");
     }
@@ -306,9 +333,9 @@ mod tests {
         f.write("a.rs", "fn alpha() {}\n");
         f.write("b.rs", "fn beta() {}\nfn gamma() {}\n");
         f.lexical();
-        let mut index = f.index();
+        let index = f.index();
         let model = FakeModel::new();
-        f.embed(&mut index, &model).unwrap();
+        f.embed(&index, &model).unwrap();
 
         // Same length on purpose: the chunk keeps its id (`a.rs#0-14`) and
         // only its hash says it changed. A longer edit would mint a new id and
@@ -316,7 +343,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100)); // a new mtime second
         f.write("a.rs", "fn omega() {}\n");
         f.lexical();
-        let stats = f.embed(&mut index, &model).unwrap();
+        let stats = f.embed(&index, &model).unwrap();
 
         assert_eq!(stats.embedded, 1);
         assert_eq!(stats.unchanged, 2);
@@ -328,12 +355,12 @@ mod tests {
         f.write("keep.rs", "fn keep() {}\n");
         f.write("gone.rs", "fn unique_vanishing_word() {}\n");
         f.lexical();
-        let mut index = f.index();
-        f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        f.embed(&index, &FakeModel::new()).unwrap();
 
         fs::remove_file(f.root.join("gone.rs")).unwrap();
         f.lexical();
-        let stats = f.embed(&mut index, &FakeModel::new()).unwrap();
+        let stats = f.embed(&index, &FakeModel::new()).unwrap();
 
         assert_eq!(stats.removed, 1);
         assert_eq!(index.len(), 1);
@@ -350,8 +377,8 @@ mod tests {
         f.lexical();
         f.write("a.rs", "fn totally_different() {}\n");
 
-        let mut index = f.index();
-        let stats = f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        let stats = f.embed(&index, &FakeModel::new()).unwrap();
 
         assert_eq!((stats.embedded, stats.stale_files), (0, 1));
         assert!(index.is_empty());
@@ -370,11 +397,11 @@ mod tests {
         assert!(total > EMBED_BATCH, "the fixture must span batches");
 
         let failing = FakeModel { calls: AtomicUsize::new(0), fail_from_call: Some(1) };
-        assert!(f.embed(&mut f.index(), &failing).is_err());
+        assert!(f.embed(&f.index(), &failing).is_err());
         assert_eq!(f.index().len(), EMBED_BATCH, "the finished batch was not kept");
 
-        let mut resumed = f.index();
-        let stats = f.embed(&mut resumed, &FakeModel::new()).unwrap();
+        let resumed = f.index();
+        let stats = f.embed(&resumed, &FakeModel::new()).unwrap();
         assert_eq!((stats.embedded, stats.unchanged), (total - EMBED_BATCH, EMBED_BATCH));
     }
 
@@ -420,8 +447,8 @@ mod tests {
         f.write("keyring.md", "# Keyring\n\nthe keyring fallback file stores the master key\n");
         f.write("compact.md", "# Compaction\n\nthe history is compacted when the context window fills\n");
         f.lexical();
-        let mut index = f.index();
-        f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        f.embed(&index, &FakeModel::new()).unwrap();
 
         assert_eq!(top_file(&index, "context window history"), "compact.md");
         assert_eq!(top_file(&index, "master key fallback"), "keyring.md");
@@ -438,8 +465,8 @@ mod tests {
         f.write("a.md", "# Alpha\n\nkeyring master key\n");
         f.write("b.md", "# Beta\n\ncontext window history\n");
         f.lexical();
-        let mut index = f.index();
-        f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        f.embed(&index, &FakeModel::new()).unwrap();
 
         let query = FakeModel::vector("context window");
         assert_eq!(f.index().search(&query, 2), index.search(&query, 2));
@@ -451,8 +478,8 @@ mod tests {
         let body: String = (0..20).map(|i| format!("fn f{i}() {{}}\n")).collect();
         f.write("a.rs", &body);
         f.lexical();
-        let mut index = f.index();
-        f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        f.embed(&index, &FakeModel::new()).unwrap();
 
         assert_eq!(index.search(&FakeModel::vector("f1"), 3).len(), 3);
         assert!(index.search(&[1.0; 8], 3).is_empty());
@@ -466,8 +493,8 @@ mod tests {
         let body: String = (0..200).map(|i| format!("fn word{} other{}() {{}}\n", i % 7, i % 11)).collect();
         f.write("a.rs", &body);
         f.lexical();
-        let mut index = f.index();
-        f.embed(&mut index, &FakeModel::new()).unwrap();
+        let index = f.index();
+        f.embed(&index, &FakeModel::new()).unwrap();
 
         let query = FakeModel::vector("word3 other5");
         let all = index.search(&query, usize::MAX);
