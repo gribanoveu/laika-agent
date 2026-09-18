@@ -16,3 +16,4 @@ pub mod search_query;
 pub mod workspace_index;
 pub mod code_search;
 pub mod skills;
+pub mod project_rules;

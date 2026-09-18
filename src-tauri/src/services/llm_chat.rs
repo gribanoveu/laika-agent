@@ -22,6 +22,7 @@ use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
 use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
+use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::SkillMeta;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
@@ -173,6 +174,8 @@ pub struct Turn<'a> {
     /// The user's skills, listed in the prompt for `skill` to load. Read
     /// once per turn, so the prompt does not change between its rounds.
     pub skills: &'a [SkillMeta],
+    /// The open folder's instruction files, read once per turn like the skills.
+    pub rules: &'a [RuleFile],
 }
 
 /// Notes typed while a turn is running, waiting for the next round.
@@ -710,6 +713,7 @@ fn prepend_system_prompt(turn: &Turn, todos: &[Task], history: &[LlmMessage]) ->
         todos,
         unattended: turn.approval.skip_all,
         skills: turn.skills,
+        rules: turn.rules,
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
@@ -1043,6 +1047,7 @@ mod tests {
         steering: Arc<SteeringQueue>,
         search: Option<CodeSearchFn>,
         skills: Vec<SkillMeta>,
+        rules: Vec<RuleFile>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1078,6 +1083,7 @@ mod tests {
             steering,
             search: None,
             skills: Vec::new(),
+            rules: Vec::new(),
         }
     }
 
@@ -1117,6 +1123,7 @@ mod tests {
                 search: self.search.clone(),
                 shell: &shell,
                 skills: &self.skills,
+                rules: &self.rules,
             };
             f(&turn)
         }
@@ -2374,6 +2381,23 @@ mod tests {
             assert!(told[0].contains("Bump the version."), "{told:?}");
             assert_requests_list_release(requests);
         });
+    }
+
+    #[test]
+    fn every_request_carries_the_project_instructions() {
+        let mut h = harness("turn-rules", vec![asks(vec![wants("r1", "listFiles", r#"{"path":"."}"#)]), text("done")]);
+        h.rules = vec![RuleFile::new("AGENTS.md", "Run cargo test before saying done.")];
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("fix it")], vec![])).expect("finishes");
+
+        let requests = h.provider.requests();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(
+                request.messages.iter().any(|m| m.content.as_deref().is_some_and(|c| c.contains("Run cargo test before saying done."))),
+                "a request went out without the project instructions"
+            );
+        }
     }
 
     fn assert_requests_list_release(requests: Vec<ChatRequest>) {

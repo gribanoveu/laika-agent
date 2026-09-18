@@ -378,6 +378,7 @@ where
         // A skills folder that cannot be read costs the turn its skills, not
         // the turn itself: nothing the user asked for depends on it existing.
         let skills = crate::services::skills::enabled_catalog().unwrap_or_default();
+        let rules = crate::services::project_rules::load(&workspace);
 
         let turn = Turn {
             events: &events,
@@ -391,6 +392,7 @@ where
             shell: &shell,
             search,
             skills: &skills,
+            rules: &rules,
         };
         run(&turn).map_err(|e| e.to_string())
     })

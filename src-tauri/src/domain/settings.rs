@@ -99,7 +99,34 @@ impl LlmSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub llm: LlmSettings,
-    pub skills: crate::domain::skills::SkillsSettings,
+    /// Skills switched off, by name.
+    pub skills: OptOut,
+    /// Project instruction files switched off, by canonical path — per
+    /// file rather than per name, so turning off one repository's
+    /// `AGENTS.md` leaves every other repository's alone.
+    pub rules: OptOut,
+}
+
+/// Things that are on until the user says otherwise: a skill dropped into
+/// the folder, an `AGENTS.md` in a repository. Only the exceptions are
+/// stored, and one whose thing is gone costs nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OptOut {
+    pub disabled: Vec<String>,
+}
+
+impl OptOut {
+    pub fn is_enabled(&self, key: &str) -> bool {
+        !self.disabled.iter().any(|k| k == key)
+    }
+
+    pub fn set_enabled(&mut self, key: &str, enabled: bool) {
+        self.disabled.retain(|k| k != key);
+        if !enabled {
+            self.disabled.push(key.to_string());
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -126,6 +153,19 @@ mod tests {
             base_url: format!("https://{id}.example/v1"),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_thing_is_on_until_switched_off_and_back_on_leaves_no_trace() {
+        let mut settings = OptOut::default();
+        assert!(settings.is_enabled("release"));
+        settings.set_enabled("release", false);
+        settings.set_enabled("release", false);
+        assert!(!settings.is_enabled("release"));
+        assert!(settings.is_enabled("review"));
+        assert_eq!(settings.disabled, ["release"]);
+        settings.set_enabled("release", true);
+        assert!(settings.disabled.is_empty());
     }
 
     #[test]

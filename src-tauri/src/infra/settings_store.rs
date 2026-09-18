@@ -51,7 +51,8 @@ mod tests {
                 }],
                 debug_logging: true,
             },
-            skills: crate::domain::skills::SkillsSettings { disabled: vec!["release".to_string()] },
+            skills: crate::domain::settings::OptOut { disabled: vec!["release".to_string()] },
+            rules: crate::domain::settings::OptOut { disabled: vec!["/repo/AGENTS.md".to_string()] },
         }
     }
 

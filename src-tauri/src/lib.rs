@@ -62,6 +62,8 @@ pub fn run() {
             commands::settings::agent_readiness,
             commands::skills::skills_list,
             commands::skills::skills_set_enabled,
+            commands::skills::rules_list,
+            commands::skills::rules_set_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,3 +12,4 @@ pub mod code_search;
 #[cfg(test)]
 mod search_bench;
 pub mod skills;
+pub mod project_rules;

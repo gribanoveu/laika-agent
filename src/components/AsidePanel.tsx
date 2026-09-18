@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
-import type { SkillsView } from "../lib/chat";
+import type { RuleListItem, SkillsView } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -24,7 +24,6 @@ const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
 
 // Each list is filled by its own command wrapper once that command exists.
 const MCP_SERVERS: PanelItem[] = [];
-const RULES: PanelItem[] = [];
 const WORKSPACE_FILES: string[] = [];
 
 type Props = {
@@ -36,7 +35,37 @@ type Props = {
   skills: SkillsView | null;
   skillsError: string | null;
   onSkillToggle: (name: string, enabled: boolean) => void;
+  rules: RuleListItem[];
+  rulesError: string | null;
+  onRuleToggle: (path: string, enabled: boolean) => void;
 };
+
+/** Shown whole on expand: what the model is told is worth reading. The switch is keyed by path. */
+function ruleItems(rules: RuleListItem[]): PanelItem[] {
+  return rules.map((rule) =>
+    rule.error
+      ? {
+          id: rule.path,
+          badge: "!",
+          kind: "rule",
+          title: rule.name,
+          status: { label: "not sent", tone: "warn" },
+          desc: rule.error,
+          source: rule.path,
+        }
+      : {
+          id: rule.path,
+          badge: rule.name.slice(0, 2).toUpperCase(),
+          kind: "rule",
+          title: rule.name,
+          ...(rule.truncated ? { status: { label: "cut", tone: "warn" as const } } : {}),
+          desc: `${rule.content.split("\n").length} lines${rule.truncated ? " sent, the rest cut" : ""}`,
+          enabled: rule.enabled,
+          note: rule.content,
+          source: rule.path,
+        },
+  );
+}
 
 /** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
 function skillItems(view: SkillsView | null): PanelItem[] {
@@ -71,7 +100,11 @@ export function AsidePanel({
   skills,
   skillsError,
   onSkillToggle,
+  rules,
+  rulesError,
+  onRuleToggle,
 }: Props) {
+  const ruleList = ruleItems(rules);
   const skillList = skillItems(skills);
   return (
     <aside className="aside">
@@ -148,12 +181,16 @@ export function AsidePanel({
             </>
           )}
           {tab === "rules" && (
-            <ItemList
-              label="Project rules"
-              count={String(RULES.length)}
-              items={RULES}
-              emptyLabel="No rule files found."
-            />
+            <>
+              <ItemList
+                label="Project instructions"
+                count={`${ruleList.filter((r) => r.enabled).length}/${ruleList.length}`}
+                items={ruleList}
+                emptyLabel="No AGENTS.md or CLAUDE.md at the root of the open folder."
+                onToggle={onRuleToggle}
+              />
+              {rulesError && <div className="empty">{rulesError}</div>}
+            </>
           )}
           {tab === "files" && (
             <div className="panel-section">

@@ -425,3 +425,25 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
   requireBackend();
   return invoke<void>("skills_set_enabled", { name, enabled });
 }
+
+// ---------------------------------------------------------------- project rules
+
+/** An instruction file at the open folder's root. `error` when it cannot be sent; then it has no switch. */
+export type RuleListItem = {
+  name: string;
+  path: string;
+  enabled: boolean;
+  content: string;
+  truncated: boolean;
+  error: string | null;
+};
+
+export async function rulesList(): Promise<RuleListItem[]> {
+  if (!inTauri()) return [];
+  return invoke<RuleListItem[]>("rules_list");
+}
+
+export async function setRuleEnabled(path: string, enabled: boolean): Promise<void> {
+  requireBackend();
+  return invoke<void>("rules_set_enabled", { path, enabled });
+}
