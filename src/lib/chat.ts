@@ -19,6 +19,8 @@ export type LlmMessage = {
   content: string | null;
   toolCallId?: string | null;
   toolCalls?: LlmToolCall[];
+  /** The provider's own blocks for this message (Anthropic's signed thinking). Opaque here: carried, never read. */
+  nativeContent?: unknown;
 };
 
 export type TodoStatus = "pending" | "inProgress" | "completed" | "cancelled";

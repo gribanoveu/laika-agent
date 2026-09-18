@@ -391,6 +391,7 @@ mod tests {
                 name: "readFile".to_string(),
                 arguments: r#"{"path":"a.rs"}"#.to_string(),
             }],
+            native_content: None,
         }
     }
 
@@ -400,6 +401,7 @@ mod tests {
             content: Some("fn main() {}".to_string()),
             tool_call_id: Some(id.to_string()),
             tool_calls: Vec::new(),
+            native_content: None,
         }
     }
 

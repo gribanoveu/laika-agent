@@ -459,6 +459,7 @@ fn run(
                     content: (!result.text.is_empty()).then(|| result.text.clone()),
                     tool_call_id: None,
                     tool_calls: vec![],
+                    native_content: result.native_content.clone(),
                 });
                 apply_steering(&events, round, &mut state.history, waiting);
                 continue;
@@ -473,6 +474,7 @@ fn run(
                 content: (!result.text.is_empty()).then(|| result.text.clone()),
                 tool_call_id: None,
                 tool_calls: sanitize_tool_call_arguments(&result.tool_calls),
+                native_content: result.native_content.clone(),
             });
             state.budget_used += round_cost(&result.tool_calls);
 
@@ -914,6 +916,7 @@ fn tool_message(call_id: &str, content: String) -> LlmMessage {
         content: Some(content),
         tool_call_id: Some(call_id.to_string()),
         tool_calls: vec![],
+        native_content: None,
     }
 }
 
@@ -1421,6 +1424,35 @@ mod tests {
             "the open folder is not in the prompt"
         );
         assert_eq!(conversation_of(&requests[0]).len(), 1);
+    }
+
+    /// A round that thought goes back as the provider sent it: the next
+    /// request, which answers its calls, is refused if the signed blocks are
+    /// missing or rebuilt.
+    #[test]
+    fn a_rounds_native_content_is_carried_into_the_next_request() {
+        let native = serde_json::json!([{"type": "thinking", "thinking": "hm", "signature": "s"}]);
+        let h = harness(
+            "native-content",
+            vec![
+                Step::Reply(ChatStreamResult {
+                    tool_calls: vec![wants("t1", "listFiles", "{}")],
+                    native_content: Some(native.clone()),
+                    ..Default::default()
+                }),
+                text("done"),
+            ],
+        );
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]))
+            .expect("finishes");
+
+        let second = &h.provider.requests()[1];
+        let asked = conversation_of(second)
+            .iter()
+            .find(|m| !m.tool_calls.is_empty())
+            .expect("the round that called");
+        assert_eq!(asked.native_content, Some(native));
     }
 
     /// The prompt is prepended at request time and belongs to no turn: a
@@ -2017,6 +2049,7 @@ mod tests {
                 content: None,
                 tool_call_id: None,
                 tool_calls: vec![wants("w1", "writeFile", "{}")],
+                native_content: None,
             }],
             round: 1,
             budget_used: 2,

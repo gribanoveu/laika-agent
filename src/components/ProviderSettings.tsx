@@ -6,7 +6,7 @@ import "./ProviderSettings.css";
 // because a popup menu is clipped by the modal's own overflow — the same
 // reason the theme picker is segmented.
 
-const BLANK = { id: "", kind: "openAiCompatible" as ProviderKind, baseUrl: "", model: "", contextLimit: "" };
+const BLANK = { id: "", kind: "openAiCompatible" as ProviderKind, baseUrl: "", model: "", contextLimit: "", reasoningEffort: "" };
 
 const KINDS: [ProviderKind, string, string][] = [
   ["openAiCompatible", "OpenAI-compatible", "https://api.openai.com/v1"],
@@ -30,6 +30,7 @@ const fromConfig = (config: ProviderConfig) => ({
   baseUrl: config.baseUrl,
   model: config.model ?? "",
   contextLimit: config.contextLimit ? String(config.contextLimit) : "",
+  reasoningEffort: config.reasoningEffort ?? "",
 });
 
 export function ProviderSettings({
@@ -88,6 +89,8 @@ export function ProviderSettings({
         // Blank means "not known", which is what turns compaction off. A zero
         // or a typo must read the same way rather than as a window of nothing.
         contextLimit: Number.parseInt(draft.contextLimit, 10) || null,
+        // Blank sends nothing and leaves the model's own default.
+        reasoningEffort: draft.reasoningEffort.trim() || null,
       },
       apiKey,
     );
@@ -182,6 +185,19 @@ export function ProviderSettings({
             value={draft.model}
             placeholder="auto — the first one the provider lists"
             onChange={(e) => edit({ model: e.target.value })}
+          />
+        </div>
+        <div className="modal-field">
+          <label>Reasoning effort</label>
+          <input
+            type="text"
+            value={draft.reasoningEffort}
+            placeholder={
+              draft.kind === "anthropic"
+                ? "model default — low … max, or a token budget for older models"
+                : "model default — low, medium or high"
+            }
+            onChange={(e) => edit({ reasoningEffort: e.target.value })}
           />
         </div>
         <div className="modal-field">

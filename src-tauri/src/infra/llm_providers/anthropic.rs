@@ -16,8 +16,12 @@
 //! Prompt caching is on for every request: three `cache_control` points,
 //! see [`mark_cache_points`].
 //!
-//! Extended thinking is not requested here, so no `thinking` block ever has
-//! to be carried back — see `docs/06-port-plan.md`, F-7.3.
+//! Thinking: asked for through `reasoning_effort` (see [`thinking_params`]),
+//! and — on models that think whether asked or not — arriving regardless.
+//! Either way a round that thought is kept whole in
+//! `ChatStreamResult::native_content` and sent back verbatim, because a
+//! `thinking` block's signature must return unmodified and in place.
+//! `docs/06-port-plan.md`, F-7.3.
 //!
 //! `base_url` includes the version, as it does for the OpenAI-compatible
 //! provider: `https://api.anthropic.com/v1`.
@@ -50,6 +54,7 @@ pub struct AnthropicProvider {
     request_headers: HashMap<String, String>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    reasoning_effort: Option<String>,
 }
 
 impl AnthropicProvider {
@@ -60,8 +65,9 @@ impl AnthropicProvider {
         request_headers: HashMap<String, String>,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
+        reasoning_effort: Option<String>,
     ) -> Self {
-        Self { agent, base_url, api_key, request_headers, temperature, max_tokens }
+        Self { agent, base_url, api_key, request_headers, temperature, max_tokens, reasoning_effort }
     }
 
     fn url(&self, suffix: &str) -> String {
@@ -101,11 +107,16 @@ impl LlmProvider for AnthropicProvider {
         on_tool_call_delta: &dyn Fn(&str, &str, &str),
         cancelled: &dyn Fn() -> bool,
     ) -> Result<ChatStreamResult, LlmError> {
-        let body = body(
+        let mut body = body(
             &request,
             self.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             self.temperature,
         );
+        if let Some(effort) = &self.reasoning_effort {
+            for (key, value) in thinking_params(effort) {
+                body[key] = value;
+            }
+        }
         let mut post = self.agent.post(self.url("messages")).header("x-api-key", self.api_key().as_str());
         for (name, value) in self.headers() {
             post = post.header(name, value);
@@ -117,8 +128,9 @@ impl LlmProvider for AnthropicProvider {
         let mut result = ChatStreamResult::default();
         let mut usage = Usage::default();
         let mut saw_usage = false;
-        // By block index: a round may interleave text and several calls.
+        // By block index: a round may interleave text, thinking and calls.
         let mut calls: Vec<(usize, LlmToolCall)> = Vec::new();
+        let mut blocks: Vec<(usize, Value)> = Vec::new();
 
         for line in reader.lines() {
             if cancelled() {
@@ -131,19 +143,28 @@ impl LlmProvider for AnthropicProvider {
                     usage = message.usage;
                     saw_usage = true;
                 }
-                StreamEvent::ContentBlockStart { index, content_block: BlockStart::ToolUse { id, name } } => {
-                    on_tool_call_delta(&id, &name, "");
-                    calls.push((index, LlmToolCall { id, name, arguments: String::new() }));
+                StreamEvent::ContentBlockStart { index, content_block } => {
+                    if content_block["type"] == "tool_use" {
+                        let id = content_block["id"].as_str().unwrap_or_default().to_string();
+                        let name = content_block["name"].as_str().unwrap_or_default().to_string();
+                        on_tool_call_delta(&id, &name, "");
+                        calls.push((index, LlmToolCall { id, name, arguments: String::new() }));
+                    }
+                    blocks.push((index, content_block));
                 }
-                StreamEvent::ContentBlockStart { .. } => {}
                 StreamEvent::ContentBlockDelta { index, delta } => match delta {
                     BlockDelta::TextDelta { text } if !text.is_empty() => {
                         on_delta(&text);
                         result.text.push_str(&text);
+                        append(&mut blocks, index, "text", &text);
                     }
                     BlockDelta::ThinkingDelta { thinking } if !thinking.is_empty() => {
                         on_reasoning(&thinking);
                         result.reasoning.push_str(&thinking);
+                        append(&mut blocks, index, "thinking", &thinking);
+                    }
+                    BlockDelta::SignatureDelta { signature } => {
+                        append(&mut blocks, index, "signature", &signature);
                     }
                     BlockDelta::InputJsonDelta { partial_json } => {
                         if let Some((_, call)) = calls.iter_mut().find(|(i, _)| *i == index) {
@@ -178,6 +199,7 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
+        result.native_content = native_content(blocks, &calls);
         result.tool_calls = calls.into_iter().map(|(_, call)| call).collect();
         result.usage = saw_usage.then(|| usage.into());
         Ok(result)
@@ -195,6 +217,65 @@ impl LlmProvider for AnthropicProvider {
             response.body_mut().read_json().map_err(|e| LlmError::Http(e.to_string()))?;
         Ok(parsed.data.into_iter().map(|d| LlmModelInfo { id: d.id }).collect())
     }
+}
+
+/// What `reasoning_effort` asks for. A number is a thinking budget in
+/// tokens — the older models' `enabled` thinking, which the newer ones
+/// refuse. Anything else is an effort level (`low` … `max`) for adaptive
+/// thinking, the only kind the newer ones take. Passed through as written,
+/// like the OpenAI-compatible provider's: which levels a model accepts is
+/// the API's to say.
+fn thinking_params(effort: &str) -> Vec<(&'static str, Value)> {
+    let effort = effort.trim();
+    match effort.parse::<u32>() {
+        Ok(budget) => vec![("thinking", json!({ "type": "enabled", "budget_tokens": budget }))],
+        Err(_) => vec![
+            ("thinking", json!({ "type": "adaptive" })),
+            ("output_config", json!({ "effort": effort })),
+        ],
+    }
+}
+
+fn append(blocks: &mut [(usize, Value)], index: usize, field: &str, text: &str) {
+    if let Some((_, block)) = blocks.iter_mut().find(|(i, _)| *i == index) {
+        let joined = format!("{}{text}", block[field].as_str().unwrap_or_default());
+        block[field] = Value::String(joined);
+    }
+}
+
+/// The round as the API sent it, when it thought — `None` otherwise, and the
+/// message is rebuilt from its text and calls as before.
+///
+/// Also `None` when a thinking block never got its signature: a stop in the
+/// middle of one. Sent back like that it is refused outright; left out, the
+/// round is at worst answered without it.
+fn native_content(blocks: Vec<(usize, Value)>, calls: &[(usize, LlmToolCall)]) -> Option<Value> {
+    let thought = blocks.iter().any(|(_, b)| matches!(b["type"].as_str(), Some("thinking" | "redacted_thinking")));
+    let signed = blocks
+        .iter()
+        .filter(|(_, b)| b["type"] == "thinking")
+        .all(|(_, b)| b["signature"].as_str().is_some_and(|s| !s.is_empty()));
+    if !thought || !signed {
+        return None;
+    }
+    let content = blocks
+        .into_iter()
+        .filter_map(|(index, mut block)| {
+            match block["type"].as_str() {
+                // The API refuses an empty text block on the way in.
+                Some("text") if block["text"].as_str().is_none_or(|t| t.trim().is_empty()) => return None,
+                // The arguments arrived as fragments; the opening block had
+                // only `{}`. Same object the rebuilt message would carry.
+                Some("tool_use") => {
+                    let arguments = calls.iter().find(|(i, _)| *i == index).map_or("", |(_, c)| c.arguments.as_str());
+                    block["input"] = object_or_empty(arguments);
+                }
+                _ => {}
+            }
+            Some(block)
+        })
+        .collect();
+    Some(Value::Array(content))
 }
 
 /// An `error` event arrives after the `200`, so `ok_or_status_error` never
@@ -292,6 +373,10 @@ fn wire_messages(messages: &[LlmMessage]) -> Vec<Value> {
         let (role, blocks) = match message.role {
             LlmRole::System => continue,
             LlmRole::User => ("user", text_block(message.content.as_deref()).into_iter().collect()),
+            // Verbatim: see `LlmMessage::native_content`.
+            LlmRole::Assistant if message.native_content.as_ref().is_some_and(Value::is_array) => {
+                ("assistant", message.native_content.as_ref().and_then(Value::as_array).cloned().unwrap_or_default())
+            }
             LlmRole::Assistant => {
                 let mut blocks: Vec<Value> = text_block(message.content.as_deref()).into_iter().collect();
                 blocks.extend(message.tool_calls.iter().map(|call| {
@@ -368,7 +453,8 @@ struct ModelsListEntry {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum StreamEvent {
     MessageStart { message: StartMessage },
-    ContentBlockStart { index: usize, content_block: BlockStart },
+    /// Kept as sent: a thinking round goes back verbatim.
+    ContentBlockStart { index: usize, content_block: Value },
     ContentBlockDelta { index: usize, delta: BlockDelta },
     MessageDelta {
         #[serde(default)]
@@ -391,18 +477,11 @@ struct StartMessage {
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum BlockStart {
-    ToolUse { id: String, name: String },
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
 enum BlockDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
     ThinkingDelta { thinking: String },
+    SignatureDelta { signature: String },
     #[serde(other)]
     Other,
 }
@@ -500,6 +579,7 @@ mod tests {
             base_url,
             SecretString::from("sk-ant"),
             HashMap::new(),
+            None,
             None,
             None,
         )
@@ -769,6 +849,141 @@ mod tests {
             .expect("cancelling is not an error");
         server.join().ok();
         assert_eq!(result.text, "first");
+    }
+
+    /// Interleaved: thinking between the calls, and the whole round must go
+    /// back in that order with the signatures intact.
+    #[test]
+    fn a_round_that_thought_is_kept_whole_and_in_order() {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Read "}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"it."}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig1"}}"#,
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+                r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"readFile","input":{}}}"#,
+                r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a\"}"}}"#,
+                r#"{"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
+                r#"{"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}}"#,
+                r#"{"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"Now b."}}"#,
+                r#"{"type":"content_block_start","index":5,"content_block":{"type":"tool_use","id":"toolu_2","name":"readFile","input":{}}}"#,
+                r#"{"type":"message_stop"}"#,
+            ]),
+        );
+        let result = stream(url);
+        server.join().ok();
+
+        assert_eq!(result.reasoning, "Read it.");
+        assert_eq!(
+            result.native_content,
+            Some(json!([
+                {"type":"thinking","thinking":"Read it.","signature":"sig1"},
+                {"type":"tool_use","id":"toolu_1","name":"readFile","input":{"path":"a"}},
+                {"type":"redacted_thinking","data":"opaque"},
+                {"type":"text","text":"Now b."},
+                {"type":"tool_use","id":"toolu_2","name":"readFile","input":{}}
+            ])),
+            "the empty text block is dropped — the API refuses one on the way in"
+        );
+    }
+
+    /// Nothing to preserve: the message is rebuilt from its fields, as before.
+    #[test]
+    fn a_round_without_thinking_has_no_native_content() {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#,
+            ]),
+        );
+        let result = stream(url);
+        server.join().ok();
+        assert_eq!(result.native_content, None);
+    }
+
+    /// Redacted thinking has no text to show, and must go back all the same.
+    #[test]
+    fn a_round_with_only_redacted_thinking_is_kept() {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"grep","input":{}}}"#,
+            ]),
+        );
+        let result = stream(url);
+        server.join().ok();
+        assert_eq!(
+            result.native_content,
+            Some(json!([
+                {"type":"redacted_thinking","data":"opaque"},
+                {"type":"tool_use","id":"toolu_1","name":"grep","input":{}}
+            ]))
+        );
+    }
+
+    /// Stopped before the signature: refused if sent, so not kept.
+    #[test]
+    fn an_unsigned_thinking_block_is_not_kept() {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hm"}}"#,
+            ]),
+        );
+        let result = stream(url);
+        server.join().ok();
+        assert_eq!(result.native_content, None);
+        assert_eq!(result.reasoning, "hm", "still shown");
+    }
+
+    #[test]
+    fn native_content_is_sent_verbatim_in_place_of_the_rebuilt_message() {
+        let native = json!([
+            {"type":"thinking","thinking":"t","signature":"s"},
+            {"type":"tool_use","id":"toolu_1","name":"readFile","input":{}}
+        ]);
+        let mut asked = LlmMessage::tool_requests(vec![call("toolu_1", "{}")]);
+        asked.native_content = Some(native.clone());
+        let wire = wire_messages(&[LlmMessage::user("go"), asked, LlmMessage::tool_result("toolu_1", "x")]);
+        assert_eq!(wire[1], json!({"role":"assistant","content":native}));
+    }
+
+    #[test]
+    fn effort_asks_for_adaptive_thinking_and_a_number_for_a_budget() {
+        assert_eq!(
+            thinking_params(" high "),
+            vec![("thinking", json!({"type":"adaptive"})), ("output_config", json!({"effort":"high"}))]
+        );
+        assert_eq!(thinking_params("4096"), vec![("thinking", json!({"type":"enabled","budget_tokens":4096}))]);
+    }
+
+    /// Set in the provider's settings, it reaches the request; unset, the
+    /// model's own default stands and nothing is sent.
+    #[test]
+    fn the_configured_effort_reaches_the_request() {
+        for (effort, expected) in [(Some("high"), true), (None, false)] {
+            let (url, server) = serve_capturing(sse(&[r#"{"type":"message_stop"}"#]));
+            let config = ProviderConfig {
+                id: "claude".into(),
+                kind: ProviderKind::Anthropic,
+                base_url: url,
+                reasoning_effort: effort.map(str::to_string),
+                ..Default::default()
+            };
+            crate::infra::llm_providers::provider_for(&config, Some(SecretString::from("k")))
+                .expect("builds")
+                .chat_stream(request(vec![LlmMessage::user("hi")]), &|_| {}, &|_| {}, &|_, _, _| {}, &|| false)
+                .expect("streams");
+            let sent = server.join().expect("served");
+            let body: Value = serde_json::from_str(sent.split("\r\n\r\n").nth(1).expect("a body")).expect("json");
+            assert_eq!(body.get("output_config") == Some(&json!({"effort":"high"})), expected, "{sent}");
+            assert_eq!(body.get("thinking") == Some(&json!({"type":"adaptive"})), expected, "{sent}");
+        }
     }
 
     #[test]

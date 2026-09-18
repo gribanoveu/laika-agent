@@ -482,6 +482,7 @@ mod tests {
                 name: "readFile".to_string(),
                 arguments: "{}".to_string(),
             }],
+            native_content: None,
         });
         for _ in 0..11 {
             history.push(LlmMessage {
@@ -489,6 +490,7 @@ mod tests {
                 content: Some("ok".to_string()),
                 tool_call_id: Some("c1".to_string()),
                 tool_calls: Vec::new(),
+                native_content: None,
             });
         }
 

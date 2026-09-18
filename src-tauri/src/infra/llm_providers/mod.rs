@@ -30,8 +30,6 @@ pub fn provider_for(
             config.max_tokens,
             config.reasoning_effort.clone(),
         )),
-        // `reasoning_effort` is not sent: it asks for thinking, and thinking
-        // blocks would have to be carried back (F-7.3).
         ProviderKind::Anthropic => Box::new(anthropic::AnthropicProvider::new(
             agent,
             config.base_url.clone(),
@@ -39,6 +37,7 @@ pub fn provider_for(
             config.request_headers.clone(),
             config.temperature,
             config.max_tokens,
+            config.reasoning_effort.clone(),
         )),
     })
 }

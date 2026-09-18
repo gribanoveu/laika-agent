@@ -55,6 +55,17 @@ pub struct LlmMessage {
     /// sees its own prior request when the matching results follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<LlmToolCall>,
+    /// The provider's own content blocks for this assistant message, in the
+    /// order it sent them, when they carry something the fields above cannot.
+    ///
+    /// Today that is Anthropic's thinking: a `thinking` block's signature must
+    /// go back unmodified, in its place between the text and the calls, in the
+    /// round that answers those calls — rebuilt from `content` and
+    /// `tool_calls`, it would be gone or out of order and the API refuses the
+    /// request. The provider that wrote it sends it verbatim; any other
+    /// ignores it and uses the fields above, which always agree with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_content: Option<serde_json::Value>,
 }
 
 impl LlmMessage {
@@ -77,6 +88,7 @@ impl LlmMessage {
             content: Some(content.into()),
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: Vec::new(),
+            native_content: None,
         }
     }
 
@@ -87,6 +99,7 @@ impl LlmMessage {
             content: None,
             tool_call_id: None,
             tool_calls: calls,
+            native_content: None,
         }
     }
 
@@ -96,6 +109,7 @@ impl LlmMessage {
             content: Some(content.into()),
             tool_call_id: None,
             tool_calls: Vec::new(),
+            native_content: None,
         }
     }
 }
@@ -160,6 +174,10 @@ pub struct ChatStreamResult {
     /// infers truncation from the text itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    /// See [`LlmMessage::native_content`]; carried from the round into the
+    /// assistant message the loop stores for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_content: Option<serde_json::Value>,
 }
 
 /// Token accounting for one round.

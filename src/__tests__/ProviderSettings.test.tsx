@@ -139,6 +139,20 @@ describe("editing a provider", () => {
     expect(saved[0]?.provider.kind).toBe("anthropic");
   });
 
+  test("reasoning effort is kept, and blank means the model's default", async () => {
+    const { saved } = form({
+      providers: [{ id: "claude", kind: "anthropic", baseUrl: "u", reasoningEffort: "high", hasApiKey: true }],
+      activeProviderId: "claude",
+    });
+    expect(field("Reasoning effort").value).toBe("high");
+
+    fireEvent.change(field("Reasoning effort"), { target: { value: "  " } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.reasoningEffort).toBeNull();
+  });
+
   test("a stored Anthropic provider opens as one", () => {
     form({
       providers: [{ id: "claude", kind: "anthropic", baseUrl: "https://api.anthropic.com/v1", hasApiKey: true }],
