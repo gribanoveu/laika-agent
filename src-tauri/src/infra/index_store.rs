@@ -265,30 +265,7 @@ impl IndexStore {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         for file in files {
-            // Before the epoch, or a clock that went backwards: the file is
-            // not skippable, so it reads as "modified at the epoch" and is
-            // compared by hash like everything else.
-            let mtime_secs = file
-                .modified_at
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO)
-                .as_secs();
-            tx.execute(
-                "INSERT INTO files (file_id, file_hash, size_bytes, mtime_secs, language)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(file_id) DO UPDATE SET
-                   file_hash  = excluded.file_hash,
-                   size_bytes = excluded.size_bytes,
-                   mtime_secs = excluded.mtime_secs,
-                   language   = excluded.language",
-                params![
-                    file.relative_path,
-                    file.hash.as_bytes().to_vec(),
-                    file.size_bytes as i64,
-                    mtime_secs as i64,
-                    language_to_str(file.language),
-                ],
-            )?;
+            upsert_file_row(&tx, file)?;
         }
         tx.commit()?;
         Ok(())
@@ -327,31 +304,33 @@ impl IndexStore {
     ) -> Result<(), IndexStoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        purge_fts_rows(&tx, file_id)?;
-        tx.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id.0])?;
-        for chunk in chunks {
-            let meta = &chunk.metadata;
-            let fts_rowid =
-                insert_fts_row(&tx, &meta.id, meta.qualified_name.as_deref(), &chunk.text)?;
-            tx.execute(
-                "INSERT INTO chunks (chunk_id, file_id, language, kind, start_byte, end_byte,
-                                     file_hash, chunk_hash, qualified_name, ordinal, fts_rowid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    meta.id.0,
-                    meta.file_id.0,
-                    language_to_str(meta.language),
-                    chunk_kind_to_str(meta.kind),
-                    meta.start_byte,
-                    meta.end_byte,
-                    meta.file_hash.as_bytes().to_vec(),
-                    meta.hash.as_bytes().to_vec(),
-                    meta.qualified_name,
-                    meta.ordinal,
-                    fts_rowid,
-                ],
-            )?;
-        }
+        write_chunks(&tx, file_id, chunks)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Records a file's new version — its row, its chunks and their
+    /// full-text rows, its symbols — **in one transaction**.
+    ///
+    /// The file row is what the next sync compares against, so it may only
+    /// move together with the work it vouches for. Written separately, a
+    /// crash between the row and the chunks would leave a row saying "current"
+    /// over chunks cut from the old text, and the next sync — seeing a
+    /// matching hash — would skip the file for good. Here either all of it
+    /// lands or none of it does.
+    pub fn replace_file(
+        &self,
+        file: &FileMetadata,
+        symbols: &[Symbol],
+        chunks: &[Chunk],
+    ) -> Result<(), IndexStoreError> {
+        let file_id = FileId(file.relative_path.clone());
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        // The row first: chunks and symbols reference it.
+        upsert_file_row(&tx, file)?;
+        write_chunks(&tx, &file_id, chunks)?;
+        write_symbols(&tx, &file_id, symbols)?;
         tx.commit()?;
         Ok(())
     }
@@ -575,21 +554,7 @@ impl IndexStore {
     ) -> Result<(), IndexStoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id.0])?;
-        for symbol in symbols {
-            tx.execute(
-                "INSERT INTO symbols (file_id, name, start_line, end_line, start_byte, end_byte)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    file_id.0,
-                    symbol.name,
-                    symbol.start_line,
-                    symbol.end_line,
-                    symbol.start_byte,
-                    symbol.end_byte,
-                ],
-            )?;
-        }
+        write_symbols(&tx, file_id, symbols)?;
         tx.commit()?;
         Ok(())
     }
@@ -664,6 +629,90 @@ impl IndexStore {
 /// Drops a file's rows from the full-text index, found through `chunks` (and
 /// so through its index on `file_id`) rather than by scanning a table that
 /// does not index the column being searched on.
+fn upsert_file_row(tx: &rusqlite::Transaction<'_>, file: &FileMetadata) -> Result<(), IndexStoreError> {
+    // Before the epoch, or a clock that went backwards: the file is
+    // not skippable, so it reads as "modified at the epoch" and is
+    // compared by hash like everything else.
+    let mtime_secs = file
+        .modified_at
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    tx.execute(
+        "INSERT INTO files (file_id, file_hash, size_bytes, mtime_secs, language)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(file_id) DO UPDATE SET
+           file_hash  = excluded.file_hash,
+           size_bytes = excluded.size_bytes,
+           mtime_secs = excluded.mtime_secs,
+           language   = excluded.language",
+        params![
+            file.relative_path,
+            file.hash.as_bytes().to_vec(),
+            file.size_bytes as i64,
+            mtime_secs as i64,
+            language_to_str(file.language),
+        ],
+    )?;
+    Ok(())
+}
+
+fn write_chunks(
+    tx: &rusqlite::Transaction<'_>,
+    file_id: &FileId,
+    chunks: &[Chunk],
+) -> Result<(), IndexStoreError> {
+    purge_fts_rows(tx, file_id)?;
+    tx.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id.0])?;
+    for chunk in chunks {
+        let meta = &chunk.metadata;
+        let fts_rowid =
+            insert_fts_row(tx, &meta.id, meta.qualified_name.as_deref(), &chunk.text)?;
+        tx.execute(
+            "INSERT INTO chunks (chunk_id, file_id, language, kind, start_byte, end_byte,
+                                 file_hash, chunk_hash, qualified_name, ordinal, fts_rowid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                meta.id.0,
+                meta.file_id.0,
+                language_to_str(meta.language),
+                chunk_kind_to_str(meta.kind),
+                meta.start_byte,
+                meta.end_byte,
+                meta.file_hash.as_bytes().to_vec(),
+                meta.hash.as_bytes().to_vec(),
+                meta.qualified_name,
+                meta.ordinal,
+                fts_rowid,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn write_symbols(
+    tx: &rusqlite::Transaction<'_>,
+    file_id: &FileId,
+    symbols: &[Symbol],
+) -> Result<(), IndexStoreError> {
+    tx.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id.0])?;
+    for symbol in symbols {
+        tx.execute(
+            "INSERT INTO symbols (file_id, name, start_line, end_line, start_byte, end_byte)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                file_id.0,
+                symbol.name,
+                symbol.start_line,
+                symbol.end_line,
+                symbol.start_byte,
+                symbol.end_byte,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn purge_fts_rows(tx: &rusqlite::Transaction<'_>, file_id: &FileId) -> Result<(), IndexStoreError> {
     let rowids: Vec<i64> = {
         let mut stmt = tx
@@ -1145,6 +1194,37 @@ mod tests {
         for kind in [ChunkKind::Section, ChunkKind::Declaration, ChunkKind::File] {
             assert_eq!(str_to_chunk_kind(chunk_kind_to_str(kind)), Some(kind), "{kind:?}");
         }
+    }
+
+    // ------------------------------------------------------ replace_file
+
+    #[test]
+    fn replace_file_writes_the_row_the_chunks_and_the_symbols() {
+        let (store, _dir) = store("store-replace-file");
+        let sym = Symbol { name: "open".into(), start_line: 1, end_line: 1, start_byte: 0, end_byte: 4 };
+        store.replace_file(&file("a.md", "v1"), &[sym], &[chunk("a.md", 0, 4, None, "fresh words")]).unwrap();
+
+        assert_eq!(store.load_all_files().unwrap()[&FileId("a.md".into())].hash, blake3::hash(b"v1"));
+        assert_eq!(store.load_all_chunks().unwrap().len(), 1);
+        assert_eq!(store.load_all_symbols().unwrap()[&FileId("a.md".into())].len(), 1);
+        assert_eq!(store.search_bm25("fresh", 10).unwrap().len(), 1);
+    }
+
+    /// The reason it is one transaction. A chunk that cannot be written — here
+    /// one pointing at a file with no row — fails the call, and the file row
+    /// must still say the *old* version: a row that moved on its own would
+    /// tell the next sync the file is current, and it would never be redone.
+    #[test]
+    fn a_failed_replace_leaves_the_old_version_recorded() {
+        let (store, _dir) = store("store-replace-atomic");
+        store.replace_file(&file("a.md", "v1"), &[], &[chunk("a.md", 0, 4, None, "old words")]).unwrap();
+
+        let broken = [chunk("a.md", 0, 4, None, "new words"), chunk("ghost.md", 0, 4, None, "x")];
+        assert!(store.replace_file(&file("a.md", "v2"), &[], &broken).is_err());
+
+        assert_eq!(store.load_all_files().unwrap()[&FileId("a.md".into())].hash, blake3::hash(b"v1"));
+        assert_eq!(store.search_bm25("old", 10).unwrap().len(), 1);
+        assert!(store.search_bm25("new", 10).unwrap().is_empty());
     }
 
     // ----------------------------------------------------- the cheap rebuild
