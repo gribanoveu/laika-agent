@@ -37,8 +37,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-use crate::domain::chunk_index::CHUNK_VERSION;
-use crate::domain::repo_index::{FileId, FileMetadata, INDEX_VERSION, Language};
+use crate::domain::chunk_index::{CHUNK_VERSION, Chunk, ChunkId, ChunkKind, ChunkMetadata};
+use crate::domain::repo_index::{FileId, FileMetadata, INDEX_VERSION, Language, Symbol};
 
 const DB_FILE_NAME: &str = "chunks.db";
 
@@ -309,6 +309,210 @@ impl IndexStore {
         Ok(())
     }
 
+    /// Replaces everything this file was chunked into.
+    ///
+    /// Delete then insert, rather than a diff: a file that changed at all
+    /// usually shifts every byte range after the edit, so the chunks that
+    /// survive unchanged are the ones before it and nothing is saved by
+    /// finding them. Dropping the chunk rows takes their vectors with them
+    /// through the cascade, which is correct — a vector describes a byte
+    /// range that no longer exists.
+    ///
+    /// The full-text rows are purged first for the reason they always are:
+    /// no cascade reaches a virtual table.
+    pub fn replace_chunks_for_file(
+        &self,
+        file_id: &FileId,
+        chunks: &[Chunk],
+    ) -> Result<(), IndexStoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        purge_fts_rows(&tx, file_id)?;
+        tx.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id.0])?;
+        for chunk in chunks {
+            let meta = &chunk.metadata;
+            let fts_rowid =
+                insert_fts_row(&tx, &meta.id, meta.qualified_name.as_deref(), &chunk.text)?;
+            tx.execute(
+                "INSERT INTO chunks (chunk_id, file_id, language, kind, start_byte, end_byte,
+                                     file_hash, chunk_hash, qualified_name, ordinal, fts_rowid)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    meta.id.0,
+                    meta.file_id.0,
+                    language_to_str(meta.language),
+                    chunk_kind_to_str(meta.kind),
+                    meta.start_byte,
+                    meta.end_byte,
+                    meta.file_hash.as_bytes().to_vec(),
+                    meta.hash.as_bytes().to_vec(),
+                    meta.qualified_name,
+                    meta.ordinal,
+                    fts_rowid,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Rewrites only the cheap half of this file's chunks — each one's name
+    /// and its full-text row — leaving the identity and hash columns alone
+    /// and, above all, leaving `embeddings` alone.
+    ///
+    /// This is what [`derived_needs_backfill`](Self::derived_needs_backfill)
+    /// asks for. A store whose chunk rows are correct and whose vectors took
+    /// an hour to compute needs neither thrown away because the tokenizer
+    /// changed; [`replace_chunks_for_file`](Self::replace_chunks_for_file)
+    /// would cascade those vectors away for nothing.
+    ///
+    /// A chunk that does not match a stored row is dropped rather than
+    /// inserted: the file has been edited since the last sync, so it rebuilt
+    /// to different byte ranges and different ids. Inserting the full-text
+    /// row anyway would leave one nothing points at, which nothing could ever
+    /// find again to delete. The sync re-chunks such a file through the
+    /// ordinary path immediately afterwards.
+    pub fn replace_derived_for_file(
+        &self,
+        file_id: &FileId,
+        chunks: &[Chunk],
+    ) -> Result<(), IndexStoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        purge_fts_rows(&tx, file_id)?;
+        for chunk in chunks {
+            let meta = &chunk.metadata;
+            let fts_rowid =
+                insert_fts_row(&tx, &meta.id, meta.qualified_name.as_deref(), &chunk.text)?;
+            let linked = tx.execute(
+                "UPDATE chunks SET qualified_name = ?1, fts_rowid = ?2 WHERE chunk_id = ?3",
+                params![meta.qualified_name, fts_rowid, meta.id.0],
+            )?;
+            if linked == 0 {
+                tx.execute("DELETE FROM chunks_fts WHERE rowid = ?1", params![fts_rowid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every chunk the store knows about, without its text — that is read
+    /// from the file when a result needs a snippet, so the index does not
+    /// hold a second copy of the repository outside the full-text table.
+    ///
+    /// A row this build cannot read is skipped, not fatal, for the same
+    /// reason as in `load_all_files`: the file it belongs to is re-read and
+    /// re-chunked, which the diff was going to do anyway. One unreadable row
+    /// blinding the whole index would turn a stale column into an index that
+    /// will not load.
+    pub fn load_all_chunks(&self) -> Result<Vec<ChunkMetadata>, IndexStoreError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT chunk_id, file_id, language, kind, start_byte, end_byte,
+                    file_hash, chunk_hash, qualified_name, ordinal
+             FROM chunks",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, u32>(4)?,
+                row.get::<_, u32>(5)?,
+                row.get::<_, Vec<u8>>(6)?,
+                row.get::<_, Vec<u8>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, u32>(9)?,
+            ))
+        })?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let (id, file_id, language, kind, start, end, file_hash, hash, name, ordinal) = row?;
+            let (Some(language), Some(kind), Some(file_hash), Some(hash)) = (
+                str_to_language(&language),
+                str_to_chunk_kind(&kind),
+                hash_from_bytes(&file_hash),
+                hash_from_bytes(&hash),
+            ) else {
+                continue;
+            };
+            chunks.push(ChunkMetadata {
+                id: ChunkId(id),
+                file_id: FileId(file_id),
+                language,
+                kind,
+                start_byte: start,
+                end_byte: end,
+                file_hash,
+                hash,
+                qualified_name: name,
+                ordinal,
+            });
+        }
+        Ok(chunks)
+    }
+
+    /// Replaces what an indexer found in this file.
+    ///
+    /// Kept so a cold start can reuse the symbols of a file whose hash has
+    /// not changed instead of parsing the whole repository again — which on a
+    /// large tree is the difference between an index that is ready and one
+    /// that is still thinking.
+    pub fn replace_symbols_for_file(
+        &self,
+        file_id: &FileId,
+        symbols: &[Symbol],
+    ) -> Result<(), IndexStoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id.0])?;
+        for symbol in symbols {
+            tx.execute(
+                "INSERT INTO symbols (file_id, name, start_line, end_line, start_byte, end_byte)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    file_id.0,
+                    symbol.name,
+                    symbol.start_line,
+                    symbol.end_line,
+                    symbol.start_byte,
+                    symbol.end_byte,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every stored symbol, grouped by the file it came from.
+    pub fn load_all_symbols(&self) -> Result<HashMap<FileId, Vec<Symbol>>, IndexStoreError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT file_id, name, start_line, end_line, start_byte, end_byte FROM symbols",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                FileId(row.get(0)?),
+                Symbol {
+                    name: row.get(1)?,
+                    start_line: row.get(2)?,
+                    end_line: row.get(3)?,
+                    start_byte: row.get(4)?,
+                    end_byte: row.get(5)?,
+                },
+            ))
+        })?;
+
+        let mut out: HashMap<FileId, Vec<Symbol>> = HashMap::new();
+        for row in rows {
+            let (file_id, symbol) = row?;
+            out.entry(file_id).or_default().push(symbol);
+        }
+        Ok(out)
+    }
+
     /// Every file the store knows about, for diffing against the working
     /// tree. A row whose language this build no longer has a name for is
     /// skipped rather than guessed at — it will be re-read as whatever it is
@@ -365,6 +569,21 @@ fn purge_fts_rows(tx: &rusqlite::Transaction<'_>, file_id: &FileId) -> Result<()
     Ok(())
 }
 
+/// Inserts one chunk into the full-text index, returning the rowid the caller
+/// stores in `chunks.fts_rowid` so this row can be found again to delete it.
+fn insert_fts_row(
+    tx: &rusqlite::Transaction<'_>,
+    chunk_id: &ChunkId,
+    qualified_name: Option<&str>,
+    text: &str,
+) -> Result<i64, IndexStoreError> {
+    tx.execute(
+        "INSERT INTO chunks_fts (chunk_id, qualified_name, text) VALUES (?1, ?2, ?3)",
+        params![chunk_id.0, qualified_name.unwrap_or(""), text],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
 /// `None` for anything that is not 32 bytes. Upstream panics here on the
 /// grounds that the column is always a hash — which is true of every row this
 /// code writes, and not of a file somebody's backup tool restored half of.
@@ -376,6 +595,23 @@ fn hash_from_bytes(bytes: &[u8]) -> Option<blake3::Hash> {
 /// The name a language is stored under. Written out rather than derived from
 /// `Debug`, so renaming a variant in Rust cannot silently orphan every row
 /// already written under its old name.
+/// Same rule as the language names: written out, so renaming a variant cannot
+/// orphan rows stored under its old name.
+fn chunk_kind_to_str(kind: ChunkKind) -> &'static str {
+    match kind {
+        ChunkKind::Section => "section",
+        ChunkKind::File => "file",
+    }
+}
+
+fn str_to_chunk_kind(value: &str) -> Option<ChunkKind> {
+    match value {
+        "section" => Some(ChunkKind::Section),
+        "file" => Some(ChunkKind::File),
+        _ => None,
+    }
+}
+
 fn language_to_str(language: Language) -> &'static str {
     match language {
         Language::PlainText => "plaintext",
@@ -677,6 +913,258 @@ mod tests {
         for table in ["files", "chunks", "chunks_fts", "embeddings", "symbols", "meta"] {
             assert_eq!(count(&store, table), 0, "{table} survived the wipe");
         }
+    }
+
+    // -------------------------------------------------------------- chunks
+
+    fn chunk(file: &str, start: u32, end: u32, name: Option<&str>, text: &str) -> Chunk {
+        let file_hash = blake3::hash(b"file");
+        Chunk {
+            metadata: ChunkMetadata {
+                id: ChunkId(format!("{file}#{start}-{end}")),
+                file_id: FileId(file.to_string()),
+                language: Language::Markdown,
+                kind: if name.is_some() { ChunkKind::Section } else { ChunkKind::File },
+                start_byte: start,
+                end_byte: end,
+                file_hash,
+                hash: crate::domain::chunk_index::chunk_hash(file_hash, start, end),
+                qualified_name: name.map(str::to_string),
+                ordinal: 0,
+            },
+            text: text.to_string(),
+        }
+    }
+
+    fn fts_text(store: &IndexStore) -> Vec<String> {
+        let conn = store.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT text FROM chunks_fts ORDER BY rowid").unwrap();
+        let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+        rows.collect::<Result<Vec<String>, _>>().unwrap()
+    }
+
+    #[test]
+    fn a_chunk_round_trips_with_every_column_the_index_needs() {
+        let (store, _dir) = store("store-chunks");
+        store.upsert_files(&[file("a.md", "# One\nbody\n")]).unwrap();
+        let written = chunk("a.md", 0, 11, Some("One"), "# One\nbody\n");
+
+        store.replace_chunks_for_file(&FileId("a.md".into()), &[written.clone()]).unwrap();
+
+        let loaded = store.load_all_chunks().unwrap();
+        assert_eq!(loaded, vec![written.metadata]);
+    }
+
+    /// A file that changed shifts every byte range after the edit, so the
+    /// chunks are replaced wholesale rather than diffed. The old rows must
+    /// not survive alongside the new ones under different ids.
+    #[test]
+    fn re_chunking_a_file_replaces_its_chunks_rather_than_adding_to_them() {
+        let (store, _dir) = store("store-chunks-replace");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+
+        store
+            .replace_chunks_for_file(&id, &[chunk("a.md", 0, 5, None, "first"), chunk("a.md", 5, 9, None, "more")])
+            .unwrap();
+        store.replace_chunks_for_file(&id, &[chunk("a.md", 0, 6, None, "second")]).unwrap();
+
+        assert_eq!(store.load_all_chunks().unwrap().len(), 1);
+        assert_eq!(fts_text(&store), vec!["second"], "the old full-text rows outlived their chunks");
+    }
+
+    /// The text goes into the full-text index and nowhere else: a snippet is
+    /// read from the file when a result needs one, so the relational tables
+    /// hold no second copy of the repository.
+    #[test]
+    fn the_text_reaches_the_full_text_index_and_the_name_with_it() {
+        let (store, _dir) = store("store-chunks-fts");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        store
+            .replace_chunks_for_file(
+                &FileId("a.md".into()),
+                &[chunk("a.md", 0, 9, Some("Guide > Install"), "run the installer")],
+            )
+            .unwrap();
+
+        let conn = store.lock().unwrap();
+        let (name, text): (String, String) = conn
+            .query_row("SELECT qualified_name, text FROM chunks_fts", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(name, "Guide > Install");
+        assert_eq!(text, "run the installer");
+    }
+
+    /// Chunks for a file the store has never seen are refused rather than
+    /// stored unattached — rows that no file owns are never re-read and never
+    /// deleted, and would keep matching searches forever.
+    #[test]
+    fn chunks_for_an_unknown_file_are_refused() {
+        let (store, _dir) = store("store-chunks-orphan");
+        assert!(
+            store
+                .replace_chunks_for_file(&FileId("ghost.md".into()), &[chunk("ghost.md", 0, 1, None, "x")])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_chunk_row_this_build_cannot_read_is_skipped_rather_than_fatal() {
+        let (store, _dir) = store("store-chunks-unreadable");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        store
+            .replace_chunks_for_file(
+                &FileId("a.md".into()),
+                &[chunk("a.md", 0, 1, None, "one"), chunk("a.md", 1, 2, None, "two")],
+            )
+            .unwrap();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute("UPDATE chunks SET kind = 'method' WHERE start_byte = 0", []).unwrap();
+        }
+
+        let loaded = store.load_all_chunks().unwrap();
+        assert_eq!(loaded.len(), 1, "one unreadable row blinded the whole index");
+        assert_eq!(loaded[0].start_byte, 1);
+    }
+
+    #[test]
+    fn every_chunk_kind_round_trips() {
+        for kind in [ChunkKind::Section, ChunkKind::File] {
+            assert_eq!(str_to_chunk_kind(chunk_kind_to_str(kind)), Some(kind), "{kind:?}");
+        }
+    }
+
+    // ----------------------------------------------------- the cheap rebuild
+
+    /// The whole reason the cheap version exists. Re-naming chunks and
+    /// rebuilding the full-text index must not touch the vectors, which cost
+    /// an hour to compute and describe byte ranges that did not move.
+    #[test]
+    fn rebuilding_the_derived_half_keeps_the_vectors() {
+        let (store, _dir) = store("store-derived-keeps");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+        store.replace_chunks_for_file(&id, &[chunk("a.md", 0, 9, None, "body")]).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute(
+                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES ('a.md#0-9', 'm', X'00')",
+                [],
+            )
+            .unwrap();
+        }
+
+        store
+            .replace_derived_for_file(&id, &[chunk("a.md", 0, 9, Some("Guide"), "body")])
+            .unwrap();
+
+        assert_eq!(count(&store, "embeddings"), 1, "the vectors were thrown away");
+        assert_eq!(
+            store.load_all_chunks().unwrap()[0].qualified_name.as_deref(),
+            Some("Guide"),
+            "the name was not rewritten"
+        );
+    }
+
+    /// The same path through `replace_chunks_for_file` would have cascaded
+    /// them away — which is exactly why there are two methods.
+    #[test]
+    fn the_ordinary_path_does_throw_the_vectors_away() {
+        let (store, _dir) = store("store-derived-contrast");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+        store.replace_chunks_for_file(&id, &[chunk("a.md", 0, 9, None, "body")]).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute(
+                "INSERT INTO embeddings (chunk_id, model_id, chunk_hash) VALUES ('a.md#0-9', 'm', X'00')",
+                [],
+            )
+            .unwrap();
+        }
+
+        store.replace_chunks_for_file(&id, &[chunk("a.md", 0, 9, None, "body")]).unwrap();
+
+        assert_eq!(count(&store, "embeddings"), 0);
+    }
+
+    /// A file edited since the last sync rebuilds to different byte ranges,
+    /// so its chunks no longer match what is stored. Inserting the full-text
+    /// row anyway would leave one nothing points at — unfindable, and so
+    /// undeletable, matching searches forever.
+    #[test]
+    fn a_rebuilt_chunk_that_matches_nothing_leaves_no_orphan_behind() {
+        let (store, _dir) = store("store-derived-orphan");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+        store.replace_chunks_for_file(&id, &[chunk("a.md", 0, 9, None, "body")]).unwrap();
+
+        store
+            .replace_derived_for_file(&id, &[chunk("a.md", 0, 40, Some("Moved"), "body moved")])
+            .unwrap();
+
+        assert_eq!(count(&store, "chunks_fts"), 0, "an unreachable full-text row was left behind");
+        assert_eq!(count(&store, "chunks"), 1, "the chunk row itself was touched");
+    }
+
+    // ------------------------------------------------------------- symbols
+
+    fn symbol(name: &str, start: u32) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            start_line: 0,
+            end_line: 1,
+            start_byte: start,
+            end_byte: start + 1,
+        }
+    }
+
+    #[test]
+    fn symbols_round_trip_grouped_by_their_file() {
+        let (store, _dir) = store("store-symbols");
+        store.upsert_files(&[file("a.md", "x"), file("b.md", "y")]).unwrap();
+        store
+            .replace_symbols_for_file(&FileId("a.md".into()), &[symbol("One", 0), symbol("Two", 10)])
+            .unwrap();
+        store
+            .replace_symbols_for_file(&FileId("b.md".into()), &[symbol("Other", 0)])
+            .unwrap();
+
+        let loaded = store.load_all_symbols().unwrap();
+        assert_eq!(loaded[&FileId("a.md".into())], vec![symbol("One", 0), symbol("Two", 10)]);
+        assert_eq!(loaded[&FileId("b.md".into())].len(), 1);
+    }
+
+    /// Re-parsing a file replaces what was found in it. Symbols have no id of
+    /// their own, so a stale row cannot be told from a fresh one afterwards.
+    #[test]
+    fn re_parsing_a_file_replaces_its_symbols() {
+        let (store, _dir) = store("store-symbols-replace");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+
+        store.replace_symbols_for_file(&id, &[symbol("Old", 0), symbol("Gone", 5)]).unwrap();
+        store.replace_symbols_for_file(&id, &[symbol("New", 0)]).unwrap();
+
+        assert_eq!(store.load_all_symbols().unwrap()[&id], vec![symbol("New", 0)]);
+    }
+
+    /// A file with nothing in it has no symbols, and saying so has to clear
+    /// what the previous parse found — otherwise deleting the last heading
+    /// from a document leaves it in the index forever.
+    #[test]
+    fn a_file_that_lost_its_symbols_has_them_removed() {
+        let (store, _dir) = store("store-symbols-empty");
+        store.upsert_files(&[file("a.md", "x")]).unwrap();
+        let id = FileId("a.md".into());
+
+        store.replace_symbols_for_file(&id, &[symbol("Heading", 0)]).unwrap();
+        store.replace_symbols_for_file(&id, &[]).unwrap();
+
+        assert!(store.load_all_symbols().unwrap().is_empty());
     }
 
     // ------------------------------------------------------------- vectors
