@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
+import type { SkillsView } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -23,7 +24,6 @@ const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
 
 // Each list is filled by its own command wrapper once that command exists.
 const MCP_SERVERS: PanelItem[] = [];
-const SKILLS: PanelItem[] = [];
 const RULES: PanelItem[] = [];
 const WORKSPACE_FILES: string[] = [];
 
@@ -33,7 +33,34 @@ type Props = {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onNotify: (msg: string) => void;
+  skills: SkillsView | null;
+  skillsError: string | null;
+  onSkillToggle: (name: string, enabled: boolean) => void;
 };
+
+/** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
+function skillItems(view: SkillsView | null): PanelItem[] {
+  return (view?.skills ?? []).map((skill) =>
+    skill.error
+      ? {
+          id: skill.name,
+          badge: "!",
+          kind: "skill",
+          title: skill.name,
+          status: { label: "invalid", tone: "warn" },
+          desc: skill.error,
+        }
+      : {
+          id: skill.name,
+          badge: skill.name.slice(0, 2).toUpperCase(),
+          kind: "skill",
+          title: skill.name,
+          desc: skill.description,
+          enabled: skill.enabled,
+          note: skill.description,
+        },
+  );
+}
 
 export function AsidePanel({
   tab,
@@ -41,7 +68,11 @@ export function AsidePanel({
   collapsed,
   onToggleCollapse,
   onNotify,
+  skills,
+  skillsError,
+  onSkillToggle,
 }: Props) {
+  const skillList = skillItems(skills);
   return (
     <aside className="aside">
       <div className="aside-head">
@@ -101,14 +132,20 @@ export function AsidePanel({
             />
           )}
           {tab === "skills" && (
-            <ItemList
-              label="Active skills"
-              count={String(SKILLS.length)}
-              items={SKILLS}
-              emptyLabel="No skills installed."
-              addLabel="Install skill"
-              onAdd={() => onNotify("Skill install is not wired yet")}
-            />
+            <>
+              <ItemList
+                label="Skills"
+                count={`${skillList.filter((s) => s.enabled).length}/${skillList.length}`}
+                items={skillList}
+                emptyLabel={
+                  skills?.dir
+                    ? `No skills yet. A skill is a folder with a SKILL.md in ${skills.dir}.`
+                    : "No skills yet."
+                }
+                onToggle={onSkillToggle}
+              />
+              {skillsError && <div className="empty">{skillsError}</div>}
+            </>
           )}
           {tab === "rules" && (
             <ItemList

@@ -51,6 +51,7 @@ mod tests {
                 }],
                 debug_logging: true,
             },
+            skills: crate::domain::skills::SkillsSettings { disabled: vec!["release".to_string()] },
         }
     }
 

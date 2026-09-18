@@ -98,7 +98,7 @@ pub fn execute_tool(
         ToolCall::GitBlame(args) => git::git_blame(scope, args),
         ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
-        ToolCall::Skill(args) => skill::skill(args),
+        ToolCall::Skill(args) => skill::skill(args, deps),
     }
 }
 

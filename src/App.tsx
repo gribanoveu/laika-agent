@@ -14,6 +14,7 @@ import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
+import { useSkills } from "./hooks/useSkills";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
@@ -47,6 +48,7 @@ export default function App() {
   const toast = useToast();
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
+  const skills = useSkills(tab === "skills" && !asideCollapsed);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
@@ -186,6 +188,9 @@ export default function App() {
           collapsed={asideCollapsed}
           onToggleCollapse={() => setAsideCollapsed((v) => !v)}
           onNotify={toast.show}
+          skills={skills.view}
+          skillsError={skills.error}
+          onSkillToggle={skills.setEnabled}
         />
       </div>
 

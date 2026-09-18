@@ -3,9 +3,9 @@ import { ChevronRight, Plus } from "lucide-react";
 import type { PanelItem } from "../types";
 import "./ItemList.css";
 
-function Item({ item }: { item: PanelItem }) {
+function Item({ item, onToggle }: { item: PanelItem; onToggle?: (id: string, enabled: boolean) => void }) {
   const [open, setOpen] = useState(false);
-  const [enabled, setEnabled] = useState(item.enabled ?? false);
+  const enabled = item.enabled ?? false;
 
   return (
     <div className={`item${open ? " open" : ""}`}>
@@ -31,7 +31,7 @@ function Item({ item }: { item: PanelItem }) {
           )}
         </div>
         <div className="item-actions">
-          {item.enabled !== undefined && (
+          {item.enabled !== undefined && onToggle && (
             <button
               type="button"
               className={`toggle${enabled ? " on" : ""}`}
@@ -39,7 +39,7 @@ function Item({ item }: { item: PanelItem }) {
               aria-label={enabled ? "Enabled" : "Disabled"}
               onClick={(e) => {
                 e.stopPropagation();
-                setEnabled((v) => !v);
+                onToggle(item.id, !enabled);
               }}
             />
           )}
@@ -74,9 +74,11 @@ type Props = {
   emptyLabel: string;
   addLabel?: string;
   onAdd?: () => void;
+  /** Without it the items have no switch: the list cannot change what it shows. */
+  onToggle?: (id: string, enabled: boolean) => void;
 };
 
-export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd }: Props) {
+export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd, onToggle }: Props) {
   return (
     <div className="panel-section">
       <div className="section-label">
@@ -85,7 +87,7 @@ export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd }: P
       </div>
       {items.length === 0 && <div className="empty">{emptyLabel}</div>}
       {items.map((item) => (
-        <Item key={item.id} item={item} />
+        <Item key={item.id} item={item} onToggle={onToggle} />
       ))}
       {addLabel && (
         <button className="add-btn" type="button" onClick={onAdd}>

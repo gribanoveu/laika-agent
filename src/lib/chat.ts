@@ -407,3 +407,21 @@ export async function deleteChat(id: string): Promise<void> {
   requireBackend();
   return invoke("chat_delete", { id });
 }
+
+// ---------------------------------------------------------------- skills
+
+/** One folder of the skills directory. `error` is set when its SKILL.md did not parse. */
+export type SkillListItem = { name: string; description: string; enabled: boolean; error: string | null };
+
+/** `dir` is where skills go, so an empty list can say so. */
+export type SkillsView = { dir: string; skills: SkillListItem[] };
+
+export async function skillsList(): Promise<SkillsView> {
+  if (!inTauri()) return { dir: "", skills: [] };
+  return invoke<SkillsView>("skills_list");
+}
+
+export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  requireBackend();
+  return invoke<void>("skills_set_enabled", { name, enabled });
+}

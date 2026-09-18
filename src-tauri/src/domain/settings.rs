@@ -99,6 +99,7 @@ impl LlmSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub llm: LlmSettings,
+    pub skills: crate::domain::skills::SkillsSettings,
 }
 
 #[derive(Debug, Error)]

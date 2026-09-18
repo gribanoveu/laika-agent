@@ -377,7 +377,7 @@ where
         let shell = Shell::default();
         // A skills folder that cannot be read costs the turn its skills, not
         // the turn itself: nothing the user asked for depends on it existing.
-        let skills = crate::infra::skills_store::catalog().unwrap_or_default();
+        let skills = crate::services::skills::enabled_catalog().unwrap_or_default();
 
         let turn = Turn {
             events: &events,

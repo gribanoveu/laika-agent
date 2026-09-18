@@ -197,6 +197,7 @@ mod tests {
                 providers,
                 debug_logging: false,
             },
+            ..Default::default()
         })
         .unwrap();
     }

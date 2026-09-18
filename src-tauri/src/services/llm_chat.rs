@@ -535,6 +535,7 @@ fn run(
                             shell: turn.shell.clone(),
                             output: Some(command_output_sink(turn.events, round, &call.id)),
                             search: turn.search.clone(),
+                            skills: turn.skills.to_vec(),
                         };
                         execute_tool(
                             turn.scope,
@@ -2354,19 +2355,28 @@ mod tests {
         assert!(told[0].contains("src/sync.rs"), "{told:?}");
     }
 
-    /// The catalog the turn was given is what every request lists — the model
-    /// can load only what it has been told exists.
+    /// The catalog the turn was given is what every request lists, and what
+    /// the tool loads from — the model can load only what it was told exists.
     #[test]
-    fn every_request_lists_the_turns_skills() {
-        let mut h = harness(
-            "turn-skills",
-            vec![asks(vec![wants("r1", "listFiles", r#"{"path":"."}"#)]), text("done")],
-        );
-        h.skills = vec![SkillMeta { name: "release".into(), description: "Cuts a release.".into() }];
+    fn every_request_lists_the_turns_skills_and_the_tool_loads_them() {
+        crate::testing::with_app_dir("turn-skills", || {
+            crate::infra::skills_store::test_support::write_skill("release", "Cuts a release.", "Bump the version.");
+            let mut h = harness(
+                "turn-skills",
+                vec![asks(vec![wants("k1", "skill", r#"{"name":"release"}"#)]), text("done")],
+            );
+            h.skills = vec![SkillMeta { name: "release".into(), description: "Cuts a release.".into() }];
 
-        h.run(|turn| stream(turn, vec![LlmMessage::user("ship it")], vec![])).expect("finishes");
+            h.run(|turn| stream(turn, vec![LlmMessage::user("ship it")], vec![])).expect("finishes");
 
-        let requests = h.provider.requests();
+            let requests = h.provider.requests();
+            let told = tool_contents(requests.last().unwrap());
+            assert!(told[0].contains("Bump the version."), "{told:?}");
+            assert_requests_list_release(requests);
+        });
+    }
+
+    fn assert_requests_list_release(requests: Vec<ChatRequest>) {
         assert_eq!(requests.len(), 2);
         for request in requests {
             assert!(

@@ -455,6 +455,8 @@ pub struct ToolDeps {
     pub output: Option<crate::domain::command_exec::CommandSink>,
     /// The open folder's index; `None` when there is none.
     pub search: Option<CodeSearchFn>,
+    /// The skills this turn's prompt listed — the only ones `skill` loads.
+    pub skills: Vec<crate::domain::skills::SkillMeta>,
 }
 
 /// Why a tool call could not be carried out.

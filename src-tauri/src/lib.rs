@@ -60,6 +60,8 @@ pub fn run() {
             commands::settings::llm_debug_logging_set,
             commands::settings::llm_models_list,
             commands::settings::agent_readiness,
+            commands::skills::skills_list,
+            commands::skills::skills_set_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

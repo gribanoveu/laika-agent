@@ -33,6 +33,40 @@ pub struct SkillMeta {
     pub description: String,
 }
 
+/// Which skills the user switched off, by name. Opt-out: a skill dropped
+/// into the folder is on until someone says otherwise, and a name listed
+/// here whose folder is gone costs nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SkillsSettings {
+    pub disabled: Vec<String>,
+}
+
+impl SkillsSettings {
+    pub fn is_enabled(&self, name: &str) -> bool {
+        !self.disabled.iter().any(|n| n == name)
+    }
+
+    pub fn set_enabled(&mut self, name: &str, enabled: bool) {
+        self.disabled.retain(|n| n != name);
+        if !enabled {
+            self.disabled.push(name.to_string());
+        }
+    }
+}
+
+/// One row of the skills tab. A folder whose `SKILL.md` did not parse is a
+/// row too, named by its folder and carrying the reason in `error` — it is
+/// the only place the user learns why a skill never reaches the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillListItem {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SkillError {
     #[error("SKILL.md is missing YAML frontmatter")]
@@ -128,6 +162,19 @@ mod tests {
 
     fn md(name: &str, description: &str, body: &str) -> String {
         format!("---\nname: {name}\ndescription: {description}\n---\n{body}")
+    }
+
+    #[test]
+    fn a_skill_is_on_until_switched_off_and_back_on_leaves_no_trace() {
+        let mut settings = SkillsSettings::default();
+        assert!(settings.is_enabled("release"));
+        settings.set_enabled("release", false);
+        settings.set_enabled("release", false);
+        assert!(!settings.is_enabled("release"));
+        assert!(settings.is_enabled("review"));
+        assert_eq!(settings.disabled, ["release"]);
+        settings.set_enabled("release", true);
+        assert!(settings.disabled.is_empty());
     }
 
     #[test]
