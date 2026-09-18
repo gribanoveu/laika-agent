@@ -126,6 +126,27 @@ describe("editing a provider", () => {
     expect(saved[0]?.provider.id).toBe("openrouter");
   });
 
+  test("a provider is OpenAI-compatible until switched to Anthropic", async () => {
+    const { saved } = form();
+
+    expect(screen.getByText("OpenAI-compatible").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByText("Anthropic"));
+    expect(field("Base URL").placeholder).toBe("https://api.anthropic.com/v1");
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+
+    expect(saved[0]?.provider.kind).toBe("anthropic");
+  });
+
+  test("a stored Anthropic provider opens as one", () => {
+    form({
+      providers: [{ id: "claude", kind: "anthropic", baseUrl: "https://api.anthropic.com/v1", hasApiKey: true }],
+      activeProviderId: "claude",
+    });
+    expect(screen.getByText("Anthropic").getAttribute("aria-checked")).toBe("true");
+  });
+
   test("removing names the provider being edited", async () => {
     const { removed } = form();
     fireEvent.click(screen.getByText("Remove"));

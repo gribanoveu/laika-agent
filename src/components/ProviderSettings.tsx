@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import type { LlmSettings, ProviderConfig } from "../lib/chat";
+import type { LlmSettings, ProviderConfig, ProviderKind } from "../lib/chat";
 import "./ProviderSettings.css";
 
 // The provider form. A segmented control rather than the app's dropdown,
 // because a popup menu is clipped by the modal's own overflow — the same
 // reason the theme picker is segmented.
 
-const BLANK = { id: "", baseUrl: "", model: "", contextLimit: "" };
+const BLANK = { id: "", kind: "openAiCompatible" as ProviderKind, baseUrl: "", model: "", contextLimit: "" };
+
+const KINDS: [ProviderKind, string, string][] = [
+  ["openAiCompatible", "OpenAI-compatible", "https://api.openai.com/v1"],
+  ["anthropic", "Anthropic", "https://api.anthropic.com/v1"],
+];
 
 type Props = {
   settings: LlmSettings | null;
@@ -21,6 +26,7 @@ type Props = {
 
 const fromConfig = (config: ProviderConfig) => ({
   id: config.id,
+  kind: config.kind ?? ("openAiCompatible" as ProviderKind),
   baseUrl: config.baseUrl,
   model: config.model ?? "",
   contextLimit: config.contextLimit ? String(config.contextLimit) : "",
@@ -76,6 +82,7 @@ export function ProviderSettings({
       {
         ...chosen,
         id: draft.id.trim(),
+        kind: draft.kind,
         baseUrl: draft.baseUrl.trim(),
         model: draft.model.trim() || null,
         // Blank means "not known", which is what turns compaction off. A zero
@@ -143,11 +150,28 @@ export function ProviderSettings({
           />
         </div>
         <div className="modal-field">
+          <label>Protocol</label>
+          <div className="segmented" role="radiogroup" aria-label="Protocol">
+            {KINDS.map(([kind, label]) => (
+              <button
+                key={kind}
+                type="button"
+                role="radio"
+                aria-checked={draft.kind === kind}
+                className={`segment${draft.kind === kind ? " active" : ""}`}
+                onClick={() => edit({ kind })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="modal-field">
           <label>Base URL</label>
           <input
             type="text"
             value={draft.baseUrl}
-            placeholder="https://api.openai.com/v1"
+            placeholder={KINDS.find(([kind]) => kind === draft.kind)?.[2]}
             onChange={(e) => edit({ baseUrl: e.target.value })}
           />
         </div>

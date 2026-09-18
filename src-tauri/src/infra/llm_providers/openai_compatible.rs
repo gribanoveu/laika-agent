@@ -231,7 +231,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
 /// The agent is built with `http_status_as_error(false)` precisely so the body
 /// survives to here — ureq's own conversion discards it, which is how a
 /// provider's explanation becomes an undiagnosable status number.
-fn ok_or_status_error(
+pub(super) fn ok_or_status_error(
     mut response: http::Response<ureq::Body>,
 ) -> Result<http::Response<ureq::Body>, LlmError> {
     let status = response.status();
@@ -253,10 +253,12 @@ fn ok_or_status_error(
     };
     // 429 is the one status worth trying again unchanged, so it gets its own
     // variant rather than being recognised later by matching on the message.
-    if status.as_u16() == 429 {
+    // 529 is Anthropic's "overloaded": not this caller's limit, but the same
+    // advice — the request was fine, send it again later.
+    if matches!(status.as_u16(), 429 | 529) {
         return Err(LlmError::RateLimited {
             retry_after_seconds: retry_after_seconds(&headers),
-            message: format!("http status 429: {body}"),
+            message: format!("http status {}: {body}", status.as_u16()),
         });
     }
     Err(LlmError::Http(format!(
@@ -280,7 +282,7 @@ fn retry_after_seconds(headers: &http::HeaderMap) -> Option<u64> {
         .ok()
 }
 
-fn header_value(value: &str) -> String {
+pub(super) fn header_value(value: &str) -> String {
     if value == REQUEST_HEADER_VALUE_UUID {
         uuid::Uuid::new_v4().to_string()
     } else {
@@ -642,7 +644,7 @@ impl ToolCallAccumulator {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::domain::llm::LlmToolDefinition;
     use std::io::Write;
@@ -840,12 +842,12 @@ mod tests {
 
     /// Serves one canned response over a real socket, so the streaming loop is
     /// exercised end to end rather than only its line parser.
-    fn serve(status: &str, body: String) -> (String, std::thread::JoinHandle<()>) {
+    pub(in crate::infra::llm_providers) fn serve(status: &str, body: String) -> (String, std::thread::JoinHandle<()>) {
         serve_with_headers(status, "", body)
     }
 
     /// `extra` is appended verbatim, each line CRLF-terminated by the caller.
-    fn serve_with_headers(
+    pub(in crate::infra::llm_providers) fn serve_with_headers(
         status: &str,
         extra: &str,
         body: String,
@@ -868,6 +870,44 @@ mod tests {
             );
             let _ = socket.write_all(response.as_bytes());
             let _ = socket.flush();
+        });
+        (format!("http://127.0.0.1:{port}"), handle)
+    }
+
+    /// Like `serve`, and hands back the request it read — head and body.
+    pub(in crate::infra::llm_providers) fn serve_capturing(
+        body: String,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binds");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return String::new();
+            };
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 65536];
+            // Until the body promised by Content-Length is in.
+            while let Ok(n @ 1..) = std::io::Read::read(&mut socket, &mut buffer) {
+                request.extend_from_slice(&buffer[..n]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().to_string()))
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes());
+            let _ = socket.flush();
+            String::from_utf8_lossy(&request).into_owned()
         });
         (format!("http://127.0.0.1:{port}"), handle)
     }

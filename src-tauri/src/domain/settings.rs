@@ -21,6 +21,10 @@ use thiserror::Error;
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfig {
     pub id: String,
+    /// Which wire protocol the endpoint speaks. Absent in every file written
+    /// before Anthropic's was supported, and those were all OpenAI-compatible.
+    #[serde(default)]
+    pub kind: ProviderKind,
     pub base_url: String,
     /// The model to send. `None` means "whichever the provider lists first",
     /// resolved once and then written back here — see
@@ -59,6 +63,16 @@ pub struct ProviderConfig {
     /// be sendable without a rebuild.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderKind {
+    /// `/chat/completions` — OpenAI itself and nearly every gateway.
+    #[default]
+    OpenAiCompatible,
+    /// Anthropic's Messages API, `/messages`.
+    Anthropic,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -252,5 +266,16 @@ mod tests {
         })
         .unwrap();
         assert!(!written.to_lowercase().contains("key"), "{written}");
+    }
+
+    /// Every settings file written before the field existed.
+    #[test]
+    fn a_provider_without_a_kind_is_openai_compatible() {
+        let config: ProviderConfig =
+            serde_json::from_str(r#"{"id":"a","baseUrl":"https://x/v1"}"#).unwrap();
+        assert_eq!(config.kind, ProviderKind::OpenAiCompatible);
+        let anthropic: ProviderConfig =
+            serde_json::from_str(r#"{"id":"a","baseUrl":"https://x/v1","kind":"anthropic"}"#).unwrap();
+        assert_eq!(anthropic.kind, ProviderKind::Anthropic);
     }
 }

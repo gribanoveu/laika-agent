@@ -265,8 +265,12 @@ export async function onTurnEvent(
 
 // ---------------------------------------------------- provider configuration
 
+/** The wire protocol an endpoint speaks. Absent means OpenAI-compatible. */
+export type ProviderKind = "openAiCompatible" | "anthropic";
+
 export type ProviderConfig = {
   id: string;
+  kind?: ProviderKind;
   baseUrl: string;
   model?: string | null;
   trustedCertPem?: string | null;

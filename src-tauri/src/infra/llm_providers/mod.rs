@@ -1,16 +1,16 @@
+pub mod anthropic;
 pub mod openai_compatible;
 
 use secrecy::SecretString;
 
 use crate::domain::llm::{LlmError, LlmProvider};
-use crate::domain::settings::ProviderConfig;
+use crate::domain::settings::{ProviderConfig, ProviderKind};
 use crate::infra::http_agent;
 
 /// The one place a configuration becomes a client. Callers work against the
 /// trait afterwards, never against `OpenAiCompatibleProvider` directly — which
 /// is what keeps a second protocol (Anthropic's own, say) to a branch here
-/// rather than a change at every call site. There is no kind enum yet because
-/// there is no second implementation yet.
+/// rather than a change at every call site.
 pub fn provider_for(
     config: &ProviderConfig,
     api_key: Option<SecretString>,
@@ -20,15 +20,27 @@ pub fn provider_for(
     })?;
     let agent = http_agent::build_agent(config.trusted_cert_pem.as_deref())
         .map_err(|e| LlmError::Tls(e.0))?;
-    Ok(Box::new(openai_compatible::OpenAiCompatibleProvider::new(
-        agent,
-        config.base_url.clone(),
-        api_key,
-        config.request_headers.clone(),
-        config.temperature,
-        config.max_tokens,
-        config.reasoning_effort.clone(),
-    )))
+    Ok(match config.kind {
+        ProviderKind::OpenAiCompatible => Box::new(openai_compatible::OpenAiCompatibleProvider::new(
+            agent,
+            config.base_url.clone(),
+            api_key,
+            config.request_headers.clone(),
+            config.temperature,
+            config.max_tokens,
+            config.reasoning_effort.clone(),
+        )),
+        // `reasoning_effort` is not sent: it asks for thinking, and thinking
+        // blocks would have to be carried back (F-7.3).
+        ProviderKind::Anthropic => Box::new(anthropic::AnthropicProvider::new(
+            agent,
+            config.base_url.clone(),
+            api_key,
+            config.request_headers.clone(),
+            config.temperature,
+            config.max_tokens,
+        )),
+    })
 }
 
 #[cfg(test)]
