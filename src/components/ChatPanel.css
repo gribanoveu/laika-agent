@@ -408,35 +408,46 @@
   border-color: var(--accent);
 }
 
-/* Something the user typed mid-turn. A plain bubble would read as if they had
-   started a new request, which is exactly what the model is told it is not. */
 /* The branch button sits beside the bubble and shows on hover, so a long
    conversation is not a column of icons. */
-.bubble-row {
+/* Under a message: what sets it apart, or what can be done with it. The
+   line is always there and shown on hover, so nothing moves. */
+.bubble-foot {
   display: flex;
-  align-items: flex-start;
-  gap: 4px;
-}
-.bubble-row .bubble {
-  flex: 1;
-  min-width: 0;
-}
-.bubble-branch {
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+  margin: 2px 0 0 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
   opacity: 0;
+  transition: opacity 0.15s;
 }
-.bubble-row:hover .bubble-branch,
-.bubble-branch:focus-visible {
+.user-msg:hover .bubble-foot,
+.bubble-foot:focus-within {
   opacity: 1;
 }
-.bubble-branch:disabled {
-  cursor: default;
-  color: var(--text-faint);
+.bubble-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: 5px;
   background: none;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
 }
-
-.bubble.steer {
-  border-left: 2px solid var(--amber);
-  opacity: 0.9;
+.bubble-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.bubble-action:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 /* A reasoning model's thinking: a row like a call's, folded until asked. */

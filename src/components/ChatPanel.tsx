@@ -522,25 +522,29 @@ function UserBubble({
 }) {
   const offered = branchable !== null && onBranch !== undefined;
   const can = branchable?.has(block.id) ?? false;
+  // The action sits under the message, shown on hover in room kept for it,
+  // so a long conversation is not a column of buttons and nothing moves.
   return (
-    <div className="bubble-row">
+    <div className="user-msg">
       <div className="bubble">{block.text}</div>
-      {offered && (
-        <button
-          type="button"
-          className="iconbtn bubble-branch"
-          disabled={!can}
-          aria-label="Branch from here"
-          title={
-            can
-              ? "Branch from here: a new chat with the conversation up to this message, which you can change and send again"
-              : "Folded into the summary of earlier conversation — the model no longer sees what came before it, so a branch cannot start here"
-          }
-          onClick={() => onBranch(block.id)}
-        >
-          <GitBranch size={14} />
-        </button>
-      )}
+      <div className="bubble-foot">
+        {offered && (
+          <button
+            type="button"
+            className="bubble-action"
+            disabled={!can}
+            title={
+              can
+                ? "A new chat with the conversation up to this message, which you can change and send again"
+                : "Folded into the summary of earlier conversation — the model no longer sees what came before it, so a branch cannot start here"
+            }
+            onClick={() => onBranch(block.id)}
+          >
+            <GitBranch size={12} />
+            Branch from here
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -558,9 +562,12 @@ function renderBlock(
         </div>
       );
     case "steer":
+      // Looks like any message; what sets it apart is said on hover, in room
+      // kept for it so nothing moves.
       return (
-        <div className="bubble steer" key={block.id} title="Sent while the agent was working">
-          {block.text}
+        <div className="user-msg" key={block.id}>
+          <div className="bubble">{block.text}</div>
+          <div className="bubble-foot">Sent while the agent was working</div>
         </div>
       );
     case "notice":
