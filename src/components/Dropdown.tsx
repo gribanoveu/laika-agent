@@ -12,14 +12,13 @@ type Props = {
   options: Option[];
   value: string;
   onPick: (value: string) => void;
-  mono?: boolean;
   emptyLabel?: string;
   /** Where the menu opens; above by default — the composer sits at the bottom. */
   below?: boolean;
 };
 
 /** Trigger + role="listbox" menu — the app draws its own dropdowns, never <select>. */
-export function Dropdown({ label, title, options, value, onPick, mono, emptyLabel, below }: Props) {
+export function Dropdown({ label, title, options, value, onPick, emptyLabel, below }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -49,7 +48,7 @@ export function Dropdown({ label, title, options, value, onPick, mono, emptyLabe
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className={mono ? "chip-model" : undefined}>{label}</span>
+        <span className="chip-label">{label}</span>
         <ChevronDown className="chip-chev" size={10} />
       </button>
       {open && (

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { describeTool } from "../lib/describeTool";
+import { describeRun, describeTool } from "../lib/describeTool";
 import type { Block } from "../lib/chatTurnReducer";
 
 // What a tool call looks like in the transcript. Rendering, so the tests are
@@ -275,5 +275,23 @@ describe("arguments that are not finished yet", () => {
   test("a tool this build has never heard of is shown by its own name", () => {
     const shown = describeTool(tool({ name: "summonDragon", arguments: "{}" }));
     expect(shown.name).toBe("summonDragon");
+  });
+});
+
+describe("a run of calls in one line", () => {
+  test("counts each kind in the order it first happened", () => {
+    const run = [
+      tool({ name: "readFile" }),
+      tool({ name: "grep" }),
+      tool({ name: "readFile" }),
+      tool({ name: "runCommand" }),
+    ];
+    expect(describeRun(run)).toBe("Read 2 files, searched a pattern, ran a command");
+  });
+
+  test("a tool without a phrase is counted under its own name", () => {
+    expect(describeRun([tool({ name: "mcp__jira__search" }), tool({ name: "mcp__jira__search" })])).toBe(
+      "Jira · search ×2",
+    );
   });
 });

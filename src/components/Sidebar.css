@@ -36,7 +36,7 @@
   padding: 7px 9px;
   border-radius: 8px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   cursor: pointer;
   background: none;
   border: 0;
@@ -67,13 +67,18 @@
   justify-content: space-between;
   padding: 4px 8px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   letter-spacing: 0.02em;
-  font-family: var(--font-mono);
   cursor: pointer;
 }
 .group-head:hover {
   color: var(--text-dim);
+}
+/* A long folder name ellipsises instead of wrapping under itself. */
+.group-head .dropdown-wrap,
+.group-head .chip {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat {
@@ -84,7 +89,7 @@
   padding: 7px 8px;
   border-radius: 8px;
   margin-top: 2px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-family: inherit;
   text-align: left;
   background: none;
@@ -142,7 +147,7 @@
   cursor: pointer;
   color: var(--text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .user:hover,
 .user.open {
@@ -202,7 +207,7 @@
   cursor: pointer;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-align: left;
 }
 .user-menu-item:hover {

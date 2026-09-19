@@ -270,3 +270,32 @@ function statusMark(status: string | undefined) {
   if (status === "inProgress") return "→";
   return "·";
 }
+
+// A run of calls folded into one line, the way a person would say it: "Read 3
+// files, searched 2 patterns, ran a command". Each verb takes the count; a
+// label without a phrase here is counted under its own name.
+const RUN_PHRASES: Record<string, (n: number) => string> = {
+  Read: (n) => `read ${n === 1 ? "a file" : `${n} files`}`,
+  Grep: (n) => `searched ${n === 1 ? "a pattern" : `${n} patterns`}`,
+  Search: (n) => `searched the code${n > 1 ? ` ${n} times` : ""}`,
+  List: (n) => `listed ${n === 1 ? "a folder" : `${n} folders`}`,
+  Write: (n) => `wrote ${n === 1 ? "a file" : `${n} files`}`,
+  Edit: (n) => `edited ${n === 1 ? "a file" : `${n} files`}`,
+  Delete: (n) => `deleted ${n === 1 ? "an item" : `${n} items`}`,
+  Mkdir: (n) => `created ${n === 1 ? "a folder" : `${n} folders`}`,
+  Move: (n) => `moved ${n === 1 ? "an item" : `${n} items`}`,
+  Bash: (n) => `ran ${n === 1 ? "a command" : `${n} commands`}`,
+  Todo: () => "updated the checklist",
+  Plan: () => "wrote the plan",
+};
+
+export function describeRun(tools: Extract<Block, { kind: "tool" }>[]): string {
+  const counts = new Map<string, number>();
+  for (const tool of tools) {
+    const name = toolLabel(tool.name);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const parts = [...counts].map(([name, n]) => RUN_PHRASES[name]?.(n) ?? (n === 1 ? name : `${name} ×${n}`));
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

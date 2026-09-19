@@ -15,7 +15,7 @@
   margin-bottom: 7px;
 }
 .getting-started-title {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text);
 }
@@ -25,7 +25,7 @@
   padding: 0;
   cursor: pointer;
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
 }
 .gs-skip:hover {
@@ -35,20 +35,20 @@
   min-height: 52px;
 }
 .gs-card-title {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-dim);
   margin-bottom: 2px;
 }
 .gs-card-text {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
   line-height: 1.45;
 }
 .gs-card-action {
   display: inline-block;
   margin-top: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   cursor: pointer;
   background: none;
@@ -96,7 +96,7 @@
   cursor: pointer;
   color: var(--text-faint);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .gs-nav-btn:hover {
   color: var(--text);

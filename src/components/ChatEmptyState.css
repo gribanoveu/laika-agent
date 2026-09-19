@@ -22,7 +22,7 @@
 }
 
 .chat-empty-title {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
@@ -30,7 +30,7 @@
 
 .chat-empty-text {
   max-width: 380px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-faint);
 }
@@ -51,7 +51,7 @@
   flex-wrap: wrap;
   justify-content: center;
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
 }
 .chat-empty-hint kbd {
@@ -64,7 +64,7 @@
   background: var(--bg-bubble);
   border: 1px solid var(--border-soft);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   line-height: 1;
   color: var(--text-dim);
 }

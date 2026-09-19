@@ -86,8 +86,7 @@ export function Sidebar({
         <div className="group-head">
           <Dropdown
             below
-            mono
-            label={repo ?? "No workspace"}
+            label={repo ? folderName(repo) : "No workspace"}
             title="Switch folder"
             value={repo ?? ""}
             options={[

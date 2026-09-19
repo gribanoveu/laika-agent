@@ -178,7 +178,7 @@ export default function App() {
       <div className="titlebar" onMouseDown={dragOrMaximize}>
         <WindowControls />
         <span className="titlebar-title">
-          atlas-cli{workspace.path && <span> · {workspace.path.split("/").pop()}</span>}
+          Atlas{workspace.path && <span> · {workspace.path.split("/").pop()}</span>}
         </span>
       </div>
 

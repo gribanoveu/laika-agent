@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  Brain,
   ChevronRight,
   FileText,
+  Folder,
   FolderTree,
   GitBranch,
   ListTodo,
@@ -16,7 +18,7 @@ import { ChatEmptyState } from "./ChatEmptyState";
 import { IndexBadge } from "./IndexBadge";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
-import { describeTool } from "../lib/describeTool";
+import { describeRun, describeTool } from "../lib/describeTool";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
@@ -233,6 +235,56 @@ function group(blocks: Block[]): Group[] {
   return groups;
 }
 
+type Tool = Extract<Block, { kind: "tool" }>;
+type Run = { kind: "run"; id: string; blocks: Block[] };
+
+/**
+ * An agent's calls and thinking between two things it said, folded into one
+ * line — the answer is what the reader came for, the work behind it is a click
+ * away. Approvals stay out: they wait for an answer and must be seen.
+ */
+function fold(blocks: Block[]): (Block | Run)[] {
+  const out: (Block | Run)[] = [];
+  for (const block of blocks) {
+    const last = out[out.length - 1];
+    if (block.kind !== "tool" && block.kind !== "reasoning") {
+      out.push(block);
+    } else if (last?.kind === "run") {
+      last.blocks.push(block);
+    } else {
+      out.push({ kind: "run", id: `run:${block.id}`, blocks: [block] });
+    }
+  }
+  // Thinking alone is not a run of work: it keeps its own fold.
+  return out.flatMap((item) =>
+    item.kind === "run" && !item.blocks.some((b) => b.kind === "tool") ? item.blocks : [item],
+  );
+}
+
+function ToolRun({ run, live }: { run: Run; live: boolean }) {
+  const tools = run.blocks.filter((b): b is Tool => b.kind === "tool");
+  const failed = tools.filter((t) => t.status === "failed").length;
+  const current = live ? tools.filter((t) => t.status === "running").pop() : undefined;
+  const shown = current && describeTool(current);
+
+  return (
+    <details className="tool-run">
+      <summary>
+        <span className="tool-run-text">
+          {shown ? `${shown.name} ${shown.arg}`.trim() + "…" : describeRun(tools)}
+        </span>
+        {failed > 0 && <span className="tool-run-failed">{failed} failed</span>}
+        <ChevronRight className="chev" size={12} />
+      </summary>
+      <div className="tools">
+        {run.blocks.map((block) =>
+          block.kind === "tool" ? <ToolRow key={block.id} block={block} /> : renderBlock(block, () => {}, false),
+        )}
+      </div>
+    </details>
+  );
+}
+
 /**
  * What the meter says, as a tooltip.
  *
@@ -312,15 +364,17 @@ export function ChatPanel({
   return (
     <section className="chat-panel">
       <header className="chat-head">
-        <div>
-          <h1>{name ?? "New session"}</h1>
+        <div className="head-left">
+          <div className="head-title">
+            <h1>{name ?? "New session"}</h1>
+            {workspace && index && <IndexBadge state={index} />}
+          </div>
           {workspace && (
-            <span className="branch" title={workspace}>
-              <GitBranch size={11} />
-              {workspace}
+            <span className="chat-path" title={workspace}>
+              <Folder size={11} />
+              <span>{workspace}</span>
             </span>
           )}
-          {workspace && index && <IndexBadge state={index} />}
         </div>
         <div className="head-right">
           {turn.retrying && (
@@ -377,8 +431,10 @@ export function ChatPanel({
                   {turnGroup.role === "agent" ? "Agent" : "You"}
                 </div>
               )}
-              {turnGroup.blocks.map((block) =>
-                block.kind === "user" ? (
+              {fold(turnGroup.blocks).map((block) =>
+                block.kind === "run" ? (
+                  <ToolRun key={block.id} run={block} live={turn.status === "running"} />
+                ) : block.kind === "user" ? (
                   <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
                 ) : (
                   renderBlock(block, onDecide, block.id === streamingId)
@@ -479,9 +535,14 @@ function renderBlock(
       );
     case "reasoning":
       return (
-        <p className="msg reasoning" key={block.id}>
-          {block.text}
-        </p>
+        <details className="reasoning" key={block.id}>
+          <summary>
+            <Brain size={13} />
+            Thinking
+            <ChevronRight className="chev" size={12} />
+          </summary>
+          <p className="reasoning-text">{block.text}</p>
+        </details>
       );
     case "tool":
       return (

@@ -83,7 +83,7 @@ export function Composer({
       <textarea
         ref={area}
         rows={2}
-        placeholder={running ? "Add something while it works…" : "Describe you task..."}
+        placeholder={running ? "Add something while it works…" : "Describe your task…"}
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -130,7 +130,6 @@ export function Composer({
         />
         <Dropdown
           title="Model"
-          mono
           label={model ?? "no model"}
           value={model ?? ""}
           options={MODELS}

@@ -5,7 +5,7 @@
   padding: 5px 6px;
   border-radius: 7px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-dim);
 }
 .stage-file:hover {
@@ -22,7 +22,7 @@
   border: 1px solid var(--border-soft);
   color: var(--text-faint);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-lg);
   line-height: 1;
   font-family: inherit;
 }
@@ -48,12 +48,12 @@
 .stage-file .stat {
   display: flex;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   flex: none;
 }
 .stage-empty {
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
 }
 
@@ -66,8 +66,8 @@
   border-radius: 7px;
   padding: 8px 10px;
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   line-height: 1.5;
   outline: none;
 }

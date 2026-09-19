@@ -38,7 +38,7 @@
   border-bottom: 1px solid var(--border-soft);
 }
 .modal-head h2 {
-  font-size: 14px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 .modal-close {
@@ -65,7 +65,7 @@
 }
 .modal-field label {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
   margin-bottom: 4px;
   font-family: var(--font-mono);
@@ -78,7 +78,7 @@
   border: 1px solid var(--border-soft);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   outline: none;
 }
 .modal-field input:focus {
@@ -101,7 +101,7 @@
   background: none;
   color: var(--text-dim);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-transform: capitalize;
   cursor: pointer;
 }
@@ -115,7 +115,7 @@
 }
 
 .modal-note {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
   line-height: 1.45;
   margin-top: 4px;

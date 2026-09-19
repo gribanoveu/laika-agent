@@ -138,6 +138,37 @@ describe("a tool row", () => {
   });
 });
 
+describe("a run of calls", () => {
+  const call = (id: string, name: string, status: "done" | "running" = "done"): Block => ({
+    kind: "tool",
+    id,
+    round: 1,
+    name,
+    arguments: '{"path":"a.rs"}',
+    status,
+    output: "",
+  });
+
+  test("folds into one line, and a message between two runs keeps them apart", () => {
+    const { container } = panel(
+      state([
+        call("c1", "readFile"),
+        { kind: "reasoning", id: "r1", round: 1, text: "now grep" },
+        call("c2", "grep"),
+        { kind: "message", id: "m1", round: 1, text: "found it" },
+        call("c3", "runCommand"),
+      ] as Block[]),
+    );
+    const runs = [...container.querySelectorAll(".tool-run > summary")].map((s) => s.textContent);
+    expect(runs).toEqual(["Read a file, searched a pattern", "Ran a command"]);
+  });
+
+  test("names the call under way while the turn runs", () => {
+    const { container } = panel(state([call("c1", "readFile"), call("c2", "readFile", "running")], { status: "running" }));
+    expect(container.querySelector(".tool-run > summary")?.textContent).toBe("Read a.rs…");
+  });
+});
+
 /** The card asks the backend what its calls would do; let that answer land. */
 const settle = () => act(async () => {});
 

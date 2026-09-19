@@ -22,9 +22,8 @@
 .titlebar-title {
   flex: 1;
   margin-left: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
-  font-family: var(--font-mono);
 }
 .titlebar-title span {
   color: var(--text-dim);
