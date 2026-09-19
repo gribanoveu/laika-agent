@@ -51,8 +51,6 @@ export function Sidebar({
   onOnboardingAction,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
-  // The folder's chats fold under its name, the way a project's do.
-  const [folded, setFolded] = useState(false);
   const userWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,8 +74,8 @@ export function Sidebar({
           <Plus size={14} />
           <span className="label">New chat</span>
         </button>
-        {/* Switching folders sits with the other things about the panel as
-            a whole; the folder's name below only folds its chats. */}
+        {/* One folder at a time: switching is here, and the list below is
+            that folder's chats. */}
         <Dropdown
           below
           right
@@ -96,19 +94,7 @@ export function Sidebar({
       </div>
 
       <div className="group">
-        <div className="group-head">
-          <button
-            type="button"
-            className={`group-toggle${folded ? " folded" : ""}`}
-            aria-expanded={!folded}
-            title={repo ?? undefined}
-            onClick={() => setFolded((v) => !v)}
-          >
-            <ChevronRight className="group-chev" size={12} />
-            <span>{repo ? folderName(repo) : "No workspace"}</span>
-          </button>
-        </div>
-        {folded ? null : chats.length === 0 ? (
+        {chats.length === 0 ? (
           <div className="empty">No chats yet.</div>
         ) : (
           chats.map((chat) => (

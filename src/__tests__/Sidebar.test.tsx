@@ -53,19 +53,3 @@ describe("the folder switcher", () => {
   });
 });
 
-describe("the folder's name", () => {
-  /// It folds the folder's chats, the way a project's do — switching
-  /// folders is the icon beside it, not a click on the name.
-  test("folds and unfolds the chats under it", () => {
-    sidebar("/work/a", ["/work/a"], [{ id: "c1", title: "fix the parser", updatedAt: 0 }]);
-    const name = screen.getByRole("button", { name: "a" });
-
-    fireEvent.click(name);
-    expect(screen.queryByText("fix the parser")).toBeNull();
-    expect(screen.queryByRole("listbox")).toBeNull();
-    expect(name.getAttribute("aria-expanded")).toBe("false");
-
-    fireEvent.click(name);
-    expect(screen.getByText("fix the parser")).toBeTruthy();
-  });
-});
