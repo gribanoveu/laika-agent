@@ -436,3 +436,24 @@ describe("a card that asks although its tool is always allowed", () => {
     expect(why[0].textContent).toBe("Always asks: rewrites a remote (git push --force)");
   });
 });
+
+describe("the answer as Markdown", () => {
+  // The repair of half-written markup drops everything after an unmatched
+  // `![`: right for the answer still arriving, content loss for any other.
+  const blocks = [
+    { kind: "user", id: "u0", text: "go" },
+    { kind: "message", id: "m1", round: 1, text: "Earlier ![one and the tail" },
+    { kind: "message", id: "m2", round: 2, text: "Now ![two and more" },
+  ] as Block[];
+
+  test("only the last block of a running turn is repaired as it streams", () => {
+    const { container } = panel(state(blocks, { status: "running" }));
+    expect(container.textContent).toContain("and the tail");
+    expect(container.textContent).not.toContain("and more");
+  });
+
+  test("once the turn ends, nothing is", () => {
+    const { container } = panel(state(blocks, { status: "done" }));
+    expect(container.textContent).toContain("and more");
+  });
+});

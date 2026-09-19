@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { IndexBadge } from "./IndexBadge";
+import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
 import { describeTool } from "../lib/describeTool";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
@@ -301,6 +302,8 @@ export function ChatPanel({
   onBranch,
 }: Props) {
   const groups = group(turn.blocks);
+  // The one answer still arriving: the last block of a running turn.
+  const streamingId = turn.status === "running" ? turn.blocks[turn.blocks.length - 1]?.id : undefined;
   // Under a finished answer only: mid-turn the plan is not written yet, and
   // after a stop or a failure it may be half of one.
   const planReady = onImplement && turn.status === "done" && groups[groups.length - 1]?.role === "agent";
@@ -378,7 +381,7 @@ export function ChatPanel({
                 block.kind === "user" ? (
                   <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
                 ) : (
-                  renderBlock(block, onDecide)
+                  renderBlock(block, onDecide, block.id === streamingId)
                 ),
               )}
             </div>
@@ -447,6 +450,7 @@ function UserBubble({
 function renderBlock(
   block: Block,
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void,
+  streaming: boolean,
 ) {
   switch (block.kind) {
     case "user":
@@ -469,9 +473,9 @@ function renderBlock(
       );
     case "message":
       return (
-        <p className="msg" key={block.id}>
-          {block.text}
-        </p>
+        <div className="msg" key={block.id}>
+          <Markdown text={block.text} streaming={streaming} />
+        </div>
       );
     case "reasoning":
       return (
