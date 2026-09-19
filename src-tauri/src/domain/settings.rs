@@ -11,6 +11,11 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// The context window assumed for a provider that never set one — large
+/// enough for today's frontier models, so compaction runs rather than
+/// staying off until someone looks for the setting.
+pub const DEFAULT_CONTEXT_LIMIT: u32 = 260_000;
+
 /// One configured LLM provider.
 ///
 /// Unlike its counterpart in Alfa Atlas, every entry here is a complete
@@ -50,11 +55,9 @@ pub struct ProviderConfig {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
-    /// How big this model's context window is, in tokens. `None` means the
-    /// app does not know — which is the honest default for a gateway it has
-    /// never heard of, and it is why compaction stays off until someone says.
-    /// Guessing here would throw away conversation to solve a problem that
-    /// may not exist.
+    /// How big this model's context window is, in tokens. `None` means it
+    /// was never set, and the session then assumes `DEFAULT_CONTEXT_LIMIT`
+    /// (see `services::llm_session::resolve`).
     #[serde(default)]
     pub context_limit: Option<u32>,
     /// How hard a reasoning model should think — `"low"`/`"medium"`/`"high"`

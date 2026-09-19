@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::domain::llm::{LlmError, LlmProvider};
-use crate::domain::settings::{ProviderConfig, SettingsError};
+use crate::domain::settings::{ProviderConfig, SettingsError, DEFAULT_CONTEXT_LIMIT};
 use crate::infra::{llm_credentials_store, llm_providers, settings_store};
 
 pub struct LlmSession {
@@ -52,7 +52,7 @@ pub fn resolve(provider_id: Option<&str>) -> Result<LlmSession, LlmError> {
         provider_id: config.id.clone(),
         model,
         debug_logging: settings.debug_logging,
-        context_limit: config.context_limit,
+        context_limit: Some(config.context_limit.unwrap_or(DEFAULT_CONTEXT_LIMIT)),
     })
 }
 

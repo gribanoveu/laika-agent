@@ -151,6 +151,25 @@ describe("editing a provider", () => {
     expect(saved[0]?.provider.reasoningEffort).toBeNull();
   });
 
+  test("the context window is 260k unless one was set, and takes digits only", () => {
+    form();
+    expect(field("Context window").value).toBe("260000");
+
+    fireEvent.change(field("Context window"), { target: { value: "128 000" } });
+    expect(field("Context window").value).toBe("128000");
+  });
+
+  test("a set context window is kept and sent", async () => {
+    const { saved } = form({
+      providers: [{ id: "local", baseUrl: "http://127.0.0.1:1234/v1", contextLimit: 32_000, hasApiKey: true }],
+    });
+    expect(field("Context window").value).toBe("32000");
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.contextLimit).toBe(32_000);
+  });
+
   test("a stored Anthropic provider opens as one", () => {
     form({
       providers: [{ id: "claude", kind: "anthropic", baseUrl: "https://api.anthropic.com/v1", hasApiKey: true }],

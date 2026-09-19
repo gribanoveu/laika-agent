@@ -6,7 +6,17 @@ import "./ProviderSettings.css";
 // because a popup menu is clipped by the modal's own overflow — the same
 // reason the theme picker is segmented.
 
-const BLANK = { id: "", kind: "openAiCompatible" as ProviderKind, baseUrl: "", model: "", contextLimit: "", reasoningEffort: "" };
+/** Mirrors `domain::settings::DEFAULT_CONTEXT_LIMIT`: what a provider that never set one gets. */
+export const DEFAULT_CONTEXT_LIMIT = 260_000;
+
+const BLANK = {
+  id: "",
+  kind: "openAiCompatible" as ProviderKind,
+  baseUrl: "",
+  model: "",
+  contextLimit: String(DEFAULT_CONTEXT_LIMIT),
+  reasoningEffort: "",
+};
 
 const KINDS: [ProviderKind, string, string][] = [
   ["openAiCompatible", "OpenAI-compatible", "https://api.openai.com/v1"],
@@ -28,7 +38,7 @@ const fromConfig = (config: ProviderConfig) => ({
   kind: config.kind ?? ("openAiCompatible" as ProviderKind),
   baseUrl: config.baseUrl,
   model: config.model ?? "",
-  contextLimit: config.contextLimit ? String(config.contextLimit) : "",
+  contextLimit: String(config.contextLimit || DEFAULT_CONTEXT_LIMIT),
   reasoningEffort: config.reasoningEffort ?? "",
 });
 
@@ -84,8 +94,8 @@ export function ProviderSettings({
         kind: draft.kind,
         baseUrl: draft.baseUrl.trim(),
         model: draft.model.trim() || null,
-        // Blank means "not known", which is what turns compaction off. A zero
-        // or a typo must read the same way rather than as a window of nothing.
+        // Blank, zero or a typo is "not set", which the backend reads as the
+        // default window rather than as a window of nothing.
         contextLimit: Number.parseInt(draft.contextLimit, 10) || null,
         // Blank sends nothing and leaves the model's own default.
         reasoningEffort: draft.reasoningEffort.trim() || null,
@@ -185,6 +195,19 @@ export function ProviderSettings({
             onChange={(e) => edit({ model: e.target.value })}
           />
         </div>
+        <div className="modal-field">
+          <label>Context window</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={draft.contextLimit}
+            placeholder={`${DEFAULT_CONTEXT_LIMIT} tokens`}
+            onChange={(e) => edit({ contextLimit: e.target.value.replace(/\D/g, "") })}
+          />
+        </div>
+        <p className="modal-note settings-hint">
+          In tokens. The older part of a chat is folded into a summary as it nears this.
+        </p>
         <div className="modal-field">
           <label>Reasoning effort</label>
           <input
