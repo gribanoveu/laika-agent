@@ -37,6 +37,7 @@ pub mod semantic_search;
 pub mod skill;
 pub mod write_plan;
 pub mod mcp;
+pub mod process;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -64,6 +65,8 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::Todo, todo::definition),
     (ToolName::RunCommand, run_command::definition),
     (ToolName::Skill, skill::definition),
+    (ToolName::ReadOutput, process::read_definition),
+    (ToolName::StopProcess, process::stop_definition),
 ];
 
 /// What the model is offered for a turn.
@@ -103,6 +106,8 @@ pub fn execute_tool(
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
         ToolCall::Skill(args) => skill::skill(args, deps),
         ToolCall::WritePlan(args) => write_plan::write_plan(args),
+        ToolCall::ReadOutput(args) => process::read_output(args, deps),
+        ToolCall::StopProcess(args) => process::stop_process(args, deps),
         ToolCall::Mcp(args) => mcp::mcp(args, deps),
     }
 }
@@ -115,7 +120,7 @@ mod definition_tests {
         DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs,
         GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, WritePlanArgs, TodoUpdateStatus,
         WriteFileArgs,
-        CreateDirectoryArgs,
+        CreateDirectoryArgs, ProcessArgs,
     };
     use crate::services::ai_tools::parse::parse_tool_call;
     use std::collections::BTreeSet;
@@ -260,6 +265,7 @@ mod definition_tests {
                     command: "cargo test".to_string(),
                     cwd: Some("crate".to_string()),
                     timeout_seconds: Some(30),
+                    background: Some(true),
                 })],
             ),
             ToolName::SemanticSearch => (
@@ -290,6 +296,8 @@ mod definition_tests {
                     end_line: Some(9),
                 })],
             ),
+            ToolName::ReadOutput => (r#"{"id":1}"#, vec![ToolCall::ReadOutput(ProcessArgs { id: Some(1) })]),
+            ToolName::StopProcess => (r#"{"id":1}"#, vec![ToolCall::StopProcess(ProcessArgs { id: Some(1) })]),
             ToolName::Mcp => unreachable!("an MCP tool's schema is its server's; see built_in()"),
         }
     }

@@ -57,6 +57,9 @@ fn base_tools() -> HashSet<ToolName> {
         ToolName::GitBlame,
         ToolName::SemanticSearch,
         ToolName::Skill,
+        // A process's output is something to look at; one may still run
+        // from an Agent turn before the mode changed.
+        ToolName::ReadOutput,
     ]
     .into_iter()
     .collect()
@@ -88,6 +91,7 @@ pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
                 ToolName::Move,
                 ToolName::Todo,
                 ToolName::RunCommand,
+                ToolName::StopProcess,
                 ToolName::WritePlan,
                 // Agent only: nothing says a foreign tool changes nothing.
                 ToolName::Mcp,
@@ -139,6 +143,13 @@ mod tests {
     #[test]
     fn no_mode_but_agent_can_run_a_command() {
         assert!(offers(ConversationMode::Agent, ToolName::RunCommand));
+        // Reading a process's output changes nothing; stopping one does.
+        for mode in ConversationMode::ALL {
+            assert!(offers(*mode, ToolName::ReadOutput), "{mode:?}");
+        }
+        assert!(offers(ConversationMode::Agent, ToolName::StopProcess));
+        assert!(!offers(ConversationMode::Plan, ToolName::StopProcess));
+        assert!(!offers(ConversationMode::Ask, ToolName::StopProcess));
         assert!(!offers(ConversationMode::Plan, ToolName::RunCommand));
         assert!(!offers(ConversationMode::Ask, ToolName::RunCommand));
     }

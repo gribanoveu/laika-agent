@@ -35,6 +35,7 @@ use crate::services::context_compaction;
 use crate::services::mcp_servers::McpServers;
 use crate::domain::mcp::McpTools;
 use crate::domain::hooks::Hooks;
+use crate::infra::background::Processes;
 use crate::infra::mcp_config;
 use crate::services::llm_session;
 use crate::services::workspace_index::WorkspaceIndex;
@@ -116,6 +117,10 @@ pub async fn workspace_open(
         .workspace
         .lock()
         .map_err(|_| "workspace lock poisoned".to_string())? = Some(resolved.clone());
+    // They ran in the folder that was open, for the conversation about it.
+    if let Some(processes) = app.try_state::<Arc<Processes>>() {
+        processes.stop_all();
+    }
 
     let shown = resolved.display().to_string();
     let index = Arc::clone(&index);
@@ -389,6 +394,9 @@ where
     let mode = state.mode();
     let search = searcher_of(&app);
     let mcp_servers = app.try_state::<Arc<McpServers>>().map(|servers| Arc::clone(&servers));
+    let processes = app
+        .try_state::<Arc<Processes>>()
+        .map(|processes| Arc::clone(&processes) as Arc<dyn crate::domain::background::BackgroundProcesses>);
 
     tauri::async_runtime::spawn_blocking(move || {
         let events = chat_event_sink(&app, turn_id);
@@ -432,6 +440,7 @@ where
             plan: plan.as_deref(),
             mcp: &mcp,
             hooks: &hooks,
+            processes,
         };
         run(&turn).map_err(|e| e.to_string())
     })

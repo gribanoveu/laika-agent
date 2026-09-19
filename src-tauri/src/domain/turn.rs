@@ -271,6 +271,11 @@ pub enum ChatEventPayload {
         message: String,
         blocked: bool,
     },
+    /// Background processes ended while the model was not looking; it has
+    /// been told, and so is the transcript.
+    ProcessesEnded {
+        processes: Vec<crate::domain::background::ProcessInfo>,
+    },
     /// Token usage as of the round that just finished. Since every request
     /// resends the whole history, this is the authoritative context size, not
     /// a per-round statistic.

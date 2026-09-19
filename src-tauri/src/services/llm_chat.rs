@@ -27,6 +27,7 @@ use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::SkillMeta;
 use crate::domain::mcp::McpTools;
 use crate::domain::hooks::{HookEvent, Hooks, MAX_STOP_BLOCKS};
+use crate::domain::background::{self, BackgroundProcesses};
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, CodeSearchFn, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -193,6 +194,8 @@ pub struct Turn<'a> {
     pub mcp: &'a McpTools,
     /// The user's hooks, read once per turn.
     pub hooks: &'a Hooks,
+    /// Background processes, which outlive the turn; `None` has none.
+    pub processes: Option<Arc<dyn BackgroundProcesses>>,
 }
 
 
@@ -402,6 +405,7 @@ fn run(
             // Before the round is announced, so the notes and the boundary
             // land in the transcript in the order the history has them.
             apply_steering(&events, round, &mut state.history, (turn.take_steering)());
+            report_ended_processes(turn, &events, round, &mut state.history);
             events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
 
             let result = match ask_the_model(
@@ -608,6 +612,7 @@ fn run(
                             skills: turn.skills.to_vec(),
                             mcp: turn.mcp.clone(),
                             cancelled: Some(turn.cancelled),
+                            processes: turn.processes.clone(),
                         };
                         execute_tool(
                             turn.scope,
@@ -981,6 +986,18 @@ fn tool_message(call_id: &str, content: String) -> LlmMessage {
     }
 }
 
+/// Tells the model which background processes ended since it last looked —
+/// a dev server that died is otherwise invisible until something fails
+/// against its port. Into the history rather than a tail note: a retried
+/// request must not lose it, and it is said once.
+fn report_ended_processes(turn: &Turn, events: &Events, round: u32, history: &mut Vec<LlmMessage>) {
+    let Some(processes) = &turn.processes else { return };
+    let ended = processes.take_ended();
+    let Some(note) = background::ended_note(&ended) else { return };
+    history.push(LlmMessage::user(note));
+    events.emit(round, None, ChatEventPayload::ProcessesEnded { processes: ended });
+}
+
 /// Runs the hooks of one event and reports what they said; returns the
 /// reason when they refused.
 fn fire_hook(
@@ -1211,6 +1228,7 @@ mod tests {
         plan: Option<String>,
         mcp: McpTools,
         hooks: Hooks,
+        processes: Option<Arc<dyn BackgroundProcesses>>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1251,6 +1269,7 @@ mod tests {
             plan: None,
             mcp: McpTools::default(),
             hooks: Hooks::default(),
+            processes: None,
         }
     }
 
@@ -1297,6 +1316,7 @@ mod tests {
                 plan: self.plan.as_deref(),
                 mcp: &self.mcp,
                 hooks: &self.hooks,
+                processes: self.processes.clone(),
             };
             f(&turn)
         }
@@ -1319,6 +1339,7 @@ mod tests {
                 ChatEventPayload::CommandOutput { id, .. } => format!("commandOutput:{id}"),
                 ChatEventPayload::HistoryCompacted { folded } => format!("compacted:{folded}"),
                 ChatEventPayload::HookFeedback { event, blocked, .. } => format!("hook:{event}:{blocked}"),
+                ChatEventPayload::ProcessesEnded { processes } => format!("ended:{}", processes.len()),
             })
             .collect()
     }
@@ -2438,6 +2459,71 @@ mod tests {
         let offered: &[LlmToolDefinition] = &requests[0].tools;
         // Every built-in one; MCP tools come from servers, and none is connected.
         assert_eq!(offered.len(), ToolName::ALL.len() - 1);
+    }
+
+    // --------------------------------------------------- background processes
+
+    /// Reports one ended process, once.
+    struct EndedOnce(Mutex<Vec<crate::domain::background::ProcessInfo>>);
+    impl BackgroundProcesses for EndedOnce {
+        fn start(&self, _: &Shell, _: &str, _: &std::path::Path, _: &str) -> Result<crate::domain::background::ProcessInfo, crate::domain::background::BackgroundError> {
+            unreachable!()
+        }
+        fn read(&self, _: u32) -> Result<crate::domain::background::ProcessOutput, crate::domain::background::BackgroundError> {
+            unreachable!()
+        }
+        fn stop(&self, _: u32) -> Result<crate::domain::background::ProcessInfo, crate::domain::background::BackgroundError> {
+            unreachable!()
+        }
+        fn list(&self) -> Vec<crate::domain::background::ProcessInfo> {
+            vec![]
+        }
+        fn take_ended(&self) -> Vec<crate::domain::background::ProcessInfo> {
+            std::mem::take(&mut self.0.lock().unwrap())
+        }
+    }
+
+    /// The turn hands its processes to the tools: a background start in the
+    /// loop comes back as a number, not as a command that ran.
+    #[cfg(unix)]
+    #[test]
+    fn a_background_start_in_the_loop_reaches_the_registry() {
+        let mut h = harness(
+            "bg-loop",
+            vec![asks(vec![wants("b1", "runCommand", r#"{"command":"sleep 30","background":true}"#)]), text("ok")],
+        );
+        let processes = Arc::new(crate::infra::background::Processes::default());
+        h.processes = Some(processes.clone());
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let said = tool_contents(&h.provider.requests()[1]);
+        assert!(said[0].contains("\"result\":\"processStarted\""), "{said:?}");
+        assert!(processes.list()[0].running());
+    }
+
+    /// A dev server that died between turns is news the model gets before
+    /// its next round — once, and in the history, so a retry keeps it.
+    #[test]
+    fn a_process_that_ended_is_told_to_the_model_once() {
+        let mut h = harness("bg-ended", vec![text("I see"), text("ok")]);
+        h.processes = Some(Arc::new(EndedOnce(Mutex::new(vec![crate::domain::background::ProcessInfo {
+            id: 2,
+            command: "npm run dev".into(),
+            cwd: ".".into(),
+            state: crate::domain::background::ProcessState::Exited { code: Some(1) },
+        }]))));
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+        h.run(|turn| stream(turn, vec![LlmMessage::user("again")], vec![])).expect("finishes");
+
+        let requests = h.provider.requests();
+        let told = |request: &ChatRequest| {
+            request.messages.iter().any(|m| {
+                m.role == LlmRole::User && m.content.as_deref().is_some_and(|c| c.contains("#2 `npm run dev` exited with code 1"))
+            })
+        };
+        assert!(told(&requests[0]));
+        assert!(!told(&requests[1]), "said once");
+        assert!(payloads(&h.events()).contains(&"ended:1".to_string()));
     }
 
     // ---------------------------------------------------------------- hooks

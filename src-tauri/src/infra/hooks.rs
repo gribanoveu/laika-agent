@@ -51,6 +51,7 @@ pub fn run(hook: &HookCommand, input: &str, cwd: &Path) -> Result<CommandOutput,
         command: hook.command.clone(),
         cwd: None,
         timeout_seconds: Some(hook.timeout_secs()),
+        background: None,
     };
     let project = cwd.display().to_string();
     process_runner::run_with(&Shell::default(), &request, cwd, None, Some(input), &[("CLAUDE_PROJECT_DIR", &project)])

@@ -16,6 +16,8 @@ pub fn run() {
         // reach a turn while it runs. `Arc` because a turn runs on a blocking
         // thread that outlives the command call that started it.
         .manage(std::sync::Arc::new(commands::chat::AgentState::default()))
+        // Background processes the agent started; they outlive turns.
+        .manage(std::sync::Arc::new(infra::background::Processes::default()))
         // The MCP servers, kept running between turns.
         .manage(std::sync::Arc::new(services::mcp_servers::McpServers::new(std::sync::Arc::new(
             |config, cwd, cancelled| {
@@ -90,6 +92,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 app.state::<std::sync::Arc<services::mcp_servers::McpServers>>().stop_all();
+                app.state::<std::sync::Arc<infra::background::Processes>>().stop_all();
             }
         });
 }

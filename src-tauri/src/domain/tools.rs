@@ -40,6 +40,9 @@ pub enum ToolName {
     SemanticSearch,
     Skill,
     WritePlan,
+    /// A background process's output since the last read.
+    ReadOutput,
+    StopProcess,
     /// Every tool of every connected MCP server. One variant for all of them:
     /// their names are the servers' and arrive at run time, so the identity
     /// that matters beyond this — for "always allow", for the weight — is
@@ -72,6 +75,8 @@ impl ToolName {
         ToolName::SemanticSearch,
         ToolName::Skill,
         ToolName::WritePlan,
+        ToolName::ReadOutput,
+        ToolName::StopProcess,
         ToolName::Mcp,
     ];
 
@@ -96,6 +101,8 @@ impl ToolName {
             ToolName::SemanticSearch => "semanticSearch",
             ToolName::Skill => "skill",
             ToolName::WritePlan => "writePlan",
+            ToolName::ReadOutput => "readOutput",
+            ToolName::StopProcess => "stopProcess",
             // The prefix, not a name: no tool is called just this.
             ToolName::Mcp => MCP_PREFIX,
         }
@@ -155,7 +162,10 @@ impl ToolName {
             // A file or two out of the app directory.
             | ToolName::Skill
             // Chat state, like the checklist.
-            | ToolName::WritePlan => 1,
+            | ToolName::WritePlan
+            // A buffer in memory; a kill.
+            | ToolName::ReadOutput
+            | ToolName::StopProcess => 1,
             // A gitignore-aware walk plus a regex over many files.
             ToolName::Grep => 3,
             // Local git2 I/O plus diff/blame compaction.
@@ -246,7 +256,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            18,
+            20,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -546,6 +556,9 @@ pub struct ToolDeps<'a> {
     /// The turn's stop button, for a tool that waits on someone else — an
     /// MCP call. `None` never stops.
     pub cancelled: Option<&'a dyn Fn() -> bool>,
+    /// The background processes; `None` where there are none to have, and
+    /// `runCommand` with `background` says so.
+    pub processes: Option<std::sync::Arc<dyn crate::domain::background::BackgroundProcesses>>,
 }
 
 /// Why a tool call could not be carried out.
@@ -661,6 +674,8 @@ pub enum ToolError {
     /// and failed is not this — that is a result with a non-zero exit code.
     #[error("{0}")]
     Command(String),
+    #[error(transparent)]
+    Background(#[from] crate::domain::background::BackgroundError),
     /// A skill that could not be loaded — unknown, or its `SKILL.md` broken.
     #[error("{0}")]
     Skill(String),
@@ -704,6 +719,8 @@ pub enum ToolCall {
     SemanticSearch(SemanticSearchArgs),
     Skill(SkillArgs),
     WritePlan(WritePlanArgs),
+    ReadOutput(ProcessArgs),
+    StopProcess(ProcessArgs),
     Mcp(McpCallArgs),
 }
 
@@ -727,6 +744,8 @@ impl ToolCall {
             ToolCall::RunCommand(_) => ToolName::RunCommand,
             ToolCall::Skill(_) => ToolName::Skill,
             ToolCall::WritePlan(_) => ToolName::WritePlan,
+            ToolCall::ReadOutput(_) => ToolName::ReadOutput,
+            ToolCall::StopProcess(_) => ToolName::StopProcess,
             ToolCall::Mcp(_) => ToolName::Mcp,
         }
     }
@@ -835,6 +854,10 @@ pub enum ToolResult {
     /// A command that ran. "Ran" is not "succeeded": the exit code is the
     /// answer, and a failing build is a perfectly good result.
     CommandRan(crate::domain::command_exec::CommandOutput),
+    /// `runCommand` with `background`: it runs on, and this is its number.
+    ProcessStarted(crate::domain::background::ProcessInfo),
+    ProcessOutput(crate::domain::background::ProcessOutput),
+    ProcessStopped(crate::domain::background::ProcessInfo),
     #[serde(rename_all = "camelCase")]
     SearchResults {
         matches: Vec<crate::domain::code_search::CodeMatch>,
@@ -869,6 +892,16 @@ pub enum ToolResult {
 pub struct McpCallArgs {
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+/// `readOutput` and `stopProcess`: which process. Optional in the type so a
+/// missing number is the tool's error, worded for the model, not a parse
+/// failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessArgs {
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub id: Option<u32>,
 }
 
 /// `writePlan` arguments: the whole plan.

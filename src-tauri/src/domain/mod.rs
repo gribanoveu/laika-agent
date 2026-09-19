@@ -20,3 +20,4 @@ pub mod project_rules;
 pub mod tool_call_log;
 pub mod mcp;
 pub mod hooks;
+pub mod background;

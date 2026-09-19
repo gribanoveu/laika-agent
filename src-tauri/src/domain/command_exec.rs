@@ -58,6 +58,10 @@ pub struct CommandRequest {
     /// ambiguous zero, "kill it instantly" is the one that is never wanted.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
     pub timeout_seconds: Option<u32>,
+    /// Keep it running after the call returns — see `domain::background`.
+    /// The timeout does not apply.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub background: Option<bool>,
 }
 
 impl CommandRequest {
@@ -218,6 +222,7 @@ mod tests {
             command: "cargo test".to_string(),
             cwd: None,
             timeout_seconds,
+            background: None,
         }
     }
 

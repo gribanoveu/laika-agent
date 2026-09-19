@@ -44,6 +44,8 @@ pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
         "semanticSearch" => ToolCall::SemanticSearch(args(call)?),
         "skill" => ToolCall::Skill(args(call)?),
         "writePlan" => ToolCall::WritePlan(args(call)?),
+        "readOutput" => ToolCall::ReadOutput(args(call)?),
+        "stopProcess" => ToolCall::StopProcess(args(call)?),
         // No arguments, so nothing to deserialize — and nothing for a model to
         // get wrong. Whatever it sent alongside is ignored rather than refused.
         "gitStatus" => ToolCall::GitStatus,

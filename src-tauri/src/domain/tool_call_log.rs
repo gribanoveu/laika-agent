@@ -33,9 +33,10 @@ pub const CONTENT_FIELDS: &[&str] = &[
     "new",
     // every diff: writes, deletes, gitDiff
     "unifiedDiff",
-    // runCommand
+    // runCommand, and a background process's output
     "stdout",
     "stderr",
+    "output",
     // skill
     "instructions",
 ];
@@ -211,6 +212,12 @@ mod tests {
     /// here until someone has decided what in it is content.
     fn sample(tool: ToolName) -> (Option<ToolCall>, ToolResult) {
         let path = || "src/a.rs".to_string();
+        let process = || crate::domain::background::ProcessInfo {
+            id: 1,
+            command: "npm run dev".into(),
+            cwd: ".".into(),
+            state: crate::domain::background::ProcessState::Running,
+        };
         match tool {
             ToolName::ReadFile => (None, ToolResult::File { content: LEAK.into(), start_line: 1, end_line: 1, total_lines: 1 }),
             ToolName::Grep => (
@@ -253,7 +260,7 @@ mod tests {
             ),
             ToolName::GitBlame => (None, ToolResult::GitBlame { path: path(), hunks: vec![], truncated: false }),
             ToolName::RunCommand => (
-                Some(ToolCall::RunCommand(CommandRequest { command: "cargo test".into(), cwd: None, timeout_seconds: None })),
+                Some(ToolCall::RunCommand(CommandRequest { command: "cargo test".into(), cwd: None, timeout_seconds: None, background: None })),
                 ToolResult::CommandRan(CommandOutput {
                     stdout: LEAK.into(),
                     stderr: LEAK.into(),
@@ -281,6 +288,19 @@ mod tests {
             ToolName::Skill => (
                 Some(ToolCall::Skill(SkillArgs { name: "release".into(), path: None })),
                 ToolResult::Skill { name: "release".into(), instructions: LEAK.into(), files: vec![] },
+            ),
+            ToolName::ReadOutput => (
+                Some(ToolCall::ReadOutput(crate::domain::tools::ProcessArgs { id: Some(1) })),
+                ToolResult::ProcessOutput(crate::domain::background::ProcessOutput {
+                    process: process(),
+                    output: LEAK.into(),
+                    missed: false,
+                    truncated: false,
+                }),
+            ),
+            ToolName::StopProcess => (
+                Some(ToolCall::StopProcess(crate::domain::tools::ProcessArgs { id: Some(1) })),
+                ToolResult::ProcessStopped(process()),
             ),
             ToolName::Mcp => (
                 Some(ToolCall::Mcp(McpCallArgs {

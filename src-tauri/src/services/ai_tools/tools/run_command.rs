@@ -27,6 +27,12 @@ pub fn run_command(
         _ => scope.root().to_path_buf(),
     };
 
+    if request.background == Some(true) {
+        let processes = deps.processes.as_deref().ok_or_else(super::process::unavailable)?;
+        let shown = request.cwd.as_deref().filter(|c| !c.is_empty()).unwrap_or(".");
+        return Ok(ToolResult::ProcessStarted(processes.start(&deps.shell, &request.command, &cwd, shown)?));
+    }
+
     process_runner::run(&deps.shell, request, &cwd, deps.output.as_ref())
         .map(ToolResult::CommandRan)
         .map_err(|e| match e {
@@ -42,7 +48,7 @@ pub fn run_command(
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "runCommand".to_string(),
-        description: "Run a shell command in the workspace — build, test, lint, inspect. This is how you check your own work: after changing code, run the tests rather than claiming they pass. The exit code, stdout and stderr all come back; a non-zero exit is an ordinary answer, not a failure of the call. Output is streamed as it is produced and cut in the middle if it is very long, keeping both the first lines and the last. The command runs to completion or is killed at its timeout, together with everything it started — nothing survives the call, so do not use this to start a server you expect to keep running."
+        description: "Run a shell command in the workspace — build, test, lint, inspect. This is how you check your own work: after changing code, run the tests rather than claiming they pass. The exit code, stdout and stderr all come back; a non-zero exit is an ordinary answer, not a failure of the call. Output is streamed as it is produced and cut in the middle if it is very long, keeping both the first lines and the last. The command runs to completion or is killed at its timeout, together with everything it started. For something that has to keep running — a dev server, a watcher — set background: the call returns at once with a process number, readOutput reads what it writes, stopProcess ends it, and you are told when one ends on its own."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -54,6 +60,10 @@ pub(super) fn definition() -> LlmToolDefinition {
                 "cwd": {
                     "type": ["string", "null"],
                     "description": "Directory to run in, relative to the workspace root. Omit for the root itself."
+                },
+                "background": {
+                    "type": ["boolean", "null"],
+                    "description": "Keep it running after this call returns; no timeout applies. At most five at once."
                 },
                 "timeoutSeconds": {
                     "type": ["integer", "null"],
@@ -79,6 +89,7 @@ mod tests {
             command: command.to_string(),
             cwd: cwd.map(|c| c.to_string()),
             timeout_seconds: Some(10),
+            background: None,
         })
     }
 

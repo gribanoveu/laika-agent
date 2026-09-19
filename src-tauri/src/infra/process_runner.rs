@@ -226,6 +226,7 @@ mod tests {
             command: command.to_string(),
             cwd: None,
             timeout_seconds,
+            background: None,
         }
     }
 
