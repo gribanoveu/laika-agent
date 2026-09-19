@@ -1,6 +1,8 @@
 [package]
 name = "atlas-desktop"
 version = "0.1.0"
+# GPL because `domain::command_risk` builds on sh-guard's rules (GPL-3.0-only).
+license = "GPL-3.0-only"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -70,6 +72,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 notify = "8"
 yaml_serde = "0.10"
+tree-sitter-bash = "0.25"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
