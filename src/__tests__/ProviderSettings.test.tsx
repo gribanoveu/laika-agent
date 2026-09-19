@@ -22,7 +22,6 @@ type Saved = { provider: ProviderConfig; apiKey: string | null };
 const form = (over: Partial<LlmSettings> = {}) => {
   const saved: Saved[] = [];
   const removed: string[] = [];
-  const logging: boolean[] = [];
   render(
     <ProviderSettings
       settings={settings(over)}
@@ -31,10 +30,9 @@ const form = (over: Partial<LlmSettings> = {}) => {
       onSave={(provider, apiKey) => saved.push({ provider, apiKey })}
       onRemove={(id) => removed.push(id)}
       onSelect={() => {}}
-      onDebugLogging={(enabled) => logging.push(enabled)}
     />,
   );
-  return { saved, removed, logging };
+  return { saved, removed };
 };
 
 /** The fields are labelled but not `for`-linked, the way the prototype draws them. */
@@ -166,16 +164,6 @@ describe("editing a provider", () => {
     fireEvent.click(screen.getByText("Remove"));
     expect(removed).toEqual(["local"]);
   });
-
-  /// It writes whole conversations, including the contents of every file the
-  /// agent read, so it is off until someone says otherwise.
-  test("the request log is off unless it was turned on", () => {
-    const { logging } = form();
-
-    expect(screen.getByText("off").getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByText("on"));
-    expect(logging).toEqual([true]);
-  });
 });
 
 describe("with nothing configured", () => {
@@ -188,7 +176,6 @@ describe("with nothing configured", () => {
         onSave={() => {}}
         onRemove={() => {}}
         onSelect={() => {}}
-        onDebugLogging={() => {}}
       />,
     );
 
@@ -221,7 +208,6 @@ describe("saving", () => {
         onSave={() => Promise.resolve(true)}
         onRemove={() => {}}
         onSelect={() => {}}
-        onDebugLogging={() => {}}
       />,
     );
 
@@ -242,7 +228,6 @@ describe("saving", () => {
         onSave={() => Promise.resolve(false)}
         onRemove={() => {}}
         onSelect={() => {}}
-        onDebugLogging={() => {}}
       />,
     );
 
@@ -263,7 +248,6 @@ describe("saving", () => {
         onSave={() => Promise.resolve(true)}
         onRemove={() => {}}
         onSelect={() => {}}
-        onDebugLogging={() => {}}
       />,
     );
 

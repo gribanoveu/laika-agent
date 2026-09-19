@@ -4,14 +4,13 @@ import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
 import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
-import { ProviderSettings } from "./components/ProviderSettings";
+import { Settings } from "./components/Settings";
 import { ToolLog } from "./components/ToolLog";
 import { ConfigFileEditor } from "./components/ConfigFileEditor";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useAgentTurn } from "./hooks/useAgentTurn";
-import { DataPolicy } from "./components/DataPolicy";
 import { useChatHistory } from "./hooks/useChatHistory";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
@@ -24,7 +23,7 @@ import { useProcesses } from "./hooks/useProcesses";
 import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
-import { useTheme, THEMES } from "./hooks/useTheme";
+import { useTheme } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { useBackendSetting } from "./hooks/useBackendSetting";
@@ -268,60 +267,30 @@ export default function App() {
         />
       </div>
 
-      <Modal
-        title="Settings"
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        footer={
-          <button className="btn btn-ghost" type="button" onClick={() => setSettingsOpen(false)}>
-            Close
-          </button>
-        }
-      >
-        <ProviderSettings
-          settings={llm.settings}
-          busy={llm.busy}
-          error={llm.error}
-          onSave={llm.save}
-          onRemove={llm.remove}
-          onSelect={llm.select}
-          onDebugLogging={llm.debugLogging}
-        />
-        <div className="modal-field">
-          <label>Theme</label>
-          <div className="segmented" role="radiogroup" aria-label="Theme">
-            {THEMES.map((name) => (
-              <button
-                key={name}
-                type="button"
-                role="radio"
-                aria-checked={theme.preference === name}
-                className={`segment${theme.preference === name ? " active" : ""}`}
-                onClick={() => theme.setPreference(name)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="modal-field">
-          <label>Tool calls</label>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            onClick={() => {
-              setSettingsOpen(false);
-              setLogOpen(true);
-            }}
-          >
-            Open the log
-          </button>
-        </div>
-        <DataPolicy
-          provider={llm.settings?.providers.find((p) => p.id === llm.settings?.activeProviderId) ?? null}
+      <Modal title="Settings" wide open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+        <Settings
+          provider={{
+            settings: llm.settings,
+            busy: llm.busy,
+            error: llm.error,
+            onSave: llm.save,
+            onRemove: llm.remove,
+            onSelect: llm.select,
+          }}
           debugLogging={llm.settings?.debugLogging ?? false}
-          mcpServers={mcp.view?.servers ?? null}
-          hooks={hooks.view?.hooks ?? null}
+          onDebugLogging={llm.debugLogging}
+          theme={theme.preference}
+          onTheme={theme.setPreference}
+          onOpenLog={() => {
+            setSettingsOpen(false);
+            setLogOpen(true);
+          }}
+          policy={{
+            provider: llm.settings?.providers.find((p) => p.id === llm.settings?.activeProviderId) ?? null,
+            debugLogging: llm.settings?.debugLogging ?? false,
+            mcpServers: mcp.view?.servers ?? null,
+            hooks: hooks.view?.hooks ?? null,
+          }}
         />
       </Modal>
 

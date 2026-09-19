@@ -21,7 +21,6 @@ type Props = {
   onSave: (provider: ProviderConfig, apiKey: string | null) => void | Promise<boolean>;
   onRemove: (id: string) => void;
   onSelect: (id: string) => void;
-  onDebugLogging: (enabled: boolean) => void;
 };
 
 const fromConfig = (config: ProviderConfig) => ({
@@ -40,7 +39,6 @@ export function ProviderSettings({
   onSave,
   onRemove,
   onSelect,
-  onDebugLogging,
 }: Props) {
   const providers = settings?.providers ?? [];
   const [editing, setEditing] = useState<string | null>(null);
@@ -213,27 +211,6 @@ export function ProviderSettings({
           />
         </div>
 
-        <div className="modal-field">
-          <label>Log every request to disk</label>
-          <div className="segmented" role="radiogroup" aria-label="Debug logging">
-            {[
-              ["off", false],
-              ["on", true],
-            ].map(([label, value]) => (
-              <button
-                key={String(label)}
-                type="button"
-                role="radio"
-                aria-checked={settings?.debugLogging === value}
-                className={`segment${settings?.debugLogging === value ? " active" : ""}`}
-                onClick={() => onDebugLogging(Boolean(value))}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="provider-actions">
           <button className="btn btn-primary" type="submit" disabled={busy}>
             Save
@@ -255,8 +232,6 @@ export function ProviderSettings({
       {saved && !error && <p className="modal-note provider-saved">Saved.</p>}
       <p className="modal-note">
         The key is sealed on disk and never leaves the backend — nothing here can read it back.
-        Turning the request log on writes whole conversations, including the contents of every
-        file the agent read, to a file in your home directory.
       </p>
     </div>
   );

@@ -1,0 +1,90 @@
+/* Sections on the left, one subject at a time on the right. The height is
+   fixed so switching sections does not make the dialog jump. */
+.settings {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  height: min(520px, calc(100vh - 140px));
+  margin: -14px -16px -16px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg-panel-soft);
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav-item svg {
+  color: var(--text-faint);
+  flex: none;
+}
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.settings-nav-item.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.settings-nav-item.active svg {
+  color: var(--accent);
+}
+
+.settings-pane {
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 24px 24px;
+}
+.settings-pane > * {
+  max-width: 560px;
+}
+.settings-title {
+  margin-bottom: 16px;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* A field is a row: its name on the left, the control on the right. */
+.settings .modal-field {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.settings .modal-field label {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+/* A hint belongs to the field above it, so it starts under the control. */
+.settings-hint {
+  margin: -6px 0 14px 144px;
+}
+.settings .provider-actions,
+.settings .provider-settings > .modal-note {
+  margin-left: 144px;
+}
+.settings .provider-settings > .modal-note {
+  margin-top: 10px;
+}
+.settings-pane > .settings-hint {
+  max-width: 416px;
+}
