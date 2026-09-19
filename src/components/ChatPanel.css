@@ -20,21 +20,27 @@
   font-size: var(--fs-lg);
   font-weight: 600;
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .head-left {
   min-width: 0;
 }
-.head-title {
+/* Where the chat runs: the folder, and whether its index is ready. */
+.head-sub {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  min-width: 0;
 }
 .chat-path {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+  min-width: 0;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
 }
 .chat-path svg {
@@ -48,57 +54,13 @@
 .head-right {
   flex: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
+  align-items: center;
+  gap: 8px;
 }
 .head-time {
   font-size: var(--fs-xs);
   color: var(--text-faint);
   white-space: nowrap;
-}
-
-.context-meter {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  padding: 2px 4px;
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-}
-.context-meter:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-.context-meter:disabled {
-  cursor: default;
-}
-.context-meter-val {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  color: var(--text-faint);
-  line-height: 1;
-}
-.context-meter-val .used {
-  color: var(--text-dim);
-}
-.context-meter-val .sep {
-  margin: 0 1px;
-  opacity: 0.6;
-}
-.context-ring {
-  width: 11px;
-  height: 11px;
-  flex: none;
-  border-radius: 50%;
-  background: conic-gradient(
-    from -90deg,
-    var(--accent) var(--ring-deg, 0deg),
-    var(--bg-active) var(--ring-deg, 0deg)
-  );
-  -webkit-mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
-  mask: radial-gradient(farthest-side, transparent 58%, #000 59%);
 }
 
 /* What the app did to the conversation, in the place where it happened.

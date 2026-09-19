@@ -2,8 +2,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 10px;
-  font-size: 0.85em;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
   white-space: nowrap;
 }

@@ -17,7 +17,7 @@ describe("the index status", () => {
     expect(describeIndex(run(...events)).label).toBe("Indexing 25%");
 
     const done = run(...events, { root, kind: "syncFinished", embedded: 256, embeddingError: null });
-    expect(describeIndex(done)).toMatchObject({ label: "Indexed · 2 skipped", tone: "ok" });
+    expect(describeIndex(done)).toMatchObject({ label: "Indexed", tone: "ok" });
     expect(describeIndex(done).detail).toContain("2 files not indexed");
   });
 
@@ -51,6 +51,6 @@ describe("the index status", () => {
     const busy = fromSnapshot({ root, syncing: true, embedded: 0, skipped: 0, embeddingError: null });
     expect(describeIndex(busy).label).toBe("Indexing…");
     const ready = fromSnapshot({ root, syncing: false, embedded: 9, skipped: 1, embeddingError: null });
-    expect(describeIndex(ready).label).toBe("Indexed · 1 skipped");
+    expect(describeIndex(ready).label).toBe("Indexed");
   });
 });

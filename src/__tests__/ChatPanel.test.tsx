@@ -284,90 +284,112 @@ describe("what a call would do", () => {
   });
 });
 
+describe("the header", () => {
+  test("names the chat, and the folder under it", () => {
+    render(
+      <ChatPanel
+        title="Fix the tax rounding"
+        workspace="/tmp/project"
+        turn={state([])}
+        usage={null}
+        context={null}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onCompact={() => {}}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Fix the tax rounding" })).toBeTruthy();
+    expect(screen.getByTitle("/tmp/project").textContent).toBe("project");
+  });
+
+  test("a chat not saved yet is a new one", () => {
+    panel(state([]));
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeTruthy();
+  });
+});
+
 describe("the context meter", () => {
+  const hi: Block[] = [{ kind: "user", id: "u0", text: "hi" }];
+  const openMeter = () => fireEvent.click(screen.getByRole("button", { name: /Context usage/ }));
+
   /// Without the window, a number of tokens says nothing: 8k is nothing on a
   /// 200k model and the end of the road on a 8k one.
   test("shows how much of the window is gone, once the window is known", () => {
-    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
-      context: usage({ limit: 200_000, compactsAt: 160_000 }),
-    });
+    panel(state(hi), () => {}, { context: usage({ limit: 200_000, compactsAt: 160_000 }) });
 
-    expect(screen.getByText("8k")).toBeTruthy();
-    expect(screen.getByText("200k")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Context usage: 4%" })).toBeTruthy();
+    openMeter();
+    expect(screen.getByText("8k of 200k tokens")).toBeTruthy();
   });
 
-  test("and asks for a compaction when clicked", () => {
+  test("and asks for a compaction from its panel", () => {
     let asked = 0;
-    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
-      onCompact: () => (asked += 1),
-    });
+    panel(state(hi), () => {}, { onCompact: () => (asked += 1) });
 
-    fireEvent.click(screen.getByText("8k"));
+    openMeter();
+    fireEvent.click(screen.getByText("Compact now"));
     expect(asked).toBe(1);
+    expect(screen.queryByRole("dialog", { name: "Context" })).toBeNull();
   });
 
   /// Mid-turn the history is the turn's, not the window's: shortening it from
   /// under a running request is not something to offer.
   test("but not while a turn is running", () => {
-    panel(state([{ kind: "user", id: "u0", text: "hi" }], { status: "running" }), () => {}, {});
+    panel(state(hi, { status: "running" }), () => {}, {});
 
-    expect(screen.getByText("8k").closest("button")?.disabled).toBe(true);
+    openMeter();
+    expect((screen.getByText("Compact now") as HTMLButtonElement).disabled).toBe(true);
   });
 
   /// The failure this closes: the meter used to read the last turn's reported
   /// usage, so an untouched chat showed nothing at all — over a window with
   /// the prompt and the tool schemas already in it.
   test("is there before anything has been said", () => {
-    panel(state([]), () => {}, {
-      context: usage({ conversation: 0, total: 4_000, limit: 200_000 }),
-    });
+    panel(state([]), () => {}, { context: usage({ conversation: 0, total: 4_000, limit: 200_000 }) });
 
-    expect(screen.getByText("4k")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Context usage: 2%" })).toBeTruthy();
   });
 
-  /// Folding the conversation moves one of the three numbers. Showing only
-  /// the total hides which one a click would help with.
+  /// Folding the conversation moves one of the numbers. Showing only the
+  /// total hides which one a click would help with.
   test("says what the tokens are spent on", () => {
-    panel(state([{ kind: "user", id: "u0", text: "hi" }]), () => {}, {
-      context: usage({ limit: 200_000, compactsAt: 160_000 }),
-    });
+    panel(state(hi), () => {}, { context: usage({ limit: 200_000, compactsAt: 160_000 }) });
 
-    const title = screen.getByText("8k").closest("button")?.title ?? "";
-    expect(title).toContain("instructions and tools  4k");
-    expect(title).toContain("conversation  4k");
-    expect(title).toContain("160k");
+    openMeter();
+    const text = screen.getByRole("dialog", { name: "Context" }).textContent ?? "";
+    expect(text).toContain("Instructions and tools4k");
+    expect(text).toContain("Conversation4k");
+    expect(text).toContain("at 160k");
   });
 
   /// This is an estimate. When the provider has said what the last request
   /// really cost, that number belongs next to it rather than behind it.
-  test("puts the provider's own count beside the estimate", () => {
+  test("puts the provider's own count beside the estimate, with the cached share", () => {
     panel(
-      state([{ kind: "user", id: "u0", text: "hi" }], {
-        usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800 },
-      }),
-    );
-
-    const title = screen.getByText("8k").closest("button")?.title ?? "";
-    expect(title).toContain("actually cost 10k.");
-  });
-
-  test("says how much of it came from the prompt cache", () => {
-    panel(
-      state([{ kind: "user", id: "u0", text: "hi" }], {
+      state(hi, {
         usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800, cachedTokens: 9_000 },
       }),
     );
 
-    const title = screen.getByText("8k").closest("button")?.title ?? "";
-    expect(title).toContain("actually cost 10k, 9k of it from the cache.");
+    openMeter();
+    expect(screen.getByText("The last request actually cost 10k, 9k of it from the cache.")).toBeTruthy();
+  });
+
+  test("closes on Escape", () => {
+    panel(state(hi));
+    openMeter();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Context" })).toBeNull();
   });
 
   /// No window is a number with no scale — not a ring filled against a guess.
-  test("draws no ring without a known window", () => {
-    const { container } = panel(state([{ kind: "user", id: "u0", text: "hi" }]));
+  test("fills no ring without a known window, and says why", () => {
+    const { container } = panel(state(hi));
 
-    expect(container.querySelector(".context-ring")).toBeNull();
-    expect(screen.queryByText("200k")).toBeNull();
+    expect(container.querySelector(".ctx-arc")).toBeNull();
+    openMeter();
+    expect(screen.getByText(/window is not known/)).toBeTruthy();
   });
 });
 
@@ -393,7 +415,7 @@ describe("the folder's index", () => {
     panel(state([]), () => {}, { index });
 
     const badge = screen.getByRole("status");
-    expect(badge.textContent).toBe("Indexed · 2 skipped");
+    expect(badge.textContent).toBe("Indexed");
     expect(badge.getAttribute("title")).toContain("2 files not indexed");
   });
 

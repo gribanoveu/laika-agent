@@ -1,0 +1,146 @@
+import { useEffect, useRef, useState } from "react";
+import type { ChatUsage, ContextUsage } from "../lib/chat";
+import "./ContextMeter.css";
+
+// How full the model's window is, as a ring in the chat header; a click opens
+// what the tokens are spent on and the one thing to do about it — fold the
+// older part of the conversation into a summary.
+//
+// The parts are shown apart because they behave differently: folding moves
+// the conversation and leaves instructions and tools exactly where they were.
+// This is the backend's estimate; the provider's own count for the last
+// request goes next to it rather than implying the two agree.
+
+const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+
+const R = 7;
+const CIRCUMFERENCE = 2 * Math.PI * R;
+
+type Props = {
+  context: ContextUsage;
+  usage: ChatUsage | null;
+  /** Mid-turn the history is the turn's: folding it from under a running request is not offered. */
+  running: boolean;
+  onCompact: () => void;
+};
+
+export function ContextMeter({ context, usage, running, onCompact }: Props) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // No window is a number with no scale — the ring stays empty rather than
+  // filling against a guess.
+  const share = context.limit ? Math.min(1, context.total / context.limit) : null;
+  const percent = share === null ? null : Math.round(share * 100);
+  const tone = share === null || share < 0.7 ? "ok" : share < 0.9 ? "warn" : "full";
+  const fixed = context.instructions + context.tools;
+
+  return (
+    <div className="ctx" ref={wrap}>
+      <button
+        type="button"
+        className={`ctx-ring ctx-ring--${tone}${open ? " open" : ""}`}
+        aria-label={percent === null ? "Context usage" : `Context usage: ${percent}%`}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle className="ctx-track" cx="9" cy="9" r={R} />
+          {share !== null && (
+            <circle
+              className="ctx-arc"
+              cx="9"
+              cy="9"
+              r={R}
+              strokeDasharray={CIRCUMFERENCE}
+              strokeDashoffset={CIRCUMFERENCE * (1 - share)}
+            />
+          )}
+        </svg>
+      </button>
+
+      {open && (
+        <div className="ctx-pop" role="dialog" aria-label="Context">
+          <div className="ctx-head">
+            <span>Context window</span>
+            {percent !== null && <span className="ctx-percent">{percent}%</span>}
+          </div>
+
+          {context.limit ? (
+            <>
+              <div className="ctx-bar" aria-hidden="true">
+                <span className="ctx-bar-fixed" style={{ width: `${(fixed / context.limit) * 100}%` }} />
+                <span
+                  className="ctx-bar-chat"
+                  style={{ width: `${(context.conversation / context.limit) * 100}%` }}
+                />
+              </div>
+              <p className="ctx-total">
+                {compact(context.total)} of {compact(context.limit)} tokens
+              </p>
+            </>
+          ) : (
+            <p className="ctx-total">
+              About {compact(context.total)} tokens in the next request. The model's window is not known —
+              set it in Settings → Models.
+            </p>
+          )}
+
+          <dl className="ctx-rows">
+            <div>
+              <dt>
+                <i className="ctx-dot ctx-dot--fixed" />
+                Instructions and tools
+              </dt>
+              <dd>{compact(fixed)}</dd>
+            </div>
+            <div>
+              <dt>
+                <i className="ctx-dot ctx-dot--chat" />
+                Conversation
+              </dt>
+              <dd>{compact(context.conversation)}</dd>
+            </div>
+          </dl>
+
+          {context.compactsAt && (
+            <p className="ctx-note">Folds the older part on its own at {compact(context.compactsAt)}.</p>
+          )}
+          {usage && (
+            <p className="ctx-note">
+              The last request actually cost {compact(usage.promptTokens)}
+              {usage.cachedTokens ? `, ${compact(usage.cachedTokens)} of it from the cache` : ""}.
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-ghost ctx-compact"
+            disabled={running}
+            title={running ? "Not while a turn is running" : undefined}
+            onClick={() => {
+              setOpen(false);
+              onCompact();
+            }}
+          >
+            Compact now
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

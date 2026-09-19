@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { IndexBadge } from "./IndexBadge";
+import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
 import { describeRun, describeTool } from "../lib/describeTool";
@@ -45,7 +46,6 @@ const TOOL_ICON: Record<string, typeof FileText> = {
   Blame: GitBranch,
 };
 
-const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
 
 function ToolRow({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   const [open, setOpen] = useState(false);
@@ -285,38 +285,9 @@ function ToolRun({ run, live }: { run: Run; live: boolean }) {
   );
 }
 
-/**
- * What the meter says, as a tooltip.
- *
- * Three lines because the three parts behave differently and the reader's
- * question is what they can do about it: folding the conversation moves one
- * number and leaves the other two exactly where they were. The provider's own
- * count for the last request is shown beside them when there is one — this is
- * an estimate, and the honest thing is to put the real number next to it
- * rather than to imply there is no difference.
- */
-function meterTitle(context: ContextUsage, usage: ChatUsage | null): string {
-  const lines = [
-    context.limit
-      ? `Context: about ${compact(context.total)} of ${compact(context.limit)} tokens`
-      : `Context: about ${compact(context.total)} tokens in the next request`,
-    `· instructions and tools  ${compact(context.instructions + context.tools)}`,
-    `· conversation  ${compact(context.conversation)}`,
-  ];
-  if (context.compactsAt) {
-    lines.push(`Folds the older part on its own at ${compact(context.compactsAt)}.`);
-  }
-  if (usage) {
-    // The cached share is what the user pays a tenth for — the one sign the
-    // prompt cache is doing anything.
-    const cached = usage.cachedTokens ? `, ${compact(usage.cachedTokens)} of it from the cache` : "";
-    lines.push(`The last request actually cost ${compact(usage.promptTokens)}${cached}.`);
-  }
-  lines.push("Click to fold the older part into a summary now.");
-  return lines.join("\n");
-}
-
 type Props = {
+  /** The open chat's title; `null` for one not saved yet. */
+  title?: string | null;
   /** The open folder's index; `null` until anything is known about it. */
   index?: IndexState | null;
   workspace: string | null;
@@ -339,6 +310,7 @@ type Props = {
 };
 
 export function ChatPanel({
+  title = null,
   workspace,
   turn,
   usage,
@@ -365,15 +337,15 @@ export function ChatPanel({
     <section className="chat-panel">
       <header className="chat-head">
         <div className="head-left">
-          <div className="head-title">
-            <h1>{name ?? "New session"}</h1>
-            {workspace && index && <IndexBadge state={index} />}
-          </div>
+          <h1 title={title ?? undefined}>{title ?? "New chat"}</h1>
           {workspace && (
-            <span className="chat-path" title={workspace}>
-              <Folder size={11} />
-              <span>{workspace}</span>
-            </span>
+            <div className="head-sub">
+              <span className="chat-path" title={workspace}>
+                <Folder size={11} />
+                <span>{name}</span>
+              </span>
+              {index && <IndexBadge state={index} />}
+            </div>
           )}
         </div>
         <div className="head-right">
@@ -384,38 +356,14 @@ export function ChatPanel({
             </span>
           )}
           {/* Shown from the first render, before anything has been said: an
-              empty conversation already costs the prompt and the schemas, and
-              a meter reading zero over that is a gauge connected to nothing.
-              The scale comes from the same estimate, so the ring fills toward
-              the mark where a pass really starts. */}
+              empty conversation already costs the prompt and the schemas. */}
           {context && (
-            <button
-              type="button"
-              className="context-meter"
-              disabled={turn.status === "running"}
-              title={meterTitle(context, usage)}
-              onClick={onCompact}
-            >
-              {context.limit ? (
-                <span
-                  className="context-ring"
-                  style={
-                    {
-                      "--ring-deg": `${Math.min(360, Math.round((context.total / context.limit) * 360))}deg`,
-                    } as React.CSSProperties
-                  }
-                />
-              ) : null}
-              <span className="context-meter-val">
-                <span className="used">{compact(context.total)}</span>
-                {context.limit && (
-                  <>
-                    <span className="sep">/</span>
-                    {compact(context.limit)}
-                  </>
-                )}
-              </span>
-            </button>
+            <ContextMeter
+              context={context}
+              usage={usage}
+              running={turn.status === "running"}
+              onCompact={onCompact}
+            />
           )}
         </div>
       </header>

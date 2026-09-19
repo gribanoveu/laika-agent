@@ -81,7 +81,7 @@ export function describeIndex(state: IndexState): {
         };
       }
       return {
-        label: state.skipped > 0 ? `Indexed · ${state.skipped} skipped` : "Indexed",
+        label: "Indexed",
         detail: lines(`${state.embedded} passages searchable by meaning.`, skipped),
         tone: "ok",
       };

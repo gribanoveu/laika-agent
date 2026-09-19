@@ -206,6 +206,7 @@ export default function App() {
 
         <main className="main">
           <ChatPanel
+            title={history.chats.find((chat) => chat.id === agent.chatId)?.title ?? null}
             workspace={workspace.path}
             index={index}
             turn={agent.turn}

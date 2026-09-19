@@ -1,0 +1,129 @@
+.ctx {
+  position: relative;
+}
+
+.ctx-ring {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  cursor: pointer;
+}
+.ctx-ring:hover,
+.ctx-ring.open {
+  background: var(--bg-hover);
+}
+.ctx-ring svg {
+  /* The arc starts at twelve o'clock and runs clockwise. */
+  transform: rotate(-90deg);
+}
+.ctx-track,
+.ctx-arc {
+  fill: none;
+  stroke-width: 2.5;
+}
+.ctx-track {
+  stroke: var(--bg-active);
+}
+.ctx-arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+.ctx-ring--warn .ctx-arc {
+  stroke: var(--amber);
+}
+.ctx-ring--full .ctx-arc {
+  stroke: var(--red);
+}
+
+.ctx-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 280px;
+  padding: 12px 14px 14px;
+  background: var(--bg-panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.ctx-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.ctx-percent {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.ctx-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-active);
+}
+.ctx-bar-fixed,
+.ctx-dot--fixed {
+  background: var(--purple);
+}
+.ctx-bar-chat,
+.ctx-dot--chat {
+  background: var(--accent);
+}
+.ctx-total {
+  margin: 6px 0 10px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.ctx-rows {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+.ctx-rows > div {
+  display: flex;
+  justify-content: space-between;
+}
+.ctx-rows dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ctx-rows dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+.ctx-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ctx-note {
+  margin-bottom: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+.ctx-compact {
+  width: 100%;
+  justify-content: center;
+  margin-top: 6px;
+}
