@@ -20,6 +20,7 @@ mock.module("@tauri-apps/api/core", () => ({
 
 const { Composer } = await import("../components/Composer");
 const { setConversationMode } = await import("../lib/chat");
+const { modelChoices } = await import("../hooks/useLlmSettings");
 
 afterEach(() => {
   calls.length = 0;
@@ -41,6 +42,9 @@ function composer(
       onConversation={onConversation}
       unattended={unattended}
       onUnattended={onUnattended}
+      models={{ choices: [], current: null }}
+      onModel={() => {}}
+      onLoadModels={() => {}}
     />,
   );
 }
@@ -85,7 +89,7 @@ describe("the permission chip", () => {
     fireEvent.click(screen.getByTitle("Permission mode"));
 
     const options = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Askconfirm changes", "Autonever ask"]);
+    expect(options).toEqual(["AskConfirm edits and commands", "AutoRun the whole turn without asking"]);
   });
 
   test("picking auto reports that nothing will be asked", () => {
@@ -170,6 +174,9 @@ describe("text handed to the box", () => {
       unattended={false}
       onUnattended={() => {}}
       draft={draft}
+      models={{ choices: [], current: null }}
+      onModel={() => {}}
+      onLoadModels={() => {}}
     />
   );
 
@@ -182,5 +189,52 @@ describe("text handed to the box", () => {
     fireEvent.change(box, { target: { value: "edited" } });
     rerender(withDraft({ text: "try this", seq: 2 }));
     expect(box.value).toBe("try this");
+  });
+});
+
+describe("the model chip", () => {
+  const settings = {
+    providers: [
+      { id: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "Anthropic/Claude-Sonnet-5", hasApiKey: true },
+      { id: "local", baseUrl: "http://127.0.0.1:1234/v1", hasApiKey: false },
+    ],
+    activeProviderId: "OpenRouter",
+    debugLogging: false,
+  };
+
+  test("offers provider/model in lower case, the pinned one current, auto for none pinned", () => {
+    const { choices, current } = modelChoices(settings, { OpenRouter: ["Anthropic/Claude-Sonnet-5", "openai/gpt-5"] });
+    expect(choices.map((c) => c.label)).toEqual([
+      "openrouter/anthropic/claude-sonnet-5",
+      "openrouter/openai/gpt-5",
+      "local/auto",
+    ]);
+    expect(current?.label).toBe("openrouter/anthropic/claude-sonnet-5");
+  });
+
+  test("shows the current one, asks for the list on open, and reports the pick", () => {
+    const models = modelChoices(settings, { OpenRouter: ["openai/gpt-5"] });
+    const picked: string[] = [];
+    let loads = 0;
+    render(
+      <Composer
+        onSend={() => {}}
+        onStop={() => {}}
+        running={false}
+        conversation="agent"
+        onConversation={() => {}}
+        unattended={false}
+        onUnattended={() => {}}
+        models={models}
+        onModel={(c) => picked.push(`${c.providerId}|${c.model}`)}
+        onLoadModels={() => loads++}
+      />,
+    );
+
+    expect(screen.getByTitle("Model").textContent).toContain("openrouter/anthropic/claude-sonnet-5");
+    fireEvent.click(screen.getByTitle("Model"));
+    expect(loads).toBe(1);
+    fireEvent.click(screen.getByRole("option", { name: /openrouter\/openai\/gpt-5/ }));
+    expect(picked).toEqual(["OpenRouter|openai/gpt-5"]);
   });
 });

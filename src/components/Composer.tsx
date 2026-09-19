@@ -1,29 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { Paperclip, SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
+import { SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import type { ConversationMode } from "../lib/chat";
+import { choiceKey, type ModelChoice } from "../hooks/useLlmSettings";
 import "./Composer.css";
 
-// Models come from the provider config once that command exists — empty
-// until then.
-//
 // Two permission states, not the prototype's three, because two is what
 // `ApprovalPolicy` has: ask before anything that changes the tree, or run the
 // whole turn without asking. A third label would be a control that moves and
 // changes nothing. "Always allow this tool" is the third real state and it is
 // not a chip — it is answered on the card, about one tool, in the moment.
 const MODES: { value: string; label: string; hint: string }[] = [
-  { value: "ask", label: "Ask", hint: "confirm changes" },
-  { value: "auto", label: "Auto", hint: "never ask" },
+  { value: "ask", label: "Ask", hint: "Confirm edits and commands" },
+  { value: "auto", label: "Auto", hint: "Run the whole turn without asking" },
 ];
-const MODELS: { value: string }[] = [];
 
 // What the agent may be this turn. The labels are the user's words for it;
 // the values are what `domain::conversation_mode` deserializes.
 const CONVERSATIONS: { value: ConversationMode; label: string; hint: string }[] = [
-  { value: "agent", label: "Agent", hint: "read, edit, run" },
-  { value: "plan", label: "Plan", hint: "read only" },
-  { value: "ask", label: "Ask", hint: "answer only" },
+  { value: "agent", label: "Agent", hint: "Reads, edits files and runs commands" },
+  { value: "plan", label: "Plan", hint: "Reads only and writes a plan" },
+  { value: "ask", label: "Ask", hint: "Answers questions, changes nothing" },
 ];
 
 type Props = {
@@ -41,6 +38,11 @@ type Props = {
   /** Text put into the box from outside — a branch hands back its message.
       Replaces what was typed; `seq` makes the same text twice land twice. */
   draft?: { text: string; seq: number } | null;
+  /** Every configured `provider/model`, and the one turns go to now. */
+  models: { choices: ModelChoice[]; current: ModelChoice | null };
+  onModel: (choice: ModelChoice) => void;
+  /** Asks the providers what they serve; called when the model menu opens. */
+  onLoadModels: () => void;
 };
 
 export function Composer({
@@ -52,9 +54,11 @@ export function Composer({
   unattended,
   onUnattended,
   draft = null,
+  models,
+  onModel,
+  onLoadModels,
 }: Props) {
   const [text, setText] = useState("");
-  const [model, setModel] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
 
   const grow = () => {
@@ -98,11 +102,9 @@ export function Composer({
         }}
       />
       <div className="composer-bar">
-        <button className="iconbtn" type="button" title="Attach">
-          <Paperclip size={15} />
-        </button>
         <Dropdown
           title="Permission mode"
+          heading="Permissions"
           label={
             <span className="mode-label">
               <ShieldCheck size={13} />
@@ -119,6 +121,7 @@ export function Composer({
             cannot write in Ask. */}
         <Dropdown
           title="What the agent may do"
+          heading="Mode"
           label={
             <span className="mode-label">
               <Bot size={13} />
@@ -131,11 +134,20 @@ export function Composer({
         />
         <Dropdown
           title="Model"
-          label={model ?? "no model"}
-          value={model ?? ""}
-          options={MODELS}
-          emptyLabel="No models configured"
-          onPick={setModel}
+          heading="Model"
+          label={<span className="model-label">{models.current?.label ?? "no model"}</span>}
+          value={models.current ? choiceKey(models.current) : ""}
+          options={models.choices.map((choice) => ({
+            value: choiceKey(choice),
+            label: choice.label,
+            hint: choice.model ? undefined : "The first model the provider lists",
+          }))}
+          emptyLabel="No provider yet — add one in Settings → Models"
+          onOpen={onLoadModels}
+          onPick={(key) => {
+            const choice = models.choices.find((c) => choiceKey(c) === key);
+            if (choice) onModel(choice);
+          }}
         />
         {/* One button, two jobs: while a turn runs the only thing worth doing
             with it is stopping — and a send button that does nothing during a

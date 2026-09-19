@@ -26,6 +26,13 @@
   gap: 8px;
   margin-top: 6px;
 }
+/* A long provider/model ellipsises rather than pushing the send button off. */
+.composer .model-label {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .composer .mode-label {
   display: inline-flex;
   align-items: center;

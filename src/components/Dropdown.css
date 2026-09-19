@@ -43,13 +43,25 @@
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  min-width: 160px;
+  min-width: 220px;
+  max-width: 360px;
+  /* A provider can serve dozens of models. */
+  max-height: 320px;
+  overflow-y: auto;
   background: var(--bg-panel-soft);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 10px;
   padding: 4px;
   z-index: 30;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.dropdown-heading {
+  padding: 6px 9px 4px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 .dropdown-menu.below {
   top: calc(100% + 6px);
@@ -58,10 +70,10 @@
 .dropdown-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   padding: 6px 9px;
-  border-radius: 6px;
+  border-radius: 7px;
   border: 0;
   background: none;
   font-family: inherit;
@@ -76,7 +88,23 @@
 }
 .dropdown-item.active {
   color: var(--text);
-  background: var(--bg-active);
+}
+/* The label, and what it means on the line under it. */
+.dropdown-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.dropdown-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dropdown-check {
+  flex: none;
+  color: var(--accent);
 }
 .dropdown-empty {
   padding: 6px 9px;
@@ -84,8 +112,9 @@
   color: var(--text-faint);
 }
 .dropdown-item .hint {
-  margin-left: auto;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-faint);
-  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

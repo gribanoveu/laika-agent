@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  listModels,
   llmSettings,
   removeProvider,
   saveApiKey,
@@ -65,5 +66,70 @@ export function useLlmSettings() {
     [guard],
   );
 
-  return { settings, error, busy, save, remove, select, debugLogging };
+  // What each provider serves, asked when the model menu opens: a live call
+  // per provider, so not on every render. A provider that does not answer
+  // keeps only its pinned model.
+  const [served, setServed] = useState<Record<string, string[]>>({});
+  const loadModels = useCallback(() => {
+    for (const provider of settings?.providers ?? []) {
+      listModels(provider.id)
+        .then((list) => setServed((prev) => ({ ...prev, [provider.id]: list })))
+        .catch(() => {});
+    }
+  }, [settings]);
+
+  /** Makes `providerId` active and pins `model` on it. */
+  const pickModel = useCallback(
+    (providerId: string, model: string | null) => {
+      const provider = settings?.providers.find((p) => p.id === providerId);
+      if (!provider) return;
+      return guard(async () => {
+        if ((provider.model ?? null) !== model) await saveProvider({ ...provider, model });
+        await setActiveProvider(providerId);
+      });
+    },
+    [settings, guard],
+  );
+
+  return {
+    settings,
+    error,
+    busy,
+    save,
+    remove,
+    select,
+    debugLogging,
+    models: modelChoices(settings, served),
+    loadModels,
+    pickModel,
+  };
+}
+
+/** One model the composer offers: `provider/model`, `model` `null` for "auto". */
+export type ModelChoice = { providerId: string; model: string | null; label: string };
+
+/** The key of a choice in a menu — the provider and the model, which can itself contain "/". */
+export const choiceKey = (choice: Pick<ModelChoice, "providerId" | "model">) =>
+  `${choice.providerId}\n${choice.model ?? ""}`;
+
+/**
+ * Every model the composer can switch to, as `provider/model` in lower case,
+ * with the active one first-class: `current` is what the chip shows. A
+ * provider without a pinned model is "auto" — the first one it lists, pinned
+ * on the first turn (`services::llm_session::effective_model`).
+ */
+export function modelChoices(settings: LlmSettings | null, served: Record<string, string[]>) {
+  const choices: ModelChoice[] = [];
+  for (const provider of settings?.providers ?? []) {
+    const names = [...new Set([provider.model, ...(served[provider.id] ?? [])].filter((m): m is string => !!m))];
+    const models = names.length ? names : [null];
+    for (const model of models) {
+      choices.push({ providerId: provider.id, model, label: `${provider.id}/${model ?? "auto"}`.toLowerCase() });
+    }
+  }
+  const active = settings?.providers.find((p) => p.id === settings.activeProviderId);
+  const current = active
+    ? (choices.find((c) => c.providerId === active.id && c.model === (active.model ?? null)) ?? null)
+    : null;
+  return { choices, current };
 }

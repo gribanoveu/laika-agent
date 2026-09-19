@@ -230,6 +230,9 @@ export default function App() {
             unattended={unattended.value}
             onUnattended={pickUnattended}
             draft={agent.draft}
+            models={llm.models}
+            onModel={(choice) => llm.pickModel(choice.providerId, choice.model)}
+            onLoadModels={llm.loadModels}
           />
         </main>
 
