@@ -85,8 +85,6 @@ describe("the Hooks tab", () => {
       <AsidePanel
         tab="hooks"
         onTabChange={() => {}}
-        collapsed={false}
-        onToggleCollapse={() => {}}
         onNotify={() => {}}
         mcp={null}
         mcpError={null}

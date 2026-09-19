@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FileText,
   Folder,
+  PanelRight,
   FolderTree,
   GitBranch,
   ListTodo,
@@ -353,6 +354,9 @@ function ToolRun({ run, live }: { run: Run; live: boolean }) {
 }
 
 type Props = {
+  /** Whether the side panel is showing; the header's button shows and hides it. */
+  asideOpen?: boolean;
+  onToggleAside?: () => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
   /** The open folder's index; `null` until anything is known about it. */
@@ -377,6 +381,8 @@ type Props = {
 };
 
 export function ChatPanel({
+  asideOpen = false,
+  onToggleAside,
   title = null,
   workspace,
   turn,
@@ -431,6 +437,17 @@ export function ChatPanel({
               running={turn.status === "running"}
               onCompact={onCompact}
             />
+          )}
+          {onToggleAside && (
+            <button
+              type="button"
+              className={`iconbtn aside-button${asideOpen ? " on" : ""}`}
+              title={asideOpen ? "Hide panel" : "Show panel"}
+              aria-pressed={asideOpen}
+              onClick={onToggleAside}
+            >
+              <PanelRight size={15} />
+            </button>
           )}
         </div>
       </header>

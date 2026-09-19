@@ -104,8 +104,6 @@ describe("the skills tab", () => {
         onRuleToggle={() => {}}
         tab="skills"
         onTabChange={() => {}}
-        collapsed={false}
-        onToggleCollapse={() => {}}
         onNotify={() => {}}
         skills={view}
         skillsError={null}
@@ -176,8 +174,6 @@ describe("the rules tab", () => {
       <AsidePanel
         tab="rules"
         onTabChange={() => {}}
-        collapsed={false}
-        onToggleCollapse={() => {}}
         onNotify={() => {}}
         skills={null}
         skillsError={null}

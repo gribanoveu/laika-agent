@@ -103,8 +103,6 @@ describe("the MCP tab", () => {
       <AsidePanel
         tab="mcp"
         onTabChange={() => {}}
-        collapsed={false}
-        onToggleCollapse={() => {}}
         onNotify={() => {}}
         mcp={view}
         mcpError={null}

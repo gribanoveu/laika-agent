@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
@@ -51,7 +51,8 @@ const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in 
 export default function App() {
   // Laid out as it was left.
   const [collapsed, setCollapsed] = useStoredState("atlas-sidebar-collapsed", false, isBoolean);
-  const [asideCollapsed, setAsideCollapsed] = useStoredState("atlas-aside-collapsed", false, isBoolean);
+  // Hidden until the chat header's button asks for it.
+  const [asideHidden, setAsideHidden] = useStoredState("atlas-aside-hidden", true, isBoolean);
   const [tab, setTab] = useStoredState<AsideTab>("atlas-aside-tab", "changes", isAsideTab);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -65,8 +66,8 @@ export default function App() {
   const toast = useToast();
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
-  const skills = useSkills(tab === "skills" && !asideCollapsed);
-  const rules = useRules(tab === "rules" && !asideCollapsed, workspace.path);
+  const skills = useSkills(tab === "skills" && !asideHidden);
+  const rules = useRules(tab === "rules" && !asideHidden, workspace.path);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -75,9 +76,9 @@ export default function App() {
   useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
-  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing || settingsOpen, agent.turn.status);
-  const hooks = useHooks((tab === "hooks" && !asideCollapsed) || hooksEditing || settingsOpen);
-  const processes = useProcesses(tab === "terminal" && !asideCollapsed);
+  const mcp = useMcp((tab === "mcp" && !asideHidden) || mcpEditing || settingsOpen, agent.turn.status);
+  const hooks = useHooks((tab === "hooks" && !asideHidden) || hooksEditing || settingsOpen);
+  const processes = useProcesses(tab === "terminal" && !asideHidden);
   const llm = useLlmSettings();
   const theme = useTheme();
   const fontSize = useChatFontSize();
@@ -87,21 +88,18 @@ export default function App() {
       collapse: () => setCollapsed(true),
       expand: () => setCollapsed(false),
     },
-    aside: {
-      collapsed: asideCollapsed,
-      collapse: () => setAsideCollapsed(true),
-      expand: () => setAsideCollapsed(false),
-    },
   });
 
-  // Narrow window: both panels fall back to their rails instead of one squeezing
-  // the chat and the other disappearing.
+  // Narrow window: the sidebar falls back to its rail and the side panel
+  // hides, rather than both squeezing the chat. Widening again does not bring
+  // the side panel back — it opens only when asked for.
   useNarrowCollapse("(max-width: 760px)", setCollapsed);
-  useNarrowCollapse("(max-width: 900px)", setAsideCollapsed);
+  const hideAsideWhenNarrow = useCallback((narrow: boolean) => narrow && setAsideHidden(true), [setAsideHidden]);
+  useNarrowCollapse("(max-width: 900px)", hideAsideWhenNarrow);
 
   const openTab = (next: AsideTab) => {
     setTab(next);
-    setAsideCollapsed(false);
+    setAsideHidden(false);
   };
 
   // The conversation just left is already on disk and stays in the sidebar;
@@ -168,7 +166,7 @@ export default function App() {
 
   return (
     <div
-      className={`window${collapsed ? " collapsed" : ""}${asideCollapsed ? " aside-collapsed" : ""}`}
+      className={`window${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}`}
       style={
         {
           "--sidebar-width": `${panels.widths.sidebar}px`,
@@ -216,6 +214,8 @@ export default function App() {
             onOpenRepo={chooseFolder}
             onNewChat={newChat}
             onCompact={compactNow}
+            asideOpen={!asideHidden}
+            onToggleAside={() => setAsideHidden((v) => !v)}
             onImplement={conversation.value === "plan" ? implement : undefined}
             onOpenPlan={() => openTab("plan")}
             branchable={agent.branchable}
@@ -236,18 +236,18 @@ export default function App() {
           />
         </main>
 
-        <PanelResizeHandle
-          invert
-          ariaLabel="Resize the side panel"
-          onResize={panels.resizeAsideBy}
-          onResizeEnd={panels.endResize}
-        />
+        {!asideHidden && (
+          <PanelResizeHandle
+            invert
+            ariaLabel="Resize the side panel"
+            onResize={panels.resizeAsideBy}
+            onResizeEnd={panels.endResize}
+          />
+        )}
 
         <AsidePanel
           tab={tab}
           onTabChange={setTab}
-          collapsed={asideCollapsed}
-          onToggleCollapse={() => setAsideCollapsed((v) => !v)}
           onNotify={toast.show}
           mcp={mcp.view}
           mcpError={mcpEditing ? null : mcp.error}

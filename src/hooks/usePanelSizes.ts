@@ -1,18 +1,19 @@
 import { useCallback, useRef } from "react";
 import { useStoredState } from "./useStoredState";
 
-export const PANEL_LIMITS = {
-  // `rail` is the collapsed width — mirrors the CSS in Sidebar.css/AsidePanel.css.
+type PanelKey = "sidebar" | "aside";
+
+export const PANEL_LIMITS: Record<PanelKey, { min: number; max: number; initial: number; rail?: number }> = {
+  // `rail` is the collapsed width — mirrors the CSS in Sidebar.css. The side
+  // panel has none: it is hidden from the chat header, never by dragging.
   sidebar: { min: 180, max: 420, initial: 248, rail: 58 },
-  aside: { min: 260, max: 560, initial: 300, rail: 52 },
-} as const;
+  aside: { min: 260, max: 560, initial: 300 },
+};
 
 /** How far past the minimum the drag must continue before the panel snaps shut. */
 const COLLAPSE_OVERSHOOT_RATIO = 0.4;
 /** How far a collapsed panel must be pulled out before it opens again. */
 const EXPAND_THRESHOLD = 40;
-
-type PanelKey = keyof typeof PANEL_LIMITS;
 
 // Within the limits too: they may have changed since the width was stored.
 const isWidths = (value: unknown): value is Record<PanelKey, number> => {
@@ -37,8 +38,9 @@ const clamp = (key: PanelKey, width: number) =>
  * panel at that minimum and banks the extra movement; once it adds up the panel
  * collapses. Pulling a collapsed panel outward reopens it the same way — the
  * drag-to-collapse gesture from docflow's usePanelLayout, plus the way back.
+ * A panel without a control only stops at its minimum.
  */
-export function usePanelSizes(controls: Record<PanelKey, PanelControl>) {
+export function usePanelSizes(controls: Partial<Record<PanelKey, PanelControl>>) {
   const [widths, setWidths] = useStoredState(
     "atlas-panel-widths",
     { sidebar: PANEL_LIMITS.sidebar.initial, aside: PANEL_LIMITS.aside.initial },
@@ -65,13 +67,13 @@ export function usePanelSizes(controls: Record<PanelKey, PanelControl>) {
       const { min } = PANEL_LIMITS[key];
       const control = controlsRef.current[key];
 
-      if (control.collapsed) {
+      if (control?.collapsed) {
         if (delta <= 0) return;
         overshoot.current[key] += delta;
         if (overshoot.current[key] >= EXPAND_THRESHOLD) {
           const travelled = overshoot.current[key];
           overshoot.current[key] = 0;
-          catchUp.current[key] = Math.max(0, min - PANEL_LIMITS[key].rail - travelled);
+          catchUp.current[key] = Math.max(0, min - (PANEL_LIMITS[key].rail ?? 0) - travelled);
           apply(key, min);
           control.expand();
         }
@@ -106,6 +108,7 @@ export function usePanelSizes(controls: Record<PanelKey, PanelControl>) {
       }
 
       apply(key, min);
+      if (!control) return;
       overshoot.current[key] += current <= min ? -delta : min - next;
       if (overshoot.current[key] >= min * COLLAPSE_OVERSHOOT_RATIO) {
         overshoot.current[key] = 0;

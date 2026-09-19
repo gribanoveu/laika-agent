@@ -9,8 +9,10 @@
   transition: width 0.22s ease;
   overflow: hidden;
 }
-.window.aside-collapsed .aside {
-  width: 52px;
+/* Hidden until asked for, from the chat header — hidden rather than
+   unmounted, so a half-written commit message survives. */
+.window.aside-hidden .aside {
+  display: none;
 }
 
 .aside-head {
@@ -21,40 +23,6 @@
   padding: 10px 8px 0;
   border-bottom: 1px solid var(--border-soft);
 }
-.window.aside-collapsed .aside-head {
-  flex-direction: column;
-  /* Column flow turns align-items into horizontal alignment — centre the rail. */
-  align-items: center;
-  padding: 12px 0 8px;
-  border-bottom: 0;
-}
-/* Shares the tab row's box so it sits on the same line as the tab icons,
-   separated by a hairline instead of a hover square. */
-.aside-toggle {
-  flex: none;
-  display: grid;
-  place-items: center;
-  padding: 2px 8px 8px 4px;
-  margin: 0 4px -1px 0;
-  border: 0;
-  border-right: 1px solid var(--border-soft);
-  /* Matches the tab underline so both icon rows share one baseline. */
-  border-bottom: 1.5px solid transparent;
-  background: none;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-.aside-toggle:hover {
-  color: var(--text);
-}
-.window.aside-collapsed .aside-toggle {
-  padding: 4px;
-  margin: 0;
-  border-right: 0;
-}
-.window.aside-collapsed .aside-toggle svg {
-  transform: scaleX(-1);
-}
 
 .tabs {
   flex: 1;
@@ -64,9 +32,6 @@
   justify-content: space-between;
   column-gap: 2px;
   padding: 4px 4px 0;
-}
-.window.aside-collapsed .tabs {
-  display: none;
 }
 /* Icon only — the name lives in the tooltip, so the row never has to wrap. */
 .tab {
@@ -89,46 +54,11 @@
   border-bottom-color: var(--text-dim);
 }
 
-.aside-rail {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 0;
-  flex: 1;
-}
-.window.aside-collapsed .aside-rail {
-  display: flex;
-}
-.rail-btn {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: none;
-  border: 0;
-  color: var(--text-faint);
-  cursor: pointer;
-  position: relative;
-}
-.rail-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-.rail-btn.active {
-  color: var(--accent);
-  background: var(--bg-active);
-}
-
 .aside-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.window.aside-collapsed .aside-body {
-  display: none;
 }
 
 .tabpanel {

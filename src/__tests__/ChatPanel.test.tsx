@@ -341,6 +341,41 @@ describe("the header", () => {
     expect(screen.getByTitle("/tmp/project").textContent).toBe("project");
   });
 
+  test("shows and hides the side panel, and says which it would do", () => {
+    let toggled = 0;
+    const { rerender } = render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        usage={null}
+        context={null}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onCompact={() => {}}
+        onToggleAside={() => toggled++}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("Show panel"));
+    expect(toggled).toBe(1);
+
+    rerender(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        usage={null}
+        context={null}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onCompact={() => {}}
+        asideOpen
+        onToggleAside={() => toggled++}
+      />,
+    );
+    expect(screen.getByTitle("Hide panel").getAttribute("aria-pressed")).toBe("true");
+  });
+
   test("a chat not saved yet is a new one", () => {
     panel(state([]));
     expect(screen.getByRole("heading", { name: "New chat" })).toBeTruthy();

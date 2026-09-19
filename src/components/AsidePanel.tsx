@@ -2,7 +2,6 @@ import {
   BookText,
   ClipboardList,
   FolderClosed,
-  PanelRight,
   Plug,
   Sparkles,
   SquareTerminal,
@@ -34,8 +33,6 @@ const WORKSPACE_FILES: string[] = [];
 type Props = {
   tab: AsideTab;
   onTabChange: (tab: AsideTab) => void;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
   onNotify: (msg: string) => void;
   mcp: McpView | null;
   mcpError: string | null;
@@ -173,8 +170,6 @@ function skillItems(view: SkillsView | null): PanelItem[] {
 export function AsidePanel({
   tab,
   onTabChange,
-  collapsed,
-  onToggleCollapse,
   onNotify,
   mcp,
   mcpError,
@@ -205,14 +200,6 @@ export function AsidePanel({
   return (
     <aside className="aside">
       <div className="aside-head">
-        <button
-          className="aside-toggle"
-          type="button"
-          title="Collapse panel"
-          onClick={onToggleCollapse}
-        >
-          <PanelRight size={15} />
-        </button>
         <div className="tabs" role="tablist">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
@@ -228,23 +215,6 @@ export function AsidePanel({
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="aside-rail" aria-hidden={!collapsed}>
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            title={label}
-            className={`rail-btn${tab === id ? " active" : ""}`}
-            onClick={() => {
-              onTabChange(id);
-              if (collapsed) onToggleCollapse();
-            }}
-          >
-            <Icon size={16} />
-          </button>
-        ))}
       </div>
 
       <div className="aside-body">

@@ -47,6 +47,21 @@ describe("panel widths", () => {
     expect(next.result.current.widths.sidebar).toBe(PANEL_LIMITS.sidebar.initial + 40);
   });
 
+  /// The side panel is hidden from the chat header, not by dragging: pushed
+  /// past its minimum it stops there. The sidebar still snaps to its rail.
+  test("the side panel stops at its minimum; the sidebar collapses", () => {
+    let collapsed = 0;
+    const { result } = renderHook(() =>
+      usePanelSizes({ sidebar: { collapsed: false, collapse: () => collapsed++, expand: () => {} } }),
+    );
+    act(() => result.current.resizeAsideBy(-2000));
+    expect(result.current.widths.aside).toBe(PANEL_LIMITS.aside.min);
+
+    act(() => result.current.resizeSidebarBy(-2000));
+    expect(result.current.widths.sidebar).toBe(PANEL_LIMITS.sidebar.min);
+    expect(collapsed).toBe(1);
+  });
+
   test("outside today's limits are not trusted", () => {
     localStorage.setItem("atlas-panel-widths", JSON.stringify({ sidebar: 9999, aside: 300 }));
     const { result } = renderHook(() => usePanelSizes(controls));
