@@ -21,3 +21,4 @@ pub mod mcp_stdio;
 pub mod login_path;
 pub mod hooks;
 pub mod background;
+pub mod git_aliases;

@@ -1,4 +1,11 @@
-import { processStatus, type ChatUsage, type Checkpoint, type Outcome, type TurnEvent } from "./chat";
+import {
+  processStatus,
+  type ChatUsage,
+  type Checkpoint,
+  type Outcome,
+  type PendingToolCall,
+  type TurnEvent,
+} from "./chat";
 
 // The transcript, assembled from one ordered stream of events.
 //
@@ -35,7 +42,7 @@ export type Block =
       id: string;
       round: number;
       /** One card per call the round asked for, decided or not. */
-      calls: { id: string; name: string; arguments: string; requiresConfirmation: boolean }[];
+      calls: PendingToolCall[];
     };
 
 export type TurnStatus = "idle" | "running" | "awaitingApproval" | "done" | "cancelled";

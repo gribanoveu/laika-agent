@@ -411,3 +411,28 @@ describe("branching from a message", () => {
     expect(screen.queryAllByRole("button", { name: "Branch from here" })).toHaveLength(0);
   });
 });
+
+describe("a card that asks although its tool is always allowed", () => {
+  test("says why, and an ordinary card says nothing extra", () => {
+    const block: Block = {
+      kind: "approval",
+      id: "approval:2",
+      round: 2,
+      calls: [
+        {
+          id: "r1",
+          name: "runCommand",
+          arguments: '{"command":"git pf"}',
+          requiresConfirmation: true,
+          reason: "rewrites a remote (git push --force)",
+        },
+        { id: "r2", name: "runCommand", arguments: '{"command":"cargo test"}', requiresConfirmation: true },
+      ],
+    };
+    panel(state([block], { status: "awaitingApproval" }));
+
+    const why = screen.getAllByText(/Always asks:/);
+    expect(why).toHaveLength(1);
+    expect(why[0].textContent).toBe("Always asks: rewrites a remote (git push --force)");
+  });
+});

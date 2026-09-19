@@ -31,6 +31,8 @@ export type PendingToolCall = {
   name: string;
   arguments: string;
   requiresConfirmation: boolean;
+  /** Why it asks although its tool is always allowed — `rewrites a remote (git push --force)`. */
+  reason?: string | null;
 };
 
 /** The whole state of a paused turn. Sent back untouched — see `chat_resume`. */

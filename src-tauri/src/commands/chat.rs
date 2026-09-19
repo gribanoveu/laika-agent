@@ -373,6 +373,13 @@ fn mcp_for_turn(
     }
 }
 
+/// The turn's policy with the workspace's git aliases in it. Read per turn:
+/// an alias added in a terminal a minute ago counts.
+fn with_git_aliases(mut policy: ApprovalPolicy, workspace: &std::path::Path) -> ApprovalPolicy {
+    policy.git_aliases = crate::infra::git_aliases::read(workspace);
+    policy
+}
+
 /// Assembles a turn and runs it on a blocking thread.
 ///
 /// Off the event loop because the whole turn is synchronous — provider calls,
@@ -390,7 +397,7 @@ where
     F: FnOnce(&Turn) -> Result<ChatStreamOutcome, TurnError> + Send + 'static,
 {
     let workspace = state.workspace()?;
-    let approval = state.approval()?;
+    let approval = with_git_aliases(state.approval()?, &workspace);
     let mode = state.mode();
     let search = searcher_of(&app);
     let mcp_servers = app.try_state::<Arc<McpServers>>().map(|servers| Arc::clone(&servers));
@@ -502,6 +509,20 @@ mod tests {
         let opened = state.workspace().unwrap();
         assert!(!opened.to_string_lossy().contains(".."), "{opened:?}");
         assert!(opened.is_dir());
+    }
+
+    /// Each turn reads the folder's git aliases, keeping what the session
+    /// already allowed.
+    #[test]
+    fn a_turn_s_policy_carries_the_workspace_s_git_aliases() {
+        let dir = temp_dir("cmd-git-aliases");
+        git2::Repository::init(&dir).unwrap().config().unwrap().set_str("alias.pf", "push --force").unwrap();
+        let mut base = ApprovalPolicy::default();
+        base.always_allowed.insert(ToolName::RunCommand);
+
+        let policy = with_git_aliases(base, &dir);
+        assert_eq!(policy.git_aliases.get("pf").map(String::as_str), Some("push --force"));
+        assert!(policy.always_allowed.contains(&ToolName::RunCommand));
     }
 
     /// The card's third button. It lasts for the session and is not written

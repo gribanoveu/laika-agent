@@ -547,11 +547,15 @@ fn run(
 
             let pending: Vec<PendingToolCall> = runnable
                 .iter()
-                .map(|call| PendingToolCall {
-                    requires_confirmation: needs_approval(turn.approval, call),
-                    id: call.id.clone(),
-                    name: call.name.clone(),
-                    arguments: call.arguments.clone(),
+                .map(|call| {
+                    let (requires_confirmation, reason) = needs_approval(turn.approval, call);
+                    PendingToolCall {
+                        requires_confirmation,
+                        reason,
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    }
                 })
                 .collect();
             if pending.iter().any(|call| call.requires_confirmation) {
@@ -930,10 +934,10 @@ fn wait(turn: &Turn, delay: Duration) -> bool {
 ///
 /// An unparseable call is never risky: it cannot run, and asking about a call
 /// that is going to fail either way spends the user's attention on nothing.
-fn needs_approval(policy: &ApprovalPolicy, call: &LlmToolCall) -> bool {
+fn needs_approval(policy: &ApprovalPolicy, call: &LlmToolCall) -> (bool, Option<String>) {
     match parse_tool_call(call) {
-        Ok(parsed) => policy.requires_approval_for(&parsed),
-        Err(_) => false,
+        Ok(parsed) if policy.requires_approval_for(&parsed) => (true, policy.approval_reason(&parsed)),
+        _ => (false, None),
     }
 }
 
@@ -1926,6 +1930,31 @@ mod tests {
         ApprovalPolicy::default()
     }
 
+    /// "Always allow runCommand" lets the build through and still stops a
+    /// force push — which the card then explains. A command that only reads
+    /// needs nothing at all.
+    #[test]
+    fn a_command_past_undoing_asks_with_its_reason_and_a_read_does_not_ask() {
+        let mut h = harness(
+            "command-reason",
+            vec![asks(vec![
+                wants("r1", "runCommand", r#"{"command":"git status"}"#),
+                wants("r2", "runCommand", r#"{"command":"git pf"}"#),
+            ])],
+        );
+        h.approval = ApprovalPolicy::default();
+        h.approval.allow_always("runCommand").unwrap();
+        h.approval.git_aliases.insert("pf".into(), "push --force".into());
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = outcome.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        let asks: Vec<(bool, Option<&str>)> =
+            pending.calls.iter().map(|c| (c.requires_confirmation, c.reason.as_deref())).collect();
+        assert_eq!(asks, [(false, None), (true, Some("rewrites a remote (git push --force)"))]);
+    }
+
     /// Nothing in the round runs — not even the calls that needed no decision.
     /// A half-executed round is a state nobody could describe to whoever
     /// resumes it.
@@ -2173,6 +2202,7 @@ mod tests {
                 name: "writeFile".to_string(),
                 arguments: "{}".to_string(),
                 requires_confirmation: true,
+                reason: None,
             }],
             todos: vec![],
             reads: ReadFiles::default(),

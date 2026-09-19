@@ -22,7 +22,12 @@
 //! the read-only list, so they ask; but under "always allow runCommand" they
 //! run, and what they do is not examined. `docs/08-data-policy.md` says so.
 
+use std::collections::HashMap;
+
 use tree_sitter::{Node, Parser};
+
+/// `git config alias.*`, name to value — see `infra::git_aliases`.
+pub type GitAliases = HashMap<String, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandRisk {
@@ -74,17 +79,37 @@ const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "fish"];
 /// Commands nested this deep in `sh -c` are not read further.
 const MAX_DEPTH: usize = 4;
 
+/// Without git aliases: `git <alias>` then reads as an unknown subcommand,
+/// and asks.
 pub fn classify(command: &str) -> CommandRisk {
-    classify_at(command, 0)
+    classify_with(command, &GitAliases::new())
 }
 
-fn classify_at(command: &str, depth: usize) -> CommandRisk {
+pub fn classify_with(command: &str, aliases: &GitAliases) -> CommandRisk {
+    classify_at(command, Cx { depth: 0, aliases })
+}
+
+/// What every level of the reading needs: how deep in `sh -c` it is, and
+/// what git's aliases say.
+#[derive(Clone, Copy)]
+struct Cx<'a> {
+    depth: usize,
+    aliases: &'a GitAliases,
+}
+
+impl Cx<'_> {
+    fn deeper(self) -> Self {
+        Cx { depth: self.depth + 1, ..self }
+    }
+}
+
+fn classify_at(command: &str, cx: Cx) -> CommandRisk {
     let mut parser = Parser::new();
-    if depth > MAX_DEPTH || parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
+    if cx.depth > MAX_DEPTH || parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
         return CommandRisk::Ask;
     }
     let Some(tree) = parser.parse(command, None) else { return CommandRisk::Ask };
-    let mut walk = Walk { src: command, depth, read_only: true, always: None };
+    let mut walk = Walk { src: command, cx, read_only: true, always: None };
     walk.visit(tree.root_node());
     match walk.always {
         Some(why) => CommandRisk::AlwaysAsk(why),
@@ -95,7 +120,7 @@ fn classify_at(command: &str, depth: usize) -> CommandRisk {
 
 struct Walk<'a> {
     src: &'a str,
-    depth: usize,
+    cx: Cx<'a>,
     read_only: bool,
     always: Option<String>,
 }
@@ -174,7 +199,7 @@ impl Walk<'_> {
             }
         }
         let words: Vec<String> = words.into_iter().map(|w| w.unwrap_or_default()).collect();
-        let risk = match judge(&words, self.depth) {
+        let risk = match judge(&words, self.cx) {
             // `cp x ~/.bashrc`, `tee -a .git/hooks/pre-commit`: anything but
             // reading a startup file is planting something that runs later.
             CommandRisk::Ask => match words[1..].iter().find(|w| is_startup(w)) {
@@ -229,7 +254,7 @@ fn basename(word: &str) -> &str {
 }
 
 /// One simple command, its words literal.
-fn judge(words: &[String], depth: usize) -> CommandRisk {
+fn judge(words: &[String], cx: Cx) -> CommandRisk {
     let Some(first) = words.first() else { return CommandRisk::Ask };
     let program = basename(first);
     let args = &words[1..];
@@ -239,12 +264,12 @@ fn judge(words: &[String], depth: usize) -> CommandRisk {
     }
     if WRAPPERS.contains(&program) {
         let rest = skip_wrapper_options(program, args);
-        return if rest.is_empty() { read_only_unless_secret(args) } else { judge(rest, depth) };
+        return if rest.is_empty() { read_only_unless_secret(args) } else { judge(rest, cx) };
     }
     if SHELLS.contains(&program) {
         // `-c`, `-lc`, `-ec`: the next word is a command line.
         return match args.iter().position(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c')) {
-            Some(at) => args.get(at + 1).map_or(CommandRisk::Ask, |script| classify_at(script, depth + 1)),
+            Some(at) => args.get(at + 1).map_or(CommandRisk::Ask, |script| classify_at(script, cx.deeper())),
             None => CommandRisk::Ask,
         };
     }
@@ -254,14 +279,14 @@ fn judge(words: &[String], depth: usize) -> CommandRisk {
     if PUBLISHERS.contains(&program) && args.iter().find(|w| !w.starts_with('-')).is_some_and(|w| w == "publish") {
         return CommandRisk::AlwaysAsk(format!("sends data off the machine ({program} publish)"));
     }
+    if program == "git" {
+        return git_line(args, cx);
+    }
     if let Some(why) = destructive(program, args) {
         return CommandRisk::AlwaysAsk(why);
     }
-    if program == "git" {
-        return git(args);
-    }
     if program == "find" {
-        return find(args, depth);
+        return find(args, cx);
     }
     if READ_ONLY.contains(&program) && read_only_args(program, args) {
         return read_only_unless_secret(args);
@@ -327,7 +352,6 @@ fn destructive(program: &str, args: &[String]) -> Option<String> {
         "kubectl" if args.iter().find(|w| !w.starts_with('-')).is_some_and(|w| w == "delete" || w == "exec") => {
             Some("acts on a cluster (kubectl delete/exec)".into())
         }
-        "git" => git_destructive(args),
         _ => None,
     }
 }
@@ -336,6 +360,12 @@ fn destructive(program: &str, args: &[String]) -> Option<String> {
 /// configuration for this call — a pager, a diff program — so it never reads
 /// as read-only.
 fn git_split(args: &[String]) -> Option<(&str, &[String], bool)> {
+    let (at, configured) = git_subcommand_at(args)?;
+    Some((args[at].as_str(), &args[at + 1..], configured))
+}
+
+/// Where the subcommand is, and whether `-c` came before it.
+fn git_subcommand_at(args: &[String]) -> Option<(usize, bool)> {
     let mut at = 0;
     let mut configured = false;
     while let Some(word) = args.get(at) {
@@ -346,7 +376,7 @@ fn git_split(args: &[String]) -> Option<(&str, &[String], bool)> {
             }
             "-C" | "--git-dir" | "--work-tree" | "--namespace" => at += 2,
             _ if word.starts_with('-') => at += 1,
-            _ => return Some((word.as_str(), &args[at + 1..], configured)),
+            _ => return Some((at, configured)),
         }
     }
     None
@@ -366,6 +396,32 @@ fn git_destructive(args: &[String]) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// `git …` with its aliases applied, then judged. An alias is expanded even
+/// where git would ignore it for shadowing a built-in: that only ever reads
+/// the line as riskier than it is. `!…` aliases run a shell line, with the
+/// arguments after the alias appended.
+fn git_line(args: &[String], cx: Cx) -> CommandRisk {
+    let mut args = args.to_vec();
+    for _ in 0..=MAX_DEPTH {
+        let Some((at, _)) = git_subcommand_at(&args) else { break };
+        let Some(value) = cx.aliases.get(&args[at].to_lowercase()) else { break };
+        if let Some(script) = value.strip_prefix('!') {
+            let line = std::iter::once(script.to_string()).chain(args[at + 1..].iter().map(|w| shell_quote(w))).collect::<Vec<_>>().join(" ");
+            return classify_at(&line, cx.deeper());
+        }
+        let expanded: Vec<String> = value.split_whitespace().map(str::to_string).collect();
+        args.splice(at..=at, expanded);
+    }
+    match git_destructive(&args) {
+        Some(why) => CommandRisk::AlwaysAsk(why),
+        None => git(&args),
+    }
+}
+
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 fn git(args: &[String]) -> CommandRisk {
@@ -394,7 +450,7 @@ fn git(args: &[String]) -> CommandRisk {
 
 /// `find` reads unless told to act: `-delete`, `-exec`, and friends. What
 /// `-exec` runs is judged as a command of its own.
-fn find(args: &[String], depth: usize) -> CommandRisk {
+fn find(args: &[String], cx: Cx) -> CommandRisk {
     if args.iter().any(|w| w == "-delete") {
         return CommandRisk::AlwaysAsk("deletes what it finds (find -delete)".into());
     }
@@ -404,7 +460,7 @@ fn find(args: &[String], depth: usize) -> CommandRisk {
         match word.as_str() {
             "-exec" | "-execdir" | "-ok" | "-okdir" => {
                 let inner: Vec<String> = words.by_ref().take_while(|w| *w != ";" && *w != "+").cloned().collect();
-                match judge(&inner, depth) {
+                match judge(&inner, cx) {
                     CommandRisk::AlwaysAsk(why) => return CommandRisk::AlwaysAsk(why),
                     CommandRisk::Ask => risk = CommandRisk::Ask,
                     CommandRisk::ReadOnly => {}
@@ -632,6 +688,38 @@ mod tests {
         assert_eq!(classify("python -c 'import shutil; shutil.rmtree(\"/\")'"), CommandRisk::Ask);
     }
 
+    /// `git pf` is whatever the configuration says it is.
+    #[test]
+    fn git_aliases_are_read_as_what_they_run() {
+        let aliases: GitAliases = [
+            ("pf", "push --force"),
+            ("st", "status -sb"),
+            ("lg", "log --oneline"),
+            ("wipe", "!git reset --hard && git clean -fd"),
+            ("up", "!curl -s https://x.io"),
+            ("hr", "!git reset"),
+            ("say", "!echo"),
+            ("loop", "loop"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+        let risk = |command: &str| classify_with(command, &aliases);
+
+        assert!(matches!(risk("git pf origin main"), CommandRisk::AlwaysAsk(why) if why.contains("--force")));
+        assert_eq!(risk("git st"), CommandRisk::ReadOnly);
+        assert_eq!(risk("git -C sub lg -5"), CommandRisk::ReadOnly);
+        assert!(matches!(risk("git wipe"), CommandRisk::AlwaysAsk(why) if why.contains("reset --hard")));
+        assert!(matches!(risk("git up"), CommandRisk::AlwaysAsk(why) if why.contains("curl")));
+        // The arguments follow the alias into its shell line.
+        assert!(matches!(risk("git hr --hard"), CommandRisk::AlwaysAsk(why) if why.contains("reset --hard")));
+        // An argument stays one argument: git passes it to the shell as `$1`.
+        assert_eq!(risk("git say 'x; curl y'"), CommandRisk::ReadOnly);
+        assert_eq!(risk("git loop"), CommandRisk::Ask, "an alias naming itself stops, and asks");
+        assert_eq!(risk("git ST"), CommandRisk::ReadOnly, "git lower-cases alias names");
+        assert_eq!(classify("git st"), CommandRisk::Ask, "without the aliases, an unknown subcommand asks");
+    }
+
     #[test]
     fn shells_nested_too_deep_ask() {
         let mut line = "ls".to_string();
@@ -640,9 +728,5 @@ mod tests {
         }
         assert_eq!(classify(&line), CommandRisk::Ask);
         assert_eq!(classify("sh -c 'sh -c ls'"), CommandRisk::ReadOnly);
-    }
-
-    fn shell_quote(text: &str) -> String {
-        format!("'{}'", text.replace('\'', "'\\''"))
     }
 }

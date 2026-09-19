@@ -85,6 +85,10 @@ pub struct PendingToolCall {
     pub name: String,
     pub arguments: String,
     pub requires_confirmation: bool,
+    /// Why it asks even though its tool is always allowed — `rewrites a
+    /// remote (git push --force)`. Absent for an ordinary card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// One answer to one pending call.
@@ -325,6 +329,7 @@ mod tests {
             name: "writeFile".into(),
             arguments: "{}".into(),
             requires_confirmation,
+            reason: None,
         }
     }
 

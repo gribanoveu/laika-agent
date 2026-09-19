@@ -7,6 +7,7 @@ import {
   ListTodo,
   Pencil,
   Search,
+  ShieldAlert,
   Terminal,
   TerminalSquare,
   Trash2,
@@ -112,6 +113,12 @@ function ApprovalCard({
           <div className={`approval-cmd${call.requiresConfirmation ? "" : " passive"}`}>
             {describeTool({ ...emptyTool, ...call }).arg}
           </div>
+          {call.requiresConfirmation && call.reason && (
+            <div className="approval-why" title="Asked even when this tool is always allowed">
+              <ShieldAlert size={13} aria-hidden />
+              <span>Always asks: {call.reason}</span>
+            </div>
+          )}
           <Preview preview={previews[index]} />
         </div>
       ))}
