@@ -40,7 +40,16 @@ pub enum ToolName {
     SemanticSearch,
     Skill,
     WritePlan,
+    /// Every tool of every connected MCP server. One variant for all of them:
+    /// their names are the servers' and arrive at run time, so the identity
+    /// that matters beyond this — for "always allow", for the weight — is
+    /// the call's full name, `mcp__<server>__<tool>`.
+    #[serde(rename = "mcp__")]
+    Mcp,
 }
+
+/// What every MCP tool's name starts with.
+pub const MCP_PREFIX: &str = "mcp__";
 
 impl ToolName {
     /// Every variant. Kept by hand, and guarded by `all_is_complete` below —
@@ -63,6 +72,7 @@ impl ToolName {
         ToolName::SemanticSearch,
         ToolName::Skill,
         ToolName::WritePlan,
+        ToolName::Mcp,
     ];
 
     /// The name the model calls this tool by. Must match what `Serialize`
@@ -86,12 +96,17 @@ impl ToolName {
             ToolName::SemanticSearch => "semanticSearch",
             ToolName::Skill => "skill",
             ToolName::WritePlan => "writePlan",
+            // The prefix, not a name: no tool is called just this.
+            ToolName::Mcp => MCP_PREFIX,
         }
     }
 
     /// Classifies a call before its arguments are known to parse — the loop
     /// has to decide "risky or not" on a call whose JSON may still be broken.
     pub fn from_wire_name(name: &str) -> Option<ToolName> {
+        if name.starts_with(MCP_PREFIX) {
+            return Some(ToolName::Mcp);
+        }
         ToolName::ALL.iter().copied().find(|t| t.wire_name() == name)
     }
 
@@ -117,6 +132,11 @@ impl ToolName {
                 // question about the command line, and it is asked in
                 // `services::ai_tools::command_risk`, not here.
                 | ToolName::RunCommand
+                // Nothing is known about what a foreign tool does, and its
+                // server's own hints are untrusted by the specification: it
+                // asks, and it stays out of the modes that promise nothing
+                // changes.
+                | ToolName::Mcp
         )
     }
 
@@ -155,6 +175,9 @@ impl ToolName {
             // a download. Weighted so a turn cannot spend itself entirely on
             // re-running things.
             ToolName::RunCommand => 5,
+            // The default; a server's own `weight` replaces it per call —
+            // see `domain::mcp::McpTools::weight`.
+            ToolName::Mcp => crate::domain::mcp::DEFAULT_WEIGHT,
         }
     }
 }
@@ -166,7 +189,11 @@ impl ToolName {
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalPolicy {
     /// Tools the user answered "always allow" for. Per tool, not per call.
+    /// Never holds `ToolName::Mcp`: that would be every tool of every
+    /// server — see [`ApprovalPolicy::allow_always`].
     pub always_allowed: HashSet<ToolName>,
+    /// The same for MCP tools, by full name (`mcp__github__create_issue`).
+    pub always_allowed_mcp: HashSet<String>,
     /// Run the whole turn unattended. Deliberately not part of persisted
     /// settings: a saved "never ask me" is a brake released a month ago and
     /// forgotten. The turn that ran under it has to say so in its transcript —
@@ -183,6 +210,29 @@ impl ApprovalPolicy {
     pub fn requires_approval(&self, name: ToolName, risky: bool) -> bool {
         risky && !self.skip_all && !self.always_allowed.contains(&name)
     }
+
+    /// The gate for a parsed call — the one the loop asks. An MCP call is
+    /// looked up by its own name, so "always allow" for one tool of a server
+    /// leaves the rest of that server asking.
+    pub fn requires_approval_for(&self, call: &ToolCall) -> bool {
+        match call {
+            ToolCall::Mcp(args) => {
+                call.is_risky() && !self.skip_all && !self.always_allowed_mcp.contains(&args.name)
+            }
+            _ => self.requires_approval(call.name(), call.is_risky()),
+        }
+    }
+
+    /// "Always allow" from an approval card, by the name the call carried.
+    pub fn allow_always(&mut self, wire_name: &str) -> Result<(), String> {
+        if wire_name.starts_with(MCP_PREFIX) {
+            self.always_allowed_mcp.insert(wire_name.to_string());
+            return Ok(());
+        }
+        let name = ToolName::from_wire_name(wire_name).ok_or_else(|| format!("unknown tool: {wire_name}"))?;
+        self.always_allowed.insert(name);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -196,7 +246,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            17,
+            18,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -266,8 +316,37 @@ mod tests {
                 // tool name says nothing about what the command line does.
                 ToolName::RunCommand,
                 ToolName::Move,
+                // Unknown, so assumed.
+                ToolName::Mcp,
             ])
         );
+    }
+
+    /// One tool of a server allowed; its neighbour on the same server, and
+    /// every built-in tool, still ask.
+    #[test]
+    fn always_allowing_an_mcp_tool_covers_that_tool_alone() {
+        let mcp = |name: &str| ToolCall::Mcp(McpCallArgs { name: name.into(), arguments: serde_json::json!({}) });
+        let mut policy = ApprovalPolicy::default();
+        assert!(policy.requires_approval_for(&mcp("mcp__github__search")), "asks by default");
+
+        policy.allow_always("mcp__github__search").unwrap();
+        assert!(!policy.requires_approval_for(&mcp("mcp__github__search")));
+        assert!(policy.requires_approval_for(&mcp("mcp__github__delete_repo")));
+        assert!(policy.always_allowed.is_empty(), "not ToolName::Mcp, which would be every server");
+
+        policy.allow_always("writeFile").unwrap();
+        assert!(policy.always_allowed.contains(&ToolName::WriteFile));
+        assert!(policy.allow_always("nope").is_err());
+
+        policy.skip_all = true;
+        assert!(!policy.requires_approval_for(&mcp("mcp__github__delete_repo")));
+    }
+
+    #[test]
+    fn every_mcp_name_is_the_mcp_tool() {
+        assert_eq!(ToolName::from_wire_name("mcp__github__search"), Some(ToolName::Mcp));
+        assert_eq!(ToolName::from_wire_name("mcpish"), None);
     }
 
     #[test]
@@ -452,7 +531,7 @@ pub enum ToolPreview {
 /// somewhere to send output as it arrives, and threading those through the one
 /// dispatcher keeps the tool boundary where it is.
 #[derive(Clone, Default)]
-pub struct ToolDeps {
+pub struct ToolDeps<'a> {
     pub shell: crate::domain::command_exec::Shell,
     /// Where a running command's output goes as it is produced. `None`
     /// collects it and reports it only at the end, which is what a test wants
@@ -462,6 +541,11 @@ pub struct ToolDeps {
     pub search: Option<CodeSearchFn>,
     /// The skills this turn's prompt listed — the only ones `skill` loads.
     pub skills: Vec<crate::domain::skills::SkillMeta>,
+    /// The connected servers' tools this turn offers.
+    pub mcp: crate::domain::mcp::McpTools,
+    /// The turn's stop button, for a tool that waits on someone else — an
+    /// MCP call. `None` never stops.
+    pub cancelled: Option<&'a dyn Fn() -> bool>,
 }
 
 /// Why a tool call could not be carried out.
@@ -512,6 +596,14 @@ pub enum ToolError {
     /// A wire name matching no known tool.
     #[error("unknown tool: {0}")]
     UnknownTool(String),
+    /// The server could not be asked: gone, not answering, stopped. Worded
+    /// for the model, which should not keep calling it.
+    #[error("the MCP server is not available: {0}. Do not call its tools again in this turn unless the user asks.")]
+    McpUnavailable(String),
+    /// The tool ran and said it failed (`isError`). Its own text, for the
+    /// model to act on.
+    #[error("the tool reported an error: {0}")]
+    McpToolFailed(String),
     /// Arguments that did not deserialize into the struct their tool expects.
     ///
     /// `reason` is JSON-path-annotated (`edits[1]: missing field \`old\``)
@@ -607,6 +699,7 @@ pub enum ToolCall {
     SemanticSearch(SemanticSearchArgs),
     Skill(SkillArgs),
     WritePlan(WritePlanArgs),
+    Mcp(McpCallArgs),
 }
 
 impl ToolCall {
@@ -629,6 +722,7 @@ impl ToolCall {
             ToolCall::RunCommand(_) => ToolName::RunCommand,
             ToolCall::Skill(_) => ToolName::Skill,
             ToolCall::WritePlan(_) => ToolName::WritePlan,
+            ToolCall::Mcp(_) => ToolName::Mcp,
         }
     }
 
@@ -758,6 +852,18 @@ pub enum ToolResult {
     /// The plan was replaced. The text is in the call's own arguments.
     #[serde(rename_all = "camelCase")]
     PlanWritten { lines: u32 },
+    /// An MCP tool's answer, already text.
+    Mcp { text: String },
+}
+
+/// A call to an MCP tool: the full name the model used, and whatever it
+/// passed. The arguments are the server's to check — only their being an
+/// object is checked here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallArgs {
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// `writePlan` arguments: the whole plan.

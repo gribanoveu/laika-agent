@@ -13,11 +13,20 @@ use serde::de::DeserializeOwned;
 
 use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::llm::LlmToolCall;
-use crate::domain::tools::{ReadFiles, ToolCall, ToolError, ToolScope, WriteBlocked};
+use crate::domain::tools::{McpCallArgs, ReadFiles, ToolCall, ToolError, ToolScope, WriteBlocked, MCP_PREFIX};
 
 use super::resolve::resolve_writable;
 
 pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
+    // A connected server's tool. Its arguments are the server's to check
+    // against its own schema; here only that they are an object.
+    if call.name.starts_with(MCP_PREFIX) {
+        let arguments: serde_json::Value = args(call)?;
+        if !arguments.is_object() {
+            return Err(ToolError::InvalidArguments { tool: call.name.clone(), reason: "arguments must be a JSON object".into() });
+        }
+        return Ok(ToolCall::Mcp(McpCallArgs { name: call.name.clone(), arguments }));
+    }
     Ok(match call.name.as_str() {
         "readFile" => ToolCall::ReadFile(args(call)?),
         "grep" => ToolCall::Grep(args(call)?),
@@ -202,6 +211,26 @@ mod tests {
             let parsed = parse_tool_call(&call(name, arguments))
                 .unwrap_or_else(|e| panic!("{name} failed to parse: {e}"));
             assert_eq!(parsed.name().wire_name(), name);
+        }
+    }
+
+    /// An MCP call keeps its full name and its arguments as sent; they only
+    /// have to be an object — a server's tool takes named parameters.
+    #[test]
+    fn an_mcp_call_parses_to_its_name_and_an_object() {
+        assert_eq!(
+            parse_tool_call(&call("mcp__gh__search", r#"{"q": "x"}"#)).unwrap(),
+            ToolCall::Mcp(McpCallArgs { name: "mcp__gh__search".into(), arguments: serde_json::json!({"q": "x"}) })
+        );
+        assert_eq!(
+            parse_tool_call(&call("mcp__gh__list", "")).unwrap(),
+            ToolCall::Mcp(McpCallArgs { name: "mcp__gh__list".into(), arguments: serde_json::json!({}) })
+        );
+        for not_an_object in ["[1]", "\"q\"", "3"] {
+            assert!(
+                matches!(parse_tool_call(&call("mcp__gh__search", not_an_object)), Err(ToolError::InvalidArguments { .. })),
+                "{not_an_object}"
+            );
         }
     }
 

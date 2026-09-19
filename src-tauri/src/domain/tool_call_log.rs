@@ -141,7 +141,31 @@ fn redact_in_place(value: &mut Value) {
 }
 
 pub fn redact_args(call: &ToolCall) -> Value {
+    // A foreign tool's fields have names nobody here chose — `query`,
+    // `body`, `sql` — so redacting by field name would let them through.
+    // What is kept is their shape: which fields, and how big.
+    if let ToolCall::Mcp(args) = call {
+        return serde_json::json!({ "tool": "mcp", "args": { "name": args.name, "arguments": shape(&args.arguments) } });
+    }
     redact(serde_json::to_value(call).unwrap_or(Value::Null))
+}
+
+/// Each top-level field of an MCP call's arguments, described instead of kept.
+fn shape(arguments: &Value) -> Value {
+    let describe = |value: &Value| -> Value {
+        Value::String(match value {
+            Value::String(s) => format!("<string, {} chars>", s.chars().count()),
+            Value::Array(items) => format!("<array, {} items>", items.len()),
+            Value::Object(map) => format!("<object, {} keys>", map.len()),
+            Value::Number(_) => "<number>".into(),
+            Value::Bool(_) => "<bool>".into(),
+            Value::Null => "<null>".into(),
+        })
+    };
+    match arguments {
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), describe(v))).collect()),
+        other => describe(other),
+    }
 }
 
 pub fn redact_result(result: &ToolResult) -> Value {
@@ -156,6 +180,10 @@ pub fn redact_error(error: &ToolError) -> String {
     match error {
         ToolError::EditTextNotFound(_) => "edit text not found".to_string(),
         ToolError::EditTextAmbiguous(_, count) => format!("edit text is not unique — matched {count} times"),
+        // The tool's own words, which can be anything it read.
+        ToolError::McpToolFailed(_) => "the MCP tool reported an error".to_string(),
+        // Carries the server's last stderr lines.
+        ToolError::McpUnavailable(_) => "the MCP server was not available".to_string(),
         ToolError::InvalidArguments { tool, reason } => {
             let before_quote = reason.split('"').next().unwrap_or_default().trim_end();
             format!("invalid arguments for {tool}: {before_quote}")
@@ -252,6 +280,13 @@ mod tests {
                 Some(ToolCall::Skill(SkillArgs { name: "release".into(), path: None })),
                 ToolResult::Skill { name: "release".into(), instructions: LEAK.into(), files: vec![] },
             ),
+            ToolName::Mcp => (
+                Some(ToolCall::Mcp(McpCallArgs {
+                    name: "mcp__db__query".into(),
+                    arguments: serde_json::json!({ "sql": LEAK, "params": [LEAK], "opts": { "k": LEAK } }),
+                })),
+                ToolResult::Mcp { text: LEAK.into() },
+            ),
         }
     }
 
@@ -269,6 +304,23 @@ mod tests {
         // A skill's companion file shares the tool with a different shape.
         let file = ToolResult::SkillFile { name: "release".into(), path: "a.md".into(), content: LEAK.into() };
         assert!(!redact_result(&file).to_string().contains(LEAK));
+    }
+
+    /// What an MCP call's log line keeps: which tool, which fields, how big.
+    #[test]
+    fn an_mcp_call_is_logged_as_its_shape() {
+        let (call, _) = sample(ToolName::Mcp);
+        assert_eq!(
+            redact_args(&call.unwrap()),
+            serde_json::json!({ "tool": "mcp", "args": { "name": "mcp__db__query", "arguments": {
+                "sql": "<string, 11 chars>", "params": "<array, 1 items>", "opts": "<object, 1 keys>"
+            } } })
+        );
+        let odd = ToolCall::Mcp(McpCallArgs { name: "mcp__a__b".into(), arguments: serde_json::json!([1, true, null, 2.5]) });
+        assert_eq!(redact_args(&odd)["args"]["arguments"], "<array, 4 items>");
+        for error in [ToolError::McpToolFailed(LEAK.into()), ToolError::McpUnavailable(LEAK.into())] {
+            assert!(!redact_error(&error).contains(LEAK), "{error}");
+        }
     }
 
     /// What the log is for survives: where, how much, and how it ended.

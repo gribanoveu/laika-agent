@@ -74,7 +74,7 @@ mod tests {
     use crate::testing::with_app_dir;
 
     /// Deps whose catalog lists `names`, as the turn's prompt would.
-    fn listing(names: &[&str]) -> ToolDeps {
+    fn listing(names: &[&str]) -> ToolDeps<'static> {
         ToolDeps {
             skills: names.iter().map(|n| SkillMeta { name: n.to_string(), description: "d".into() }).collect(),
             ..ToolDeps::default()

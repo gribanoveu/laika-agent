@@ -217,6 +217,20 @@ describe("what each call shows", () => {
   });
 });
 
+describe("a connected server's tool", () => {
+  test("is named by its server and tool, and shows the text it answered", () => {
+    const shown = describeTool(
+      tool({ name: "mcp__tracker__find_issues", arguments: '{"query":"crash"}', result: { result: "mcp", text: "2 issues" } }),
+    );
+    expect(shown).toMatchObject({ name: "tracker · find_issues", arg: '{"query":"crash"}', detail: "2 issues" });
+  });
+
+  test("a failure says so under the same name", () => {
+    const shown = describeTool(tool({ name: "mcp__tracker__find", error: "the tool reported an error: no access" }));
+    expect(shown).toMatchObject({ name: "tracker · find", meta: "failed" });
+  });
+});
+
 describe("arguments that are not finished yet", () => {
   /// The normal case while the model is still writing the call: the row has to
   /// draw something rather than throw.

@@ -25,7 +25,7 @@ use crate::domain::command_exec::Shell;
 use crate::domain::compaction::ContextUsage;
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
-use crate::domain::tools::{ApprovalPolicy, CodeSearchFn, Task, ToolName, ToolPreview, ToolScope};
+use crate::domain::tools::{ApprovalPolicy, CodeSearchFn, Task, ToolPreview, ToolScope};
 use crate::domain::turn::{
     ChatStreamOutcome, PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision,
 };
@@ -304,14 +304,11 @@ pub fn chat_cancel_steer(id: String, state: State<'_, Arc<AgentState>>) -> bool 
 /// runs and no longer.
 #[tauri::command]
 pub fn approval_always_allow(tool: String, state: State<'_, Arc<AgentState>>) -> Result<(), String> {
-    let name = ToolName::from_wire_name(&tool).ok_or_else(|| format!("unknown tool: {tool}"))?;
     state
         .approval
         .lock()
         .map_err(|_| "approval lock poisoned".to_string())?
-        .always_allowed
-        .insert(name);
-    Ok(())
+        .allow_always(&tool)
 }
 
 /// What the conversation is for: everything, planning only, or answering
@@ -384,6 +381,9 @@ where
         let rules = crate::services::project_rules::load(&workspace);
         let record = crate::infra::tool_call_log::recorder();
         let log_call = |entry: crate::domain::tool_call_log::ToolCallLogEntry| record(&entry);
+        // No server is started yet — that is F-7.4d. Until then the turn has
+        // the whole path and nothing on it.
+        let mcp = crate::domain::mcp::McpTools::default();
 
         let turn = Turn {
             events: &events,
@@ -400,6 +400,7 @@ where
             rules: &rules,
             log_call: &log_call,
             plan: plan.as_deref(),
+            mcp: &mcp,
         };
         run(&turn).map_err(|e| e.to_string())
     })
@@ -410,6 +411,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::tools::ToolName;
     use crate::testing::temp_dir;
 
     /// The state is reachable without a running app, which is what keeps these

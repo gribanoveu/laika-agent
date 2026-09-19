@@ -42,8 +42,20 @@ export const LABELS: Record<string, string> = {
   writePlan: "Plan",
 };
 
+/** `mcp__<server>__<tool>` as `server · tool`; `null` for any other name. */
+export function mcpParts(wireName: string): { server: string; tool: string } | null {
+  if (!wireName.startsWith("mcp__")) return null;
+  const rest = wireName.slice("mcp__".length);
+  const cut = rest.indexOf("__");
+  return cut < 0 ? { server: rest, tool: "" } : { server: rest.slice(0, cut), tool: rest.slice(cut + 2) };
+}
+
 /** A tool this build does not know is shown by its wire name rather than hidden. */
-export const toolLabel = (wireName: string) => LABELS[wireName] ?? wireName;
+export const toolLabel = (wireName: string) => {
+  const mcp = mcpParts(wireName);
+  if (mcp) return `${mcp.server} · ${mcp.tool}`;
+  return LABELS[wireName] ?? wireName;
+};
 
 type Json = Record<string, unknown>;
 
@@ -68,6 +80,13 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
 
   if (block.error) {
     return { name, arg: primaryArgument(block.name, args), meta: "failed", detail: block.error };
+  }
+
+  // A connected server's tool. Its arguments are shown whole: nothing here
+  // knows which of a foreign tool's fields matters, and the approval card
+  // shows this line — agreeing to a call must not mean agreeing blind.
+  if (mcpParts(block.name)) {
+    return { name, arg: Object.keys(args).length ? JSON.stringify(args) : "", detail: str(result.text) ?? "" };
   }
 
   switch (block.name) {

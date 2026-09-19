@@ -89,6 +89,8 @@ pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
                 ToolName::Todo,
                 ToolName::RunCommand,
                 ToolName::WritePlan,
+                // Agent only: nothing says a foreign tool changes nothing.
+                ToolName::Mcp,
             ]);
         }
         // `writePlan` is chat state, not the working tree: writing the plan

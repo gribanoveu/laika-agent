@@ -10,10 +10,13 @@
 //! `docs/06-port-plan.md`, stage 7, "Решения по MCP".
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
+
+use crate::domain::llm::LlmToolDefinition;
 
 /// Loop weight of one call when the server does not say: as much as a
 /// `grep`. Nothing is known about what a foreign tool costs, and the
@@ -220,6 +223,102 @@ pub trait McpClient: Send + Sync {
     ) -> Result<McpCallResult, McpError>;
 }
 
+// ------------------------------------------------------ the turn's view
+
+/// A server that answered: what it is called, what a call to it costs, and
+/// what it offers.
+pub struct ConnectedServer {
+    pub name: String,
+    pub weight: u32,
+    pub client: Arc<dyn McpClient>,
+    pub tools: Vec<McpTool>,
+}
+
+/// One tool as the turn sees it: the name the model calls it by, and where
+/// the call goes.
+pub struct McpToolEntry {
+    pub wire_name: String,
+    pub server: String,
+    pub tool: McpTool,
+    pub weight: u32,
+    pub client: Arc<dyn McpClient>,
+}
+
+/// Every connected server's tools, named for the model. Cheap to clone —
+/// every call's `ToolDeps` carries one.
+#[derive(Clone, Default)]
+pub struct McpTools(Arc<Vec<McpToolEntry>>);
+
+/// What providers accept as a tool name, OpenAI's and Anthropic's alike.
+pub const MAX_TOOL_NAME_CHARS: usize = 64;
+
+impl McpTools {
+    /// Names every tool `mcp__<server key>__<tool>`. A name past the length
+    /// limit is cut and given a hash of the whole, so two long names that
+    /// share a beginning stay two names. A tool whose name collides with one
+    /// already taken — two spellings a server offers that sanitize alike —
+    /// is left out rather than made to shadow the first.
+    pub fn new(servers: Vec<ConnectedServer>) -> Self {
+        let mut taken = std::collections::HashSet::new();
+        let mut entries = Vec::new();
+        for server in servers {
+            let key = server_key(&server.name);
+            for tool in server.tools {
+                let wire_name = tool_wire_name(&key, &tool.name);
+                if !taken.insert(wire_name.clone()) {
+                    continue;
+                }
+                entries.push(McpToolEntry {
+                    wire_name,
+                    server: server.name.clone(),
+                    tool,
+                    weight: server.weight,
+                    client: Arc::clone(&server.client),
+                });
+            }
+        }
+        Self(Arc::new(entries))
+    }
+
+    pub fn get(&self, wire_name: &str) -> Option<&McpToolEntry> {
+        self.0.iter().find(|entry| entry.wire_name == wire_name)
+    }
+
+    /// What one call costs: the server's weight, or the default for a name
+    /// no server has — a guess still moves the budget.
+    pub fn weight(&self, wire_name: &str) -> u32 {
+        self.get(wire_name).map_or(DEFAULT_WEIGHT, |entry| entry.weight)
+    }
+
+    /// The schemas the model is shown. The description says which server a
+    /// tool belongs to: the model otherwise has no way to tell `search` on
+    /// one from `search` on another, or either from a built-in tool.
+    pub fn definitions(&self) -> Vec<LlmToolDefinition> {
+        self.0
+            .iter()
+            .map(|entry| LlmToolDefinition {
+                name: entry.wire_name.clone(),
+                description: format!("[MCP server \"{}\"] {}", entry.server, entry.tool.description),
+                parameters: entry.tool.input_schema.clone(),
+            })
+            .collect()
+    }
+}
+
+fn tool_wire_name(server_key: &str, tool: &str) -> String {
+    let tool: String =
+        tool.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+    let full = format!("{}{server_key}__{tool}", crate::domain::tools::MCP_PREFIX);
+    if full.len() <= MAX_TOOL_NAME_CHARS {
+        return full;
+    }
+    // FNV-1a: stable across builds, which `DefaultHasher` does not promise,
+    // and a name must not change under a saved "always allow".
+    let hash = full.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    let suffix = format!("_{:08x}", hash as u32);
+    format!("{}{suffix}", &full[..MAX_TOOL_NAME_CHARS - suffix.len()])
+}
+
 /// A `tools/call` result's `content` as one text for the model.
 ///
 /// Text as it is. What cannot be text here — an image, audio, a binary
@@ -330,6 +429,59 @@ mod tests {
         for row in &rows[1..] {
             assert!(row.error.as_deref().unwrap().contains("\"My Server\""), "{:?}", row.error);
         }
+    }
+
+    struct Nothing;
+    impl McpClient for Nothing {
+        fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
+            Ok(vec![])
+        }
+        fn call_tool(&self, _: &str, _: Value, _: &dyn Fn() -> bool) -> Result<McpCallResult, McpError> {
+            Err(McpError::Cancelled)
+        }
+    }
+
+    fn server(name: &str, weight: u32, tools: &[&str]) -> ConnectedServer {
+        ConnectedServer {
+            name: name.into(),
+            weight,
+            client: Arc::new(Nothing),
+            tools: tools
+                .iter()
+                .map(|t| McpTool { name: t.to_string(), description: format!("does {t}"), input_schema: serde_json::json!({"type":"object"}) })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn tools_are_named_for_their_server_and_described_as_its() {
+        let tools = McpTools::new(vec![server("GitHub", 5, &["search_issues", "get.file"]), server("db", 3, &["search_issues"])]);
+        let definitions = tools.definitions();
+        let names: Vec<&str> = definitions.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["mcp__github__search_issues", "mcp__github__get_file", "mcp__db__search_issues"]);
+        assert_eq!(definitions[0].description, "[MCP server \"GitHub\"] does search_issues");
+        assert_eq!(tools.get("mcp__github__get_file").unwrap().tool.name, "get.file", "the server is called by its own name");
+        assert_eq!((tools.weight("mcp__github__search_issues"), tools.weight("mcp__db__search_issues")), (5, 3));
+        assert_eq!(tools.weight("mcp__gone__x"), DEFAULT_WEIGHT);
+    }
+
+    /// Two of a server's names that sanitize alike: the first keeps it.
+    #[test]
+    fn a_name_already_taken_is_not_offered_twice() {
+        let tools = McpTools::new(vec![server("s", 3, &["a.b", "a_b"])]);
+        assert_eq!(tools.definitions().len(), 1);
+        assert_eq!(tools.get("mcp__s__a_b").unwrap().tool.name, "a.b");
+    }
+
+    /// Past 64 characters: cut, and told apart by a hash of the whole.
+    #[test]
+    fn a_long_name_is_cut_to_the_limit_and_stays_distinct() {
+        let long = "x".repeat(80);
+        let tools = McpTools::new(vec![server("s", 3, &[&format!("{long}_one"), &format!("{long}_two")])]);
+        let names: Vec<String> = tools.definitions().into_iter().map(|d| d.name).collect();
+        assert!(names.iter().all(|n| n.len() == MAX_TOOL_NAME_CHARS && n.starts_with("mcp__s__xxx")), "{names:?}");
+        assert_ne!(names[0], names[1]);
+        assert_eq!(tool_wire_name("s", &format!("{long}_one")), names[0], "stable");
     }
 
     #[test]

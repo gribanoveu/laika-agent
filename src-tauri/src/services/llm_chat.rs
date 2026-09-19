@@ -25,6 +25,7 @@ use crate::domain::prompt;
 use crate::domain::tool_call_log::{self, CallStatus, ToolCallLogEntry};
 use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::SkillMeta;
+use crate::domain::mcp::McpTools;
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, CodeSearchFn, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -69,14 +70,14 @@ const TRUNCATED_ROUND_NOTE: &str = "Note: the model's reply was cut off mid-way 
 ///
 /// A name that is not a tool costs `1` — the floor of the cheapest real tool —
 /// so a hallucinated tool name still moves the budget forward instead of
-/// letting the loop spin for free.
-pub fn round_cost(calls: &[LlmToolCall]) -> u32 {
+/// letting the loop spin for free. An MCP call costs its server's `weight`.
+pub fn round_cost(calls: &[LlmToolCall], mcp: &McpTools) -> u32 {
     calls
         .iter()
-        .map(|call| {
-            ToolName::from_wire_name(&call.name)
-                .map(ToolName::loop_weight)
-                .unwrap_or(1)
+        .map(|call| match ToolName::from_wire_name(&call.name) {
+            Some(ToolName::Mcp) => mcp.weight(&call.name),
+            Some(tool) => tool.loop_weight(),
+            None => 1,
         })
         .sum()
 }
@@ -186,6 +187,9 @@ pub struct Turn<'a> {
     /// Read at the start of the turn: a `writePlan` in this turn reaches the
     /// model through its own call in the history until the next one.
     pub plan: Option<&'a str>,
+    /// The connected MCP servers' tools. Read once per turn, like the
+    /// skills: the tools a model was shown must not change between rounds.
+    pub mcp: &'a McpTools,
 }
 
 
@@ -386,7 +390,7 @@ fn run(
         let (calls, decisions) = if let Some((calls, decisions)) = resume.take() {
             // Charged again on the resumed pass, exactly as `round` is counted
             // twice: otherwise pausing would be a way to buy budget.
-            state.budget_used += round_cost(&calls);
+            state.budget_used += round_cost(&calls, turn.mcp);
             (calls, decisions)
         } else {
             // Before the round is announced, so the notes and the boundary
@@ -476,7 +480,7 @@ fn run(
                 tool_calls: sanitize_tool_call_arguments(&result.tool_calls),
                 native_content: result.native_content.clone(),
             });
-            state.budget_used += round_cost(&result.tool_calls);
+            state.budget_used += round_cost(&result.tool_calls, turn.mcp);
 
             // Containment before approval: a write outside the workspace has
             // to fail as a tool error now, not show the user a card for an
@@ -565,6 +569,8 @@ fn run(
                             output: Some(command_output_sink(turn.events, round, &call.id)),
                             search: turn.search.clone(),
                             skills: turn.skills.to_vec(),
+                            mcp: turn.mcp.clone(),
+                            cancelled: Some(turn.cancelled),
                         };
                         execute_tool(
                             turn.scope,
@@ -605,6 +611,8 @@ fn run(
                 Ok(ToolResult::FileList { entries, truncated }) => {
                     render_file_tree(entries, *truncated)
                 }
+                // Already the text the server meant for a model.
+                Ok(ToolResult::Mcp { text }) => text.clone(),
                 Ok(result) => serde_json::to_string(result)
                     .unwrap_or_else(|_| "Error: the result could not be serialized".to_string()),
                 Err(message) => message.clone(),
@@ -690,7 +698,7 @@ fn ask_the_model(
     loop {
         let request = ChatRequest {
             messages: request_messages(turn, todos, history),
-            tools: tool_definitions_for(turn.mode),
+            tools: tool_definitions_for(turn.mode, turn.mcp),
             model: turn.session.model.clone(),
         };
         let error = match stream_one_round(turn, events, round, request) {
@@ -724,9 +732,10 @@ fn ask_the_model(
 /// of the gate the model can see; [`preflight_tool_call`] is the half it
 /// cannot, and both are needed — a model that used `writeFile` earlier in a
 /// conversation calls it again from memory when the mode narrows.
-fn tool_definitions_for(mode: ConversationMode) -> Vec<LlmToolDefinition> {
+fn tool_definitions_for(mode: ConversationMode, mcp: &McpTools) -> Vec<LlmToolDefinition> {
     tool_definitions()
         .into_iter()
+        .chain(mcp.definitions())
         .filter(|definition| {
             ToolName::from_wire_name(&definition.name)
                 .is_some_and(|tool| conversation_mode::offers(mode, tool))
@@ -866,7 +875,7 @@ fn wait(turn: &Turn, delay: Duration) -> bool {
 /// that is going to fail either way spends the user's attention on nothing.
 fn needs_approval(policy: &ApprovalPolicy, call: &LlmToolCall) -> bool {
     match parse_tool_call(call) {
-        Ok(parsed) => policy.requires_approval(parsed.name(), parsed.is_risky()),
+        Ok(parsed) => policy.requires_approval_for(&parsed),
         Err(_) => false,
     }
 }
@@ -960,7 +969,7 @@ mod tests {
     use crate::domain::tools::{ToolScope, ToolName};
     use crate::domain::turn::{ChatTurnEvent, STEERING_PREFIX};
     use crate::testing::temp_dir;
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::VecDeque;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
@@ -1120,6 +1129,7 @@ mod tests {
         rules: Vec<RuleFile>,
         logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
         plan: Option<String>,
+        mcp: McpTools,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1145,8 +1155,8 @@ mod tests {
             // Unattended by default: the approval gate has its own tests, and
             // every other test would otherwise pause on its first write.
             approval: ApprovalPolicy {
-                always_allowed: HashSet::new(),
                 skip_all: true,
+                ..ApprovalPolicy::default()
             },
             mode: ConversationMode::Agent,
             cancel_after: Arc::new(Mutex::new(None)),
@@ -1158,6 +1168,7 @@ mod tests {
             rules: Vec::new(),
             logged: Arc::new(Mutex::new(Vec::new())),
             plan: None,
+            mcp: McpTools::default(),
         }
     }
 
@@ -1202,6 +1213,7 @@ mod tests {
                 rules: &self.rules,
                 log_call: &log_call,
                 plan: self.plan.as_deref(),
+                mcp: &self.mcp,
             };
             f(&turn)
         }
@@ -1263,20 +1275,20 @@ mod tests {
 
     #[test]
     fn a_round_costs_the_weight_of_every_call_in_it() {
-        let cost = round_cost(&[call("readFile", "{}"), call("grep", "{}")]);
+        let cost = round_cost(&[call("readFile", "{}"), call("grep", "{}")], &McpTools::default());
         assert_eq!(cost, ToolName::ReadFile.loop_weight() + ToolName::Grep.loop_weight());
     }
 
     #[test]
     fn a_round_with_no_calls_is_free() {
-        assert_eq!(round_cost(&[]), 0);
+        assert_eq!(round_cost(&[], &McpTools::default()), 0);
     }
 
     /// Otherwise a model that keeps inventing tool names spins against a
     /// budget that never moves.
     #[test]
     fn an_invented_tool_name_still_costs_something() {
-        assert_eq!(round_cost(&[call("summonDragon", "{}")]), 1);
+        assert_eq!(round_cost(&[call("summonDragon", "{}")], &McpTools::default()), 1);
     }
 
     #[test]
@@ -1806,10 +1818,7 @@ mod tests {
     // ------------------------------------------------------------- approval
 
     fn asking() -> ApprovalPolicy {
-        ApprovalPolicy {
-            always_allowed: HashSet::new(),
-            skip_all: false,
-        }
+        ApprovalPolicy::default()
     }
 
     /// Nothing in the round runs — not even the calls that needed no decision.
@@ -2343,7 +2352,148 @@ mod tests {
 
         let requests = h.provider.requests();
         let offered: &[LlmToolDefinition] = &requests[0].tools;
-        assert_eq!(offered.len(), ToolName::ALL.len());
+        // Every built-in one; MCP tools come from servers, and none is connected.
+        assert_eq!(offered.len(), ToolName::ALL.len() - 1);
+    }
+
+    // ------------------------------------------------------------------ MCP
+
+    /// A server that answers every call with its name and arguments.
+    struct Echo;
+    impl crate::domain::mcp::McpClient for Echo {
+        fn list_tools(&self) -> Result<Vec<crate::domain::mcp::McpTool>, crate::domain::mcp::McpError> {
+            Ok(vec![])
+        }
+        fn call_tool(
+            &self,
+            name: &str,
+            arguments: serde_json::Value,
+            _: &dyn Fn() -> bool,
+        ) -> Result<crate::domain::mcp::McpCallResult, crate::domain::mcp::McpError> {
+            Ok(crate::domain::mcp::McpCallResult { text: format!("{name} got {arguments}"), is_error: false })
+        }
+    }
+
+    fn with_server(mut h: Harness, weight: u32) -> Harness {
+        h.mcp = McpTools::new(vec![crate::domain::mcp::ConnectedServer {
+            name: "tracker".into(),
+            weight,
+            client: Arc::new(Echo),
+            tools: vec![crate::domain::mcp::McpTool {
+                name: "find".into(),
+                description: "Finds issues.".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+        }]);
+        h
+    }
+
+    /// Offered in Agent beside the built-in tools; not in Plan, which
+    /// promises nothing changes, and a foreign tool promises nothing.
+    #[test]
+    fn a_servers_tools_are_offered_in_agent_mode_only() {
+        let agent = with_server(harness("mcp-offered", vec![text("hi")]), 3);
+        agent.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+        let offered = &agent.provider.requests()[0].tools;
+        let tracker = offered.iter().find(|t| t.name == "mcp__tracker__find").expect("offered");
+        assert_eq!(tracker.description, "[MCP server \"tracker\"] Finds issues.");
+
+        let mut plan = with_server(harness("mcp-plan", vec![asks(vec![wants("m1", "mcp__tracker__find", "{}")]), text("ok")]), 3);
+        plan.mode = ConversationMode::Plan;
+        plan.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+        let requests = plan.provider.requests();
+        assert!(requests[0].tools.iter().all(|t| !t.name.starts_with("mcp__")));
+        let refused = requests[1].messages.iter().find(|m| m.tool_call_id.as_deref() == Some("m1")).unwrap();
+        assert!(refused.content.as_deref().unwrap().contains("not available in this conversation mode"));
+    }
+
+    /// The same gate as a write: it asks, and the round is charged the
+    /// server's weight, not a built-in tool's.
+    #[test]
+    fn a_call_asks_first_and_costs_its_servers_weight() {
+        let mut h = with_server(harness("mcp-asks", vec![asks(vec![wants("m1", "mcp__tracker__find", r#"{"q":"crash"}"#)])]), 7);
+        h.approval = asking();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = outcome.expect("pauses") else {
+            panic!("expected a pause");
+        };
+        assert!(pending.calls[0].requires_confirmation);
+        assert_eq!(pending.budget_used, 7);
+    }
+
+    /// "Always allow" for one server tool holds in the loop, not only in the
+    /// policy's own tests: the loop has to ask the MCP-aware gate.
+    #[test]
+    fn a_tool_allowed_always_runs_without_asking() {
+        let mut h = with_server(harness("mcp-always", vec![asks(vec![wants("m1", "mcp__tracker__find", "{}")]), text("done")]), 3);
+        h.approval = asking();
+        h.approval.allow_always("mcp__tracker__find").unwrap();
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        assert!(matches!(outcome, Ok(ChatStreamOutcome::Done(_))), "it paused");
+    }
+
+    /// Stop reaches a call that is waiting on a server, not only the loop
+    /// around it: the server is told and the call ends as cancelled.
+    #[test]
+    fn stopping_the_turn_reaches_a_server_call_in_flight() {
+        struct WaitsForStop(Arc<Mutex<Option<usize>>>);
+        impl crate::domain::mcp::McpClient for WaitsForStop {
+            fn list_tools(&self) -> Result<Vec<crate::domain::mcp::McpTool>, crate::domain::mcp::McpError> {
+                Ok(vec![])
+            }
+            fn call_tool(
+                &self,
+                _: &str,
+                _: serde_json::Value,
+                cancelled: &dyn Fn() -> bool,
+            ) -> Result<crate::domain::mcp::McpCallResult, crate::domain::mcp::McpError> {
+                // The user presses Stop while this call is running.
+                *self.0.lock().unwrap() = Some(0);
+                for _ in 0..200 {
+                    if cancelled() {
+                        return Err(crate::domain::mcp::McpError::Cancelled);
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Ok(crate::domain::mcp::McpCallResult { text: "never stopped".into(), is_error: false })
+            }
+        }
+        let mut h = harness("mcp-stop", vec![asks(vec![wants("m1", "mcp__slow__wait", "{}")])]);
+        h.mcp = McpTools::new(vec![crate::domain::mcp::ConnectedServer {
+            name: "slow".into(),
+            weight: 3,
+            client: Arc::new(WaitsForStop(h.cancel_after.clone())),
+            tools: vec![crate::domain::mcp::McpTool { name: "wait".into(), description: String::new(), input_schema: serde_json::json!({}) }],
+        }]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        assert!(matches!(outcome, Ok(ChatStreamOutcome::Cancelled(_))));
+        let logged = h.logged.lock().unwrap();
+        assert_eq!(logged[0].status, CallStatus::Error, "the call ran to its end instead: {:?}", logged[0]);
+    }
+
+    /// Run: the server's text reaches the model as it is, and the log line
+    /// keeps the tool and the shape of what was sent — not the values.
+    #[test]
+    fn a_call_runs_through_the_log_and_its_text_reaches_the_model() {
+        let h = with_server(
+            harness("mcp-runs", vec![asks(vec![wants("m1", "mcp__tracker__find", r#"{"q":"secret words"}"#)]), text("done")]),
+            3,
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        let second = &h.provider.requests()[1];
+        let result = second.messages.iter().find(|m| m.tool_call_id.as_deref() == Some("m1")).unwrap();
+        assert_eq!(result.content.as_deref(), Some(r#"find got {"q":"secret words"}"#));
+
+        let logged = h.logged.lock().unwrap();
+        assert_eq!(logged[0].tool, "mcp__tracker__find");
+        assert_eq!(logged[0].status, CallStatus::Ok);
+        let line = serde_json::to_string(&*logged).unwrap();
+        assert!(!line.contains("secret words"), "{line}");
+        assert!(line.contains("<string, 12 chars>"), "{line}");
     }
 
     // ------------------------------------------------------------- steering

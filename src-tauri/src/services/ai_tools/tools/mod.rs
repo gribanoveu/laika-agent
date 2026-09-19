@@ -36,6 +36,7 @@ pub mod run_command;
 pub mod semantic_search;
 pub mod skill;
 pub mod write_plan;
+pub mod mcp;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -102,6 +103,7 @@ pub fn execute_tool(
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
         ToolCall::Skill(args) => skill::skill(args, deps),
         ToolCall::WritePlan(args) => write_plan::write_plan(args),
+        ToolCall::Mcp(args) => mcp::mcp(args, deps),
     }
 }
 
@@ -117,6 +119,12 @@ mod definition_tests {
     };
     use crate::services::ai_tools::parse::parse_tool_call;
     use std::collections::BTreeSet;
+
+    /// Every tool with a schema of its own. MCP tools are described by their
+    /// servers, at run time — see `domain::mcp::McpTools::definitions`.
+    fn built_in() -> impl Iterator<Item = ToolName> {
+        ToolName::ALL.iter().copied().filter(|t| *t != ToolName::Mcp)
+    }
 
     fn definition_of(tool: ToolName) -> LlmToolDefinition {
         let (_, build) = DEFINITIONS
@@ -282,6 +290,7 @@ mod definition_tests {
                     end_line: Some(9),
                 })],
             ),
+            ToolName::Mcp => unreachable!("an MCP tool's schema is its server's; see built_in()"),
         }
     }
 
@@ -290,14 +299,14 @@ mod definition_tests {
     #[test]
     fn every_tool_is_advertised_exactly_once() {
         let advertised: Vec<ToolName> = DEFINITIONS.iter().map(|(tool, _)| *tool).collect();
-        for &tool in ToolName::ALL {
+        for tool in built_in() {
             assert_eq!(
                 advertised.iter().filter(|&&t| t == tool).count(),
                 1,
                 "{tool:?} must appear in DEFINITIONS exactly once"
             );
         }
-        assert_eq!(advertised.len(), ToolName::ALL.len());
+        assert_eq!(advertised.len(), built_in().count());
     }
 
     /// The name in the schema is the name the model will send, and the
@@ -305,7 +314,7 @@ mod definition_tests {
     /// only ever answer "unknown tool".
     #[test]
     fn a_schema_is_named_by_its_wire_name() {
-        for &tool in ToolName::ALL {
+        for tool in built_in() {
             assert_eq!(definition_of(tool).name, tool.wire_name());
         }
         for definition in tool_definitions() {
@@ -323,7 +332,7 @@ mod definition_tests {
     /// promise the tool does not keep.
     #[test]
     fn the_schema_and_the_arguments_describe_the_same_fields() {
-        for &tool in ToolName::ALL {
+        for tool in built_in() {
             let (_, samples) = sample_calls(tool);
             assert_eq!(
                 properties(tool),
@@ -360,7 +369,7 @@ mod definition_tests {
     /// model that sends exactly what was asked for must not get a parse error.
     #[test]
     fn the_smallest_described_call_parses() {
-        for &tool in ToolName::ALL {
+        for tool in built_in() {
             let (minimal, _) = sample_calls(tool);
             let call = LlmToolCall {
                 id: "call_1".to_string(),
