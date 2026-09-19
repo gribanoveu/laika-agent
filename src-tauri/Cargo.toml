@@ -108,5 +108,11 @@ keyring = { version = "3", features = ["windows-native"] }
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"
 
+# One running copy: a second launch focuses the first and exits. Two copies
+# would share `~/.atlas-desktop` — chats, the index and the call log — and
+# write over each other.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2.4.3"
+
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
