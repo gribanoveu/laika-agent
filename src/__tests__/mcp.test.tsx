@@ -39,7 +39,10 @@ afterAll(() => {
 
 const { useMcp } = await import("../hooks/useMcp");
 const { AsidePanel } = await import("../components/AsidePanel");
-const { McpConfig } = await import("../components/McpConfig");
+const { ConfigFileEditor } = await import("../components/ConfigFileEditor");
+const McpConfig = (props: { view: McpView; error: string | null; onSave: (text: string) => Promise<boolean>; onClose: () => void }) => (
+  <ConfigFileEditor label="MCP configuration" text={props.view.text} note="" error={props.error} onSave={props.onSave} onClose={props.onClose} />
+);
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
 beforeEach(() => {

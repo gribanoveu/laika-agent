@@ -85,6 +85,21 @@ export function appendNotice(state: TurnState, text: string): TurnState {
   };
 }
 
+/** What a hook did, in the words of what it changed. */
+function hookNotice({ event, message, blocked }: { event: string; message: string; blocked: boolean }): string {
+  if (!blocked) return `${event} hook: ${message}`;
+  switch (event) {
+    case "PreToolUse":
+      return `A hook refused the call: ${message}`;
+    case "PostToolUse":
+      return `A hook, after the call: ${message}`;
+    case "Stop":
+      return `A Stop hook sent the agent back: ${message}`;
+    default:
+      return `${event} hook: ${message}`;
+  }
+}
+
 /** A conversation reopened from disk: its transcript, and nothing in flight. */
 export function restoredTurn(blocks: Block[]): TurnState {
   return { ...emptyTurn(), blocks, status: "done" };
@@ -196,6 +211,9 @@ function applyEvent(state: TurnState, event: TurnEvent): TurnState {
         `Older history compacted — ${folded} message${folded === 1 ? "" : "s"} folded into a summary`,
       );
     }
+
+    case "hookFeedback":
+      return appendNotice(state, hookNotice(event.payload));
 
     case "steeringApplied":
       return {

@@ -7,11 +7,12 @@ import {
   Sparkles,
   SquareTerminal,
   Table2,
+  Webhook,
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
 import { PlanPanel } from "./PlanPanel";
-import type { McpServerState, McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
+import type { HooksView, McpServerState, McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -19,6 +20,7 @@ const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
   { id: "changes", label: "Changes", icon: Table2 },
   { id: "plan", label: "Plan", icon: ClipboardList },
   { id: "mcp", label: "MCP", icon: Plug },
+  { id: "hooks", label: "Hooks", icon: Webhook },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "rules", label: "Rules", icon: BookText },
   { id: "files", label: "Files", icon: FolderClosed },
@@ -39,6 +41,10 @@ type Props = {
   onMcpToggle: (name: string, enabled: boolean) => void;
   /** Opens the configuration editor. */
   onMcpEdit: () => void;
+  hooks: HooksView | null;
+  hooksError: string | null;
+  /** Opens the hooks editor. */
+  onHooksEdit: () => void;
   skills: SkillsView | null;
   skillsError: string | null;
   onSkillToggle: (name: string, enabled: boolean) => void;
@@ -104,6 +110,22 @@ function mcpItems(view: McpView | null): PanelItem[] {
   );
 }
 
+const HOOK_BADGES: Record<string, string> = { PreToolUse: "PRE", PostToolUse: "PST", Stop: "STP" };
+
+/** One row per command. What the tool name must match is part of the title, since it decides when it runs at all. */
+function hookItems(view: HooksView | null): PanelItem[] {
+  return (view?.hooks ?? []).map((hook, i) => ({
+    id: `${i}`,
+    badge: HOOK_BADGES[hook.event] ?? "?",
+    kind: "hook",
+    title: hook.event === "Stop" ? "Stop" : `${hook.event} · ${hook.matcher.trim() || "every tool"}`,
+    desc: hook.command,
+    ...(hook.problem
+      ? { status: { label: "won't run", tone: "warn" as const }, meta: hook.problem }
+      : { meta: `Stopped after ${hook.timeoutSecs} s` }),
+  }));
+}
+
 /** What the process is doing, for a server that is switched on. */
 function mcpState(state: McpServerState): Partial<PanelItem> {
   switch (state.state) {
@@ -154,6 +176,9 @@ export function AsidePanel({
   mcpError,
   onMcpToggle,
   onMcpEdit,
+  hooks,
+  hooksError,
+  onHooksEdit,
   skills,
   skillsError,
   onSkillToggle,
@@ -168,6 +193,7 @@ export function AsidePanel({
 }: Props) {
   const ruleList = ruleItems(rules);
   const mcpList = mcpItems(mcp);
+  const hookList = hookItems(hooks);
   const skillList = skillItems(skills);
   return (
     <aside className="aside">
@@ -238,6 +264,19 @@ export function AsidePanel({
                 onToggle={onMcpToggle}
               />
               {mcpError && <div className="empty">{mcpError}</div>}
+            </>
+          )}
+          {tab === "hooks" && (
+            <>
+              <ItemList
+                label="Hooks"
+                count={`${hookList.filter((h) => !h.status).length}/${hookList.length}`}
+                items={hookList}
+                emptyLabel="No hooks. A hook runs a command before a tool call, after one, or when the agent finishes."
+                addLabel={hookList.length ? "Edit hooks" : "Add a hook"}
+                onAdd={onHooksEdit}
+              />
+              {hooksError && <div className="empty">{hooksError}</div>}
             </>
           )}
           {tab === "skills" && (

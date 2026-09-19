@@ -5,12 +5,12 @@
 
 export type ChangedFile = { name: string; add: number; del: number };
 
-export type AsideTab = "changes" | "plan" | "mcp" | "skills" | "rules" | "files" | "terminal";
+export type AsideTab = "changes" | "plan" | "mcp" | "hooks" | "skills" | "rules" | "files" | "terminal";
 
 export type PanelItem = {
   id: string;
   badge: string;
-  kind: "mcp" | "skill" | "rule";
+  kind: "mcp" | "hook" | "skill" | "rule";
   title: string;
   status?: { label: string; tone: "ok" | "warn" | "off" };
   desc: string;

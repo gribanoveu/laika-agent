@@ -1,9 +1,9 @@
-.mcp-config {
+.config-file {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.mcp-config-text {
+.config-file-text {
   min-height: 20em;
   resize: vertical;
   background: var(--bg-panel-soft);
@@ -15,10 +15,10 @@
   line-height: 1.5;
   padding: 8px 10px;
 }
-.mcp-config-error {
+.config-file-error {
   color: var(--red);
 }
-.mcp-config-actions {
+.config-file-actions {
   display: flex;
   gap: 6px;
 }

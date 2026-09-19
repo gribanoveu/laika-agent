@@ -13,3 +13,4 @@ pub mod workspace_events;
 pub mod skills;
 pub mod tool_log;
 pub mod mcp;
+pub mod hooks;

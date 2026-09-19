@@ -77,6 +77,7 @@ export type TurnEvent = { turnId: string; seq: number; round: number; targetId?:
   | { type: "retrying"; payload: { attempt: number; maxAttempts: number; delaySeconds: number } }
   | { type: "steeringApplied"; payload: { id: string; text: string } }
   | { type: "historyCompacted"; payload: { folded: number } }
+  | { type: "hookFeedback"; payload: { event: string; message: string; blocked: boolean } }
   | { type: "roundStarted" }
   | { type: "roundCompleted"; payload: { text: string; reasoning?: string } }
   | { type: "toolCallDelta"; payload: LlmToolCall }
@@ -478,6 +479,29 @@ export async function saveMcpConfig(text: string): Promise<McpView> {
 export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<McpView> {
   requireBackend();
   return invoke<McpView>("mcp_server_set_enabled", { name, enabled });
+}
+
+// ---------------------------------------------------------------- hooks
+
+/** Mirrors `domain::hooks::HookItem`. `problem` is why it will not run as written. */
+export type HookItem = {
+  event: string;
+  matcher: string;
+  command: string;
+  timeoutSecs: number;
+  problem: string | null;
+};
+export type HooksView = { path: string; text: string; hooks: HookItem[] };
+
+export async function hooksConfig(): Promise<HooksView> {
+  if (!inTauri()) return { path: "", text: "", hooks: [] };
+  return invoke<HooksView>("hooks_config_get");
+}
+
+/** Refused, and the file left alone, when the text is not a valid hooks config. */
+export async function saveHooksConfig(text: string): Promise<HooksView> {
+  requireBackend();
+  return invoke<HooksView>("hooks_config_save", { text });
 }
 
 // ---------------------------------------------------------------- project rules

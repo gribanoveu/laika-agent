@@ -127,6 +127,66 @@ fn matches(matcher: &str, tool: &str) -> bool {
     Regex::new(&format!("^(?:{matcher})$")).is_ok_and(|re| re.is_match(tool))
 }
 
+/// One hook as the tab lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookItem {
+    pub event: String,
+    pub matcher: String,
+    pub command: String,
+    pub timeout_secs: u32,
+    /// Why it will not run as written, when the file alone says so.
+    pub problem: Option<String>,
+}
+
+const EVENTS: [HookEvent; 3] = [HookEvent::PreToolUse, HookEvent::PostToolUse, HookEvent::Stop];
+
+/// Every hook in the file, in its order, each with what is wrong with it.
+pub fn items(config: &HooksConfig) -> Vec<HookItem> {
+    config
+        .hooks
+        .iter()
+        .flat_map(|(event, groups)| groups.iter().map(move |group| (event, group)))
+        .flat_map(|(event, group)| {
+            group.hooks.iter().map(move |hook| HookItem {
+                event: event.clone(),
+                matcher: group.matcher.clone(),
+                command: hook.command.clone(),
+                timeout_secs: hook.timeout_secs(),
+                problem: problem(event, &group.matcher, hook),
+            })
+        })
+        .collect()
+}
+
+fn problem(event: &str, matcher: &str, hook: &HookCommand) -> Option<String> {
+    let Some(event) = EVENTS.into_iter().find(|e| e.name() == event) else {
+        return Some(format!("{event} hooks do not run in this app — only PreToolUse, PostToolUse and Stop"));
+    };
+    if hook.kind != "command" {
+        return Some(format!("\"{}\" hooks do not run in this app — only \"command\"", hook.kind));
+    }
+    if hook.command.trim().is_empty() {
+        return Some("no command to run".into());
+    }
+    let matcher = matcher.trim();
+    if event == HookEvent::Stop || matcher.is_empty() || matcher == "*" {
+        return None;
+    }
+    if let Err(e) = Regex::new(&format!("^(?:{matcher})$")) {
+        return Some(format!("the matcher is not a valid regular expression: {e}"));
+    }
+    // A server's tools are not known here; a matcher that names them is
+    // taken at its word.
+    let names_a_tool = matcher.contains("mcp__")
+        || crate::domain::tools::ToolName::ALL.iter().any(|tool| matches(matcher, tool.wire_name()));
+    (!names_a_tool).then(|| {
+        "the matcher names none of this app's tools. They are called runCommand, editFile, writeFile, readFile… \
+         — not Bash, Edit, Write, Read as in Claude Code"
+            .to_string()
+    })
+}
+
 /// What one hook's run means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookOutcome {
@@ -340,6 +400,36 @@ mod tests {
         assert_eq!(seen[0].1, json!({"tool_name": "runCommand", "hook_event_name": "PreToolUse", "cwd": "/w"}));
 
         assert_eq!(Hooks::default().fire(HookEvent::Stop, None, json!({}), std::path::Path::new("/w")), HookVerdict::default());
+    }
+
+    #[test]
+    fn the_tab_lists_every_hook_and_says_which_will_not_run() {
+        let config = config(json!({"hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "claude-code-style"}]},
+                {"matcher": "runCommand|Bash", "hooks": [{"type": "command", "command": "both", "timeout": 5}]},
+                {"matcher": "mcp__github__.*", "hooks": [{"type": "command", "command": "server"}]},
+                {"matcher": "(", "hooks": [{"type": "command", "command": "typo"}]},
+                {"hooks": [{"type": "prompt", "prompt": "judge"}, {"type": "command", "command": " "}]},
+            ],
+            "Stop": [{"matcher": "anything", "hooks": [{"type": "command", "command": "notify"}]}],
+            "SessionStart": [{"hooks": [{"type": "command", "command": "hello"}]}],
+        }}));
+        let listed = items(&config);
+        let rows: Vec<(&str, &str, Option<&str>)> =
+            listed.iter().map(|i| (i.event.as_str(), i.command.as_str(), i.problem.as_deref())).collect();
+        let problem = |command: &str| rows.iter().find(|r| r.1 == command).unwrap().2;
+
+        assert_eq!(rows.len(), 8);
+        assert!(problem("claude-code-style").unwrap().contains("not Bash"));
+        assert_eq!(problem("both"), None);
+        assert_eq!(listed.iter().find(|i| i.command == "both").unwrap().timeout_secs, 5);
+        assert_eq!(problem("server"), None);
+        assert!(problem("typo").unwrap().contains("not a valid regular expression"));
+        assert!(problem("").unwrap().contains("\"prompt\" hooks do not run"));
+        assert_eq!(problem(" "), Some("no command to run"));
+        assert_eq!(problem("notify"), None, "a Stop matcher is not read");
+        assert!(problem("hello").unwrap().starts_with("SessionStart hooks do not run"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ import { AsidePanel } from "./components/AsidePanel";
 import { Modal } from "./components/Modal";
 import { ProviderSettings } from "./components/ProviderSettings";
 import { ToolLog } from "./components/ToolLog";
-import { McpConfig } from "./components/McpConfig";
+import { ConfigFileEditor } from "./components/ConfigFileEditor";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
@@ -18,6 +18,7 @@ import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
 import { useSkills } from "./hooks/useSkills";
 import { useMcp } from "./hooks/useMcp";
+import { useHooks } from "./hooks/useHooks";
 import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
@@ -50,6 +51,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [mcpEditing, setMcpEditing] = useState(false);
+  const [hooksEditing, setHooksEditing] = useState(false);
   // What the agent may do this turn, and whether anyone is asked before it
   // does it. Two chips, two questions — and both are enforced on the backend,
   // so these hold only what the chips read back.
@@ -67,6 +69,7 @@ export default function App() {
   const agent = useAgentTurn({ onSaved: history.refresh });
   // Servers start with an Agent turn and may stop during one.
   const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing, agent.turn.status);
+  const hooks = useHooks((tab === "hooks" && !asideCollapsed) || hooksEditing);
   const llm = useLlmSettings();
   const theme = useTheme();
   const panels = usePanelSizes({
@@ -217,6 +220,9 @@ export default function App() {
           mcpError={mcpEditing ? null : mcp.error}
           onMcpToggle={mcp.setEnabled}
           onMcpEdit={() => setMcpEditing(true)}
+          hooks={hooks.view}
+          hooksError={hooksEditing ? null : hooks.error}
+          onHooksEdit={() => setHooksEditing(true)}
           skills={skills.view}
           skillsError={skills.error}
           onSkillToggle={skills.setEnabled}
@@ -297,7 +303,40 @@ export default function App() {
       </Modal>
 
       <Modal title="MCP servers" open={mcpEditing} onClose={() => setMcpEditing(false)}>
-        <McpConfig view={mcp.view} error={mcp.error} onSave={mcp.save} onClose={() => setMcpEditing(false)} />
+        <ConfigFileEditor
+          label="MCP configuration"
+          text={mcp.view?.text}
+          error={mcp.error}
+          onSave={mcp.save}
+          onClose={() => setMcpEditing(false)}
+          note={
+            <>
+              The <code>mcpServers</code> format of Claude Desktop and Cursor: paste a server's snippet as it is.
+              Optional per server: <code>weight</code> (cost of a call in the turn's budget, 3 by default) and{" "}
+              <code>timeoutSecs</code> (120). Kept in {mcp.view?.path || "the app directory"}, readable only by you —
+              it may hold tokens.
+            </>
+          }
+        />
+      </Modal>
+
+      <Modal title="Hooks" open={hooksEditing} onClose={() => setHooksEditing(false)}>
+        <ConfigFileEditor
+          label="Hooks configuration"
+          text={hooks.view?.text}
+          error={hooks.error}
+          onSave={hooks.save}
+          onClose={() => setHooksEditing(false)}
+          note={
+            <>
+              Claude Code's <code>hooks</code> format: <code>PreToolUse</code>, <code>PostToolUse</code> and{" "}
+              <code>Stop</code> run here. The command gets the event as JSON on stdin; exit code 2 refuses the call,
+              or sends the agent back from Stop, with stderr as the reason. A <code>matcher</code> names this app's
+              tools — <code>runCommand</code>, <code>editFile</code> — not Claude Code's. Kept in{" "}
+              {hooks.view?.path || "the app directory"}.
+            </>
+          }
+        />
       </Modal>
 
       <Toast message={toast.message} />

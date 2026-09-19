@@ -13,17 +13,34 @@ use crate::infra::{app_dir, process_runner};
 
 const FILE: &str = "hooks.json";
 
+/// What an empty editor starts from.
+pub const TEMPLATE: &str = "{\n  \"hooks\": {}\n}\n";
+
 pub fn path() -> Result<PathBuf, HooksConfigError> {
     Ok(app_dir::dir().map_err(HooksConfigError::Read)?.join(FILE))
 }
 
-/// No file is no hooks.
-pub fn load() -> Result<HooksConfig, HooksConfigError> {
+/// The file's text, or the template while there is none.
+pub fn read_text() -> Result<String, HooksConfigError> {
     match fs::read_to_string(path()?) {
-        Ok(text) => hooks::parse(&text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HooksConfig::default()),
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(TEMPLATE.to_string()),
         Err(e) => Err(HooksConfigError::Read(e.to_string())),
     }
+}
+
+/// No file is no hooks.
+pub fn load() -> Result<HooksConfig, HooksConfigError> {
+    hooks::parse(&read_text()?)
+}
+
+/// Written as typed once it parses; text that does not parse leaves the file
+/// as it was. Owner-only like the rest of the app directory: what it holds
+/// runs on every tool call.
+pub fn save_text(text: &str) -> Result<HooksConfig, HooksConfigError> {
+    let config = hooks::parse(text)?;
+    app_dir::write_private(&path()?, text.as_bytes()).map_err(HooksConfigError::Write)?;
+    Ok(config)
 }
 
 /// Through `sh -c`, as Claude Code runs a hook, in the workspace, with
@@ -53,6 +70,18 @@ mod tests {
             assert!(matches!(load(), Err(HooksConfigError::Parse(_))));
             fs::write(path().unwrap(), r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x"}]}]}}"#).unwrap();
             assert_eq!(load().unwrap().hooks["Stop"][0].hooks[0].command, "x");
+        });
+    }
+
+    #[test]
+    fn a_save_keeps_the_text_and_a_broken_one_is_refused() {
+        with_app_dir("hooks-save", || {
+            assert_eq!(read_text().unwrap(), TEMPLATE);
+            let text = "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"say done\"}]}]}}";
+            save_text(text).unwrap();
+            assert_eq!(read_text().unwrap(), text);
+            assert!(matches!(save_text("{"), Err(HooksConfigError::Parse(_))));
+            assert_eq!(read_text().unwrap(), text);
         });
     }
 

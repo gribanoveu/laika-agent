@@ -358,3 +358,22 @@ describe("compaction", () => {
     expect((state.blocks[0] as { text: string }).text).toContain("1 message folded");
   });
 });
+
+describe("hooks", () => {
+  const said = (payload: { event: string; message: string; blocked: boolean }) =>
+    (run([ev({ type: "hookFeedback", seq: 1, payload })]).blocks[0] as { kind: string; text: string });
+
+  /// What a hook did is said in terms of what it changed: a refused call,
+  /// a note on a finished one, a turn sent back — or only that it failed.
+  test("each refusal says what it changed, and a failure is only a failure", () => {
+    expect(said({ event: "PreToolUse", message: "no prod", blocked: true })).toMatchObject({
+      kind: "notice",
+      text: "A hook refused the call: no prod",
+    });
+    expect(said({ event: "PostToolUse", message: "lint: 2", blocked: true }).text).toBe("A hook, after the call: lint: 2");
+    expect(said({ event: "Stop", message: "run tests", blocked: true }).text).toBe("A Stop hook sent the agent back: run tests");
+    expect(said({ event: "PreToolUse", message: "jq: not found", blocked: false }).text).toBe(
+      "PreToolUse hook: jq: not found",
+    );
+  });
+});
