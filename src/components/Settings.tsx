@@ -3,6 +3,7 @@ import { Bot, Palette, Shield } from "lucide-react";
 import { ProviderSettings } from "./ProviderSettings";
 import { DataPolicy } from "./DataPolicy";
 import { THEMES, type ThemePreference } from "../hooks/useTheme";
+import { FONT_SIZES, type FontSize } from "../hooks/useChatFontSize";
 import "./Settings.css";
 
 // The settings dialog: one subject per section, picked on the left, so the
@@ -22,11 +23,23 @@ type Props = {
   onDebugLogging: (enabled: boolean) => void;
   theme: ThemePreference;
   onTheme: (theme: ThemePreference) => void;
+  fontSize: FontSize;
+  onFontSize: (size: FontSize) => void;
   onOpenLog: () => void;
   policy: ComponentProps<typeof DataPolicy>;
 };
 
-export function Settings({ provider, debugLogging, onDebugLogging, theme, onTheme, onOpenLog, policy }: Props) {
+export function Settings({
+  provider,
+  debugLogging,
+  onDebugLogging,
+  theme,
+  onTheme,
+  fontSize,
+  onFontSize,
+  onOpenLog,
+  policy,
+}: Props) {
   const [section, setSection] = useState<Section>("models");
 
   return (
@@ -68,6 +81,23 @@ export function Settings({ provider, debugLogging, onDebugLogging, theme, onThem
                     aria-checked={theme === name}
                     className={`segment${theme === name ? " active" : ""}`}
                     onClick={() => onTheme(name)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-field">
+              <label>Chat text size</label>
+              <div className="segmented" role="radiogroup" aria-label="Chat text size">
+                {(Object.keys(FONT_SIZES) as FontSize[]).map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    role="radio"
+                    aria-checked={fontSize === name}
+                    className={`segment${fontSize === name ? " active" : ""}`}
+                    onClick={() => onFontSize(name)}
                   >
                     {name}
                   </button>

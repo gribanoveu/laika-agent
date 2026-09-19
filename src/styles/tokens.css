@@ -73,13 +73,26 @@
   --font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* The type scale. Five steps, not a size per component: monospace is for
-     code, paths and diffs only — labels and chrome use --font-ui. */
-  --fs-2xs: 10.5px;
-  --fs-xs: 11.5px;
-  --fs-sm: 12px;
-  --fs-md: 13px;
-  --fs-lg: 14.5px;
+  --font-scale: 1;
+}
+
+/* The type scale. Five steps, not a size per component: monospace is for
+   code, paths and diffs only — labels and chrome use --font-ui.
+   Declared again on .chat-text so that there it is computed with the chat's
+   own scale — the user's chat font size, set by useChatFontSize — while the
+   rest of the app keeps the scale of 1. */
+:root,
+.chat-text {
+  --fs-2xs: calc(10.5px * var(--font-scale));
+  --fs-xs: calc(11.5px * var(--font-scale));
+  --fs-sm: calc(12px * var(--font-scale));
+  --fs-md: calc(13px * var(--font-scale));
+  --fs-lg: calc(14.5px * var(--font-scale));
+}
+.chat-text {
+  --font-scale: var(--chat-font-scale, 1.1);
+  /* Sizes in em inside the chat follow the preference too. */
+  font-size: calc(16px * var(--font-scale));
 }
 
 * {

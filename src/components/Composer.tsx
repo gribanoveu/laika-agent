@@ -81,6 +81,7 @@ export function Composer({
   return (
     <section className="composer">
       <textarea
+        className="chat-text"
         ref={area}
         rows={2}
         placeholder={running ? "Add something while it works…" : "Describe your task…"}

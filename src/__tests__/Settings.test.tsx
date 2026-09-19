@@ -7,6 +7,7 @@ import { Settings } from "../components/Settings";
 
 const dialog = (debugLogging = false) => {
   const logging: boolean[] = [];
+  const sizes: string[] = [];
   let logOpened = 0;
   render(
     <Settings
@@ -22,11 +23,13 @@ const dialog = (debugLogging = false) => {
       onDebugLogging={(enabled) => logging.push(enabled)}
       theme="system"
       onTheme={() => {}}
+      fontSize="large"
+      onFontSize={(size) => sizes.push(size)}
       onOpenLog={() => logOpened++}
       policy={{ provider: null, debugLogging, mcpServers: [], hooks: [] }}
     />,
   );
-  return { logging, logOpened: () => logOpened };
+  return { logging, sizes, logOpened: () => logOpened };
 };
 
 describe("the settings dialog", () => {
@@ -38,6 +41,15 @@ describe("the settings dialog", () => {
     fireEvent.click(screen.getByText("Appearance"));
     expect(screen.getByRole("radiogroup", { name: "Theme" })).toBeDefined();
     expect(screen.queryByText("Model provider")).toBeNull();
+  });
+
+  test("the font size is picked under Appearance", () => {
+    const { sizes } = dialog();
+    fireEvent.click(screen.getByText("Appearance"));
+
+    expect(screen.getByRole("radio", { name: "large" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "small" }));
+    expect(sizes).toEqual(["small"]);
   });
 
   test("the request log is off unless it was turned on", () => {

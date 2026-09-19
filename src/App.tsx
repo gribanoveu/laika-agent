@@ -24,6 +24,7 @@ import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
+import { useChatFontSize } from "./hooks/useChatFontSize";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { useBackendSetting } from "./hooks/useBackendSetting";
@@ -79,6 +80,7 @@ export default function App() {
   const processes = useProcesses(tab === "terminal" && !asideCollapsed);
   const llm = useLlmSettings();
   const theme = useTheme();
+  const fontSize = useChatFontSize();
   const panels = usePanelSizes({
     sidebar: {
       collapsed,
@@ -281,6 +283,8 @@ export default function App() {
           onDebugLogging={llm.debugLogging}
           theme={theme.preference}
           onTheme={theme.setPreference}
+          fontSize={fontSize.size}
+          onFontSize={fontSize.setSize}
           onOpenLog={() => {
             setSettingsOpen(false);
             setLogOpen(true);

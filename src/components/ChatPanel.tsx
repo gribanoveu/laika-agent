@@ -420,7 +420,7 @@ export function ChatPanel({
         </div>
       </header>
 
-      <div className={`thread${groups.length === 0 ? " thread-empty" : ""}`}>
+      <div className={`thread chat-text${groups.length === 0 ? " thread-empty" : ""}`}>
         {groups.length === 0 ? (
           <ChatEmptyState workspace={workspace} onOpenRepo={onOpenRepo} onNewChat={onNewChat} />
         ) : (
