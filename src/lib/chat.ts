@@ -375,7 +375,13 @@ export async function previewCalls(calls: PendingToolCall[]): Promise<ToolPrevie
 // ------------------------------------------------------------ saved chats
 
 /** A row in the sidebar. Not the whole conversation — see `chat_load`. */
-export type ChatSummary = { id: string; title: string; updatedAt: number };
+export type ChatSummary = {
+  id: string;
+  title: string;
+  updatedAt: number;
+  /** The chat this one was branched from. A branch shares its title. */
+  branchedFrom?: string | null;
+};
 
 /**
  * One saved conversation. Two lists, because they are not the same list: the
@@ -398,6 +404,7 @@ export type ChatRecord = {
   todos: Task[];
   /** Absent in chats saved before plans existed. */
   plan?: string | null;
+  branchedFrom?: string | null;
 };
 
 /** Chats of the open folder, newest first. No folder, no backend: no rows. */
@@ -417,9 +424,10 @@ export async function saveChat(
   blocks: Block[],
   todos: Task[],
   plan: string | null = null,
+  branchedFrom: string | null = null,
 ): Promise<ChatSummary> {
   requireBackend();
-  return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos, plan });
+  return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos, plan, branchedFrom });
 }
 
 export async function deleteChat(id: string): Promise<void> {

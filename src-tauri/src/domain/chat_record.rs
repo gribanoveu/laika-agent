@@ -69,6 +69,12 @@ pub struct ChatRecord {
     /// before plans existed, and in chats that never had one.
     #[serde(default)]
     pub plan: Option<String>,
+    /// The chat this one was branched from, if it was. A branch starts as a
+    /// copy of the earlier part of that chat, so it shares its title — this
+    /// is what tells the two apart in the sidebar. Nothing is kept in step:
+    /// the original may since have been deleted.
+    #[serde(default)]
+    pub branched_from: Option<String>,
 }
 
 /// A row in the sidebar. Deliberately not the whole record: listing a folder
@@ -80,6 +86,7 @@ pub struct ChatSummary {
     pub id: String,
     pub title: String,
     pub updated_at: i64,
+    pub branched_from: Option<String>,
 }
 
 impl From<&ChatRecord> for ChatSummary {
@@ -88,6 +95,7 @@ impl From<&ChatRecord> for ChatSummary {
             id: record.id.clone(),
             title: record.title.clone(),
             updated_at: record.updated_at,
+            branched_from: record.branched_from.clone(),
         }
     }
 }
@@ -172,6 +180,7 @@ mod tests {
             blocks: serde_json::json!([{ "kind": "user", "id": "user:0", "text": "fix the parser" }]),
             todos: Vec::new(),
             plan: None,
+            branched_from: None,
         }
     }
 
@@ -189,6 +198,7 @@ mod tests {
             keys,
             [
                 "blocks",
+                "branchedFrom",
                 "createdAt",
                 "id",
                 "messages",
@@ -211,6 +221,16 @@ mod tests {
         value.as_object_mut().unwrap().remove("plan");
         let loaded: ChatRecord = serde_json::from_value(value).unwrap();
         assert_eq!(loaded.plan, None);
+    }
+
+    /// Every chat saved before branching existed is a chat that was not
+    /// branched from anything.
+    #[test]
+    fn a_chat_saved_before_branches_is_not_a_branch() {
+        let mut value = serde_json::to_value(record()).unwrap();
+        value.as_object_mut().unwrap().remove("branchedFrom");
+        let loaded: ChatRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(loaded.branched_from, None);
     }
 
     #[test]

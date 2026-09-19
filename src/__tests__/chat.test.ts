@@ -170,7 +170,7 @@ describe("saved chats", () => {
     const summary = await chat.saveChat("c1", messages, blocks, [], null);
 
     expect(calls).toEqual([
-      { command: "chat_save", args: { id: "c1", messages, blocks, todos: [], plan: null } },
+      { command: "chat_save", args: { id: "c1", messages, blocks, todos: [], plan: null, branchedFrom: null } },
     ]);
     expect(summary.title).toBe("fix the parser");
   });

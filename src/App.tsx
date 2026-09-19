@@ -193,6 +193,8 @@ export default function App() {
             onCompact={compactNow}
             onImplement={conversation.value === "plan" ? implement : undefined}
             onOpenPlan={() => openTab("plan")}
+            branchable={agent.branchable}
+            onBranch={agent.branch}
           />
           <Composer
             onSend={send}
@@ -202,6 +204,7 @@ export default function App() {
             onConversation={pickConversation}
             unattended={unattended.value}
             onUnattended={pickUnattended}
+            draft={agent.draft}
           />
         </main>
 

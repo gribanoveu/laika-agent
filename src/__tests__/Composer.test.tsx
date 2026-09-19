@@ -158,3 +158,29 @@ describe("holding the chosen mode", () => {
     ]);
   });
 });
+
+describe("text handed to the box", () => {
+  const withDraft = (draft: { text: string; seq: number }) => (
+    <Composer
+      onSend={() => {}}
+      onStop={() => {}}
+      running={false}
+      conversation="agent"
+      onConversation={() => {}}
+      unattended={false}
+      onUnattended={() => {}}
+      draft={draft}
+    />
+  );
+
+  /// A branch gives its message back; the same text twice is two branches.
+  test("replaces what was typed, each time it is handed", () => {
+    const { rerender } = render(withDraft({ text: "try this", seq: 1 }));
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(box.value).toBe("try this");
+
+    fireEvent.change(box, { target: { value: "edited" } });
+    rerender(withDraft({ text: "try this", seq: 2 }));
+    expect(box.value).toBe("try this");
+  });
+});

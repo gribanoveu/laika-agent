@@ -273,6 +273,9 @@ type Props = {
   onImplement?: () => void;
   /** Opens the Plan tab, where the plan is read and edited before handing it over. */
   onOpenPlan?: () => void;
+  /** Bubbles a branch can start at; `null` while a turn runs. */
+  branchable?: ReadonlySet<string> | null;
+  onBranch?: (bubbleId: string) => void;
 };
 
 export function ChatPanel({
@@ -287,6 +290,8 @@ export function ChatPanel({
   onCompact,
   onImplement,
   onOpenPlan,
+  branchable = null,
+  onBranch,
 }: Props) {
   const groups = group(turn.blocks);
   // Under a finished answer only: mid-turn the plan is not written yet, and
@@ -362,7 +367,13 @@ export function ChatPanel({
                   {turnGroup.role === "agent" ? "Agent" : "You"}
                 </div>
               )}
-              {turnGroup.blocks.map((block) => renderBlock(block, onDecide))}
+              {turnGroup.blocks.map((block) =>
+                block.kind === "user" ? (
+                  <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
+                ) : (
+                  renderBlock(block, onDecide)
+                ),
+              )}
             </div>
           ))
         )}
@@ -381,6 +392,48 @@ export function ChatPanel({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * What the user said, with a way to try it differently: a branch keeps the
+ * conversation up to here in a new chat and gives this text back to edit.
+ *
+ * Offered at rest only, and not on a message folded into the compaction
+ * summary — the model no longer has what came before it. That button stays,
+ * disabled, so its absence is not a mystery.
+ */
+function UserBubble({
+  block,
+  branchable,
+  onBranch,
+}: {
+  block: Extract<Block, { kind: "user" }>;
+  branchable: ReadonlySet<string> | null;
+  onBranch?: (bubbleId: string) => void;
+}) {
+  const offered = branchable !== null && onBranch !== undefined;
+  const can = branchable?.has(block.id) ?? false;
+  return (
+    <div className="bubble-row">
+      <div className="bubble">{block.text}</div>
+      {offered && (
+        <button
+          type="button"
+          className="iconbtn bubble-branch"
+          disabled={!can}
+          aria-label="Branch from here"
+          title={
+            can
+              ? "Branch from here: a new chat with the conversation up to this message, which you can change and send again"
+              : "Folded into the summary of earlier conversation — the model no longer sees what came before it, so a branch cannot start here"
+          }
+          onClick={() => onBranch(block.id)}
+        >
+          <GitBranch size={14} />
+        </button>
+      )}
+    </div>
   );
 }
 

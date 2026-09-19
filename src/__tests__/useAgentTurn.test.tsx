@@ -285,3 +285,176 @@ describe("saving", () => {
     ]);
   });
 });
+
+describe("branching", () => {
+  async function twoTurns() {
+    results.chat_start = done("answer");
+    const hook = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await hook.result.current.send("first");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    await act(async () => {
+      await hook.result.current.send("second");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(2));
+    return hook;
+  }
+
+  /// A new chat from the point before the message, which comes back to be
+  /// changed. The original is not written to again.
+  test("starts a new chat from before the message and hands it back", async () => {
+    const { result } = await twoTurns();
+    const original = result.current.chatId;
+    expect([...(result.current.branchable ?? [])].sort()).toEqual(["user:0", "user:1"]);
+
+    act(() => result.current.branch("user:1"));
+
+    expect(result.current.chatId).toBeNull();
+    expect(result.current.draft?.text).toBe("second");
+    expect(result.current.turn.blocks.map((b) => b.kind)).toEqual(["user", "notice"]);
+    expect(saved()).toHaveLength(2);
+
+    results.chat_start = done("another answer");
+    await act(async () => {
+      await result.current.send("second, differently");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(3));
+
+    const branch = saved()[2].args;
+    expect(branch.id).not.toBe(original as string);
+    expect(branch.branchedFrom).toBe(original as string);
+    expect(branch.messages).toEqual([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "answer" },
+      { role: "user", content: "second, differently" },
+      { role: "assistant", content: "another answer" },
+    ]);
+  });
+
+  /// The checklist kept is the latest one, and part of it may be work done
+  /// after the branch point.
+  test("the branch starts without the checklist", async () => {
+    results.chat_start = { status: "done", value: { text: "ok", truncated: false, todos: [{ id: "1", title: "later", status: "completed" }] } };
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.send("first");
+    });
+    expect(result.current.checklist).toHaveLength(1);
+
+    act(() => result.current.branch("user:0"));
+    expect(result.current.checklist).toEqual([]);
+  });
+
+  test("a chat opened again remembers it is a branch", async () => {
+    results.chat_load = {
+      schemaVersion: 1,
+      id: "b",
+      workspace: "/repo",
+      title: "first",
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [],
+      blocks: [],
+      todos: [],
+      branchedFrom: "a",
+    };
+    results.chat_start = done("ok");
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.open("b");
+    });
+    await act(async () => {
+      await result.current.send("more");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    expect(saved()[0].args.branchedFrom).toBe("a");
+  });
+
+  const branchRecord = {
+    schemaVersion: 1,
+    id: "b",
+    workspace: "/repo",
+    title: "first",
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "planned" },
+      { role: "user", content: "second" },
+    ],
+    blocks: [
+      { kind: "user", id: "user:0", text: "first" },
+      { kind: "tool", id: "t", round: 1, name: "writePlan", arguments: JSON.stringify({ content: "# Plan" }), status: "done", output: "" },
+      { kind: "user", id: "user:2", text: "second" },
+    ],
+    todos: [],
+    plan: "# Plan",
+    branchedFrom: "a",
+  };
+
+  /// The plan a branch starts with is the one written before its point, not
+  /// one the original chat wrote later.
+  test("the branch keeps the plan written before its point, and only that", async () => {
+    results.chat_load = branchRecord;
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.open("b");
+    });
+
+    act(() => result.current.branch("user:2"));
+    expect(result.current.plan).toBe("# Plan");
+
+    await act(async () => {
+      await result.current.open("b");
+    });
+    act(() => result.current.branch("user:0"));
+    expect(result.current.plan).toBeNull();
+  });
+
+  /// A branch's own plan edit is a save of the branch, and must not forget
+  /// what it is a branch of.
+  test("editing the plan of a branch keeps it a branch", async () => {
+    results.chat_load = branchRecord;
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.open("b");
+    });
+
+    act(() => result.current.editPlan("# Changed"));
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    expect(saved()[0].args.branchedFrom).toBe("a");
+  });
+
+  test("a new chat after a branch is not a branch", async () => {
+    results.chat_load = branchRecord;
+    results.chat_start = done("ok");
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.open("b");
+    });
+
+    act(() => result.current.reset());
+    await act(async () => {
+      await result.current.send("fresh");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    expect(saved()[0].args.branchedFrom).toBeNull();
+  });
+
+  test("nothing can be branched while a turn waits for approval", async () => {
+    results.chat_start = {
+      status: "pendingApproval",
+      value: { history: [], round: 1, budgetUsed: 1, eventSeq: 3, calls: [], todos: [], reads: {} },
+    };
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.send("write it");
+    });
+
+    expect(result.current.branchable).toBeNull();
+    const before = result.current.turn.blocks;
+    act(() => result.current.branch("user:0"));
+    expect(result.current.turn.blocks).toBe(before);
+  });
+});

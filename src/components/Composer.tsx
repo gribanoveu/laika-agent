@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paperclip, SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import type { ConversationMode } from "../lib/chat";
@@ -38,6 +38,9 @@ type Props = {
   /** `true` when the turn runs without asking — `ApprovalPolicy::skip_all`. */
   unattended: boolean;
   onUnattended: (unattended: boolean) => void;
+  /** Text put into the box from outside — a branch hands back its message.
+      Replaces what was typed; `seq` makes the same text twice land twice. */
+  draft?: { text: string; seq: number } | null;
 };
 
 export function Composer({
@@ -48,6 +51,7 @@ export function Composer({
   onConversation,
   unattended,
   onUnattended,
+  draft = null,
 }: Props) {
   const [text, setText] = useState("");
   const [model, setModel] = useState<string | null>(null);
@@ -59,6 +63,13 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
+
+  useEffect(() => {
+    if (!draft) return;
+    setText(draft.text);
+    area.current?.focus();
+    requestAnimationFrame(grow);
+  }, [draft]);
 
   const send = () => {
     if (!text.trim()) return;

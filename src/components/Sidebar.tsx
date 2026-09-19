@@ -3,6 +3,7 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
+  GitBranch,
   Keyboard,
   MessageSquare,
   PanelLeft,
@@ -83,8 +84,9 @@ export function Sidebar({
               type="button"
               className={`chat${chat.id === activeChat ? " active" : ""}`}
               onClick={() => onSelectChat(chat.id)}
+              title={chat.branchedFrom ? "A branch of an earlier chat" : undefined}
             >
-              <MessageSquare size={14} />
+              {chat.branchedFrom ? <GitBranch size={14} /> : <MessageSquare size={14} />}
               <span>{chat.title}</span>
             </button>
           ))

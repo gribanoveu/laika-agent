@@ -371,3 +371,43 @@ describe("the folder's index", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+describe("branching from a message", () => {
+  const blocks: Block[] = [
+    { kind: "user", id: "u0", text: "folded away" },
+    { kind: "user", id: "u1", text: "still seen" },
+  ];
+  const branchPanel = (branchable: ReadonlySet<string> | null, onBranch: (id: string) => void = () => {}) =>
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state(blocks, { status: "done" })}
+        usage={null}
+        context={usage()}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onCompact={() => {}}
+        branchable={branchable}
+        onBranch={onBranch}
+      />,
+    );
+
+  test("is offered where the model still sees the message, and says why not elsewhere", () => {
+    const picked: string[] = [];
+    branchPanel(new Set(["u1"]), (id) => picked.push(id));
+
+    const [folded, seen] = screen.getAllByRole("button", { name: "Branch from here" }) as HTMLButtonElement[];
+    expect(folded.disabled).toBe(true);
+    expect(folded.title).toContain("Folded into the summary");
+    expect(seen.disabled).toBe(false);
+
+    fireEvent.click(seen);
+    expect(picked).toEqual(["u1"]);
+  });
+
+  test("is not offered while a turn is under way", () => {
+    branchPanel(null);
+    expect(screen.queryAllByRole("button", { name: "Branch from here" })).toHaveLength(0);
+  });
+});

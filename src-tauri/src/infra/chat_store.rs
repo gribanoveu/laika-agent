@@ -106,6 +106,7 @@ pub fn save(
     blocks: &Value,
     todos: &[Task],
     plan: Option<&str>,
+    branched_from: Option<&str>,
 ) -> Result<ChatSummary, ChatError> {
     let path = path(id)?;
     let existing = load(id).ok();
@@ -121,6 +122,7 @@ pub fn save(
         blocks: blocks.clone(),
         todos: todos.to_vec(),
         plan: plan.map(str::to_string),
+        branched_from: branched_from.map(str::to_string),
     };
 
     let text = serde_json::to_string(&record).map_err(ChatError::Parse)?;
@@ -155,6 +157,7 @@ mod tests {
             &blocks(said),
             &[],
             Some("# Plan"),
+            None,
         )
         .unwrap()
     }
@@ -228,6 +231,7 @@ mod tests {
                 &blocks("first"),
                 &[],
                 None,
+                None,
             )
             .unwrap();
 
@@ -271,6 +275,21 @@ mod tests {
         });
     }
 
+    /// The sidebar marks a branch by this, so it has to reach the listing.
+    #[test]
+    fn a_branch_says_where_it_came_from() {
+        with_app_dir("chat-store-branch", || {
+            save_one("one", "/repo", "first");
+            save("two", "/repo", &[LlmMessage::user("first")], &blocks("first"), &[], None, Some("one")).unwrap();
+
+            let listed = list("/repo").unwrap();
+            let from = |id: &str| listed.iter().find(|c| c.id == id).unwrap().branched_from.clone();
+            assert_eq!(from("one"), None);
+            assert_eq!(from("two").as_deref(), Some("one"));
+            assert_eq!(load("two").unwrap().branched_from.as_deref(), Some("one"));
+        });
+    }
+
     #[test]
     fn a_deleted_chat_is_gone() {
         with_app_dir("chat-store-delete", || {
@@ -289,7 +308,7 @@ mod tests {
         with_app_dir("chat-store-bad-id", || {
             assert!(matches!(load("../settings"), Err(ChatError::BadId(_))));
             assert!(matches!(
-                save("../settings", "/repo", &[], &Value::Null, &[], None),
+                save("../settings", "/repo", &[], &Value::Null, &[], None, None),
                 Err(ChatError::BadId(_))
             ));
         });

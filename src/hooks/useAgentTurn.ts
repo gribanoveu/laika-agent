@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writtenPlan } from "../lib/plan";
+import { branchAt, branchPoints } from "../lib/branch";
 import {
   cancelChat,
   compactHistory,
@@ -71,6 +72,12 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   // A turn's own id, so its events can be told from another turn's on the one
   // global channel.
   const turnId = useRef(0);
+  // The chat this one was branched from, written with every save of it.
+  const branchedFrom = useRef<string | null>(null);
+  // Text handed to the composer — a branch gives back the message it starts
+  // at. A counter rather than the text alone, so the same text twice still
+  // lands.
+  const [draft, setDraft] = useState<{ text: string; seq: number } | null>(null);
   const subscribed = useRef<(() => void) | null>(null);
 
   useEffect(() => () => subscribed.current?.(), []);
@@ -109,7 +116,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     if (written !== null) keepPlan(written);
     const id = chatId ?? crypto.randomUUID();
     setChatId(id);
-    saveChat(id, history.current, turn.blocks, todos.current, written ?? planRef.current)
+    saveChat(id, history.current, turn.blocks, todos.current, written ?? planRef.current, branchedFrom.current)
       .then(() => onSaved?.())
       .catch((e) => setError(String(e)));
   }, [turn.status, turn.blocks, chatId, onSaved, keepPlan]);
@@ -225,6 +232,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       history.current = record.messages;
       keepTodos(record.todos);
       keepPlan(record.plan ?? null);
+      branchedFrom.current = record.branchedFrom ?? null;
       unsaved.current = false;
       setChatId(record.id);
       setError(null);
@@ -241,11 +249,59 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     history.current = [];
     keepTodos([]);
     keepPlan(null);
+    branchedFrom.current = null;
     unsaved.current = false;
     setChatId(null);
     setError(null);
     setTurn(emptyTurn());
   }, [keepTodos, keepPlan]);
+
+  // Bubbles a branch can start at; `null` while a turn is under way, when
+  // none can. Recomputed with the transcript: the history only changes when
+  // the blocks do.
+  const branchable = useMemo(
+    () =>
+      turn.status === "done" || turn.status === "cancelled"
+        ? new Set(branchPoints(turn.blocks, history.current).keys())
+        : null,
+    [turn.status, turn.blocks],
+  );
+
+  /**
+   * Starts a new chat from the conversation as it was just before `bubbleId`,
+   * and hands that message back to the composer to be changed and sent. The
+   * chat it came from is left as it is.
+   *
+   * Nothing is saved until the branch is sent: one abandoned is not a row in
+   * the sidebar. The checklist starts empty — the one kept is the latest, and
+   * part of it may be work done after this point — and the plan is the last
+   * one written before it.
+   */
+  const branch = useCallback(
+    (bubbleId: string) => {
+      if (turn.status !== "done" && turn.status !== "cancelled") return;
+      const cut = branchAt(turn.blocks, history.current, bubbleId);
+      if (!cut) return;
+      subscribed.current?.();
+      subscribed.current = null;
+      branchedFrom.current = chatId;
+      history.current = cut.history;
+      keepTodos([]);
+      keepPlan(writtenPlan(cut.blocks));
+      unsaved.current = false;
+      setChatId(null);
+      setError(null);
+      setTurn(
+        appendNotice(
+          restoredTurn(cut.blocks),
+          "Branched from here — files the agent changed later in the original chat are left as they are now",
+        ),
+      );
+      setDraft((last) => ({ text: cut.text, seq: (last?.seq ?? 0) + 1 }));
+      refreshContext();
+    },
+    [turn.status, turn.blocks, chatId, keepTodos, keepPlan, refreshContext],
+  );
 
   /**
    * The user's own edit to the plan. Saved at once when the chat exists —
@@ -257,7 +313,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       const value = next.trim() ? next : null;
       keepPlan(value);
       if (!chatId || turn.status === "running") return;
-      saveChat(chatId, history.current, turn.blocks, todos.current, value).catch((e) => setError(String(e)));
+      saveChat(chatId, history.current, turn.blocks, todos.current, value, branchedFrom.current).catch((e) => setError(String(e)));
     },
     [chatId, turn.status, turn.blocks, keepPlan],
   );
@@ -276,5 +332,8 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     plan,
     editPlan,
     checklist,
+    branch,
+    branchable,
+    draft,
   };
 }
