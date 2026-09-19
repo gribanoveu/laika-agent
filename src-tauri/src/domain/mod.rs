@@ -21,3 +21,4 @@ pub mod tool_call_log;
 pub mod mcp;
 pub mod hooks;
 pub mod background;
+pub mod network_commands;

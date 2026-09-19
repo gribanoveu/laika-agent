@@ -2,6 +2,8 @@ pub mod commands;
 pub mod domain;
 pub mod infra;
 #[cfg(test)]
+mod data_policy;
+#[cfg(test)]
 mod testing;
 pub mod services;
 
