@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Brain,
+  Loader2,
   ChevronRight,
   FileText,
   Folder,
@@ -19,7 +20,8 @@ import { IndexBadge } from "./IndexBadge";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
-import { describeRun, describeTool } from "../lib/describeTool";
+import { describeActive, describeRun, describeTool } from "../lib/describeTool";
+import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
@@ -306,18 +308,38 @@ function fold(blocks: Block[]): (Block | Run)[] {
   );
 }
 
+/** How long one step stays on the folded line before the next may replace it. */
+const STEP_MS = 700;
+
+/** What the run is doing right now: the call under way, else the last thing in it. */
+function activity(run: Run): string {
+  const running = run.blocks.filter((b): b is Tool => b.kind === "tool" && b.status === "running").pop();
+  const last = running ?? run.blocks[run.blocks.length - 1];
+  return last.kind === "tool" ? describeActive(last) : "Thinking";
+}
+
 function ToolRun({ run, live }: { run: Run; live: boolean }) {
   const tools = run.blocks.filter((b): b is Tool => b.kind === "tool");
   const failed = tools.filter((t) => t.status === "failed").length;
-  const current = live ? tools.filter((t) => t.status === "running").pop() : undefined;
-  const shown = current && describeTool(current);
+  // Held for a moment each, so quick calls do not flicker past unread.
+  const step = useSteadyValue(live ? activity(run) : null, STEP_MS);
 
   return (
-    <details className="tool-run">
+    <details className={`tool-run${live ? " live" : ""}`}>
       <summary>
-        <span className="tool-run-text">
-          {shown ? `${shown.name} ${shown.arg}`.trim() + "…" : describeRun(tools)}
-        </span>
+        {live && <Loader2 className="tool-run-spin" size={12} aria-hidden="true" />}
+        {live && step ? (
+          <span key={step} className="tool-run-text tool-run-step">
+            {step}…
+          </span>
+        ) : (
+          <span className="tool-run-text">{describeRun(tools)}</span>
+        )}
+        {live && (
+          <span className="tool-run-count">
+            {tools.length} {tools.length === 1 ? "call" : "calls"}
+          </span>
+        )}
         {failed > 0 && <span className="tool-run-failed">{failed} failed</span>}
         <ChevronRight className="chev" size={12} />
       </summary>
@@ -424,9 +446,15 @@ export function ChatPanel({
                   {turnGroup.role === "agent" ? "Agent" : "You"}
                 </div>
               )}
-              {fold(turnGroup.blocks).map((block) =>
+              {fold(turnGroup.blocks).map((block, at, items) =>
                 block.kind === "run" ? (
-                  <ToolRun key={block.id} run={block} live={turn.status === "running"} />
+                  <ToolRun
+                    key={block.id}
+                    run={block}
+                    // Only the work at the very end is under way; a run the
+                    // agent has already written past is finished.
+                    live={turn.status === "running" && index === groups.length - 1 && at === items.length - 1}
+                  />
                 ) : block.kind === "user" ? (
                   <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
                 ) : (

@@ -165,7 +165,19 @@ describe("a run of calls", () => {
 
   test("names the call under way while the turn runs", () => {
     const { container } = panel(state([call("c1", "readFile"), call("c2", "readFile", "running")], { status: "running" }));
-    expect(container.querySelector(".tool-run > summary")?.textContent).toBe("Read a.rs…");
+    expect(container.querySelector(".tool-run-step")?.textContent).toBe("Reading a.rs…");
+    expect(container.querySelector(".tool-run-count")?.textContent).toBe("2 calls");
+  });
+
+  test("a run the agent has written past is not under way", () => {
+    const { container } = panel(
+      state(
+        [call("c1", "readFile"), { kind: "message", id: "m1", round: 1, text: "now" } as Block, call("c2", "grep", "running")],
+        { status: "running" },
+      ),
+    );
+    const live = [...container.querySelectorAll(".tool-run")].map((r) => r.classList.contains("live"));
+    expect(live).toEqual([false, true]);
   });
 });
 

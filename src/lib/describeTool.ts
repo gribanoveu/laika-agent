@@ -271,6 +271,33 @@ function statusMark(status: string | undefined) {
   return "·";
 }
 
+// What a call is doing while it runs, for the folded line: "Reading a.rs",
+// "Running cargo test". A label without a verb here keeps its own name.
+const ACTIVE_VERBS: Record<string, string> = {
+  Read: "Reading",
+  Grep: "Searching",
+  Search: "Searching the code for",
+  List: "Listing",
+  Write: "Writing",
+  Edit: "Editing",
+  Delete: "Deleting",
+  Mkdir: "Creating",
+  Move: "Moving",
+  Bash: "Running",
+  Todo: "Updating the checklist",
+  Plan: "Writing the plan",
+  Status: "Checking git status",
+  Diff: "Reading the diff",
+  Blame: "Reading the blame of",
+  Output: "Reading the output of",
+  Stop: "Stopping",
+};
+
+export function describeActive(block: Extract<Block, { kind: "tool" }>): string {
+  const { name, arg } = describeTool(block);
+  return [ACTIVE_VERBS[name] ?? name, arg].filter(Boolean).join(" ");
+}
+
 // A run of calls folded into one line, the way a person would say it: "Read 3
 // files, searched 2 patterns, ran a command". Each verb takes the count; a
 // label without a phrase here is counted under its own name.

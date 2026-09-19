@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { describeRun, describeTool } from "../lib/describeTool";
+import { describeActive, describeRun, describeTool } from "../lib/describeTool";
 import type { Block } from "../lib/chatTurnReducer";
 
 // What a tool call looks like in the transcript. Rendering, so the tests are
@@ -293,5 +293,12 @@ describe("a run of calls in one line", () => {
     expect(describeRun([tool({ name: "mcp__jira__search" }), tool({ name: "mcp__jira__search" })])).toBe(
       "Jira · search ×2",
     );
+  });
+});
+
+describe("a call under way, in words", () => {
+  test("says what it is doing to what", () => {
+    expect(describeActive(tool({ name: "readFile", arguments: '{"path":"a.rs"}' }))).toBe("Reading a.rs");
+    expect(describeActive(tool({ name: "runCommand", arguments: '{"command":"cargo test"}' }))).toMatch(/^Running cargo test/);
   });
 });
