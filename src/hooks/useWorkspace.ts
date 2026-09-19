@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { currentWorkspace, openWorkspace } from "../lib/chat";
+import { currentWorkspace, openWorkspace, recentWorkspaces } from "../lib/chat";
 import { pickFolder } from "../lib/dialog";
 
 /** The folder the agent acts on. Resolved by the backend, displayed here. */
 export function useWorkspace() {
   const [path, setPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // The backend may already have one — a reloaded window should not forget it.
-  useEffect(() => {
-    currentWorkspace().then(setPath).catch(() => {});
-  }, []);
+  const [recent, setRecent] = useState<string[]>([]);
+  // Whether the folder is the one the app came back to rather than one the
+  // user just chose: only then is its last conversation reopened too.
+  const [resumed, setResumed] = useState(false);
 
   const open = useCallback(async (next: string) => {
     try {
@@ -20,8 +19,27 @@ export function useWorkspace() {
     } catch (e) {
       setError(String(e));
       return false;
+    } finally {
+      recentWorkspaces().then(setRecent).catch(() => {});
     }
   }, []);
+
+  // A reloaded window asks the backend, which still has its folder; a new
+  // launch reopens the folder opened last. One that is gone is not in the
+  // list, and the window starts empty as it would have.
+  useEffect(() => {
+    void (async () => {
+      const list = await recentWorkspaces().catch(() => []);
+      setRecent(list);
+      const current = await currentWorkspace().catch(() => null);
+      if (current) {
+        setPath(current);
+        setResumed(true);
+      } else if (list[0] && (await open(list[0]))) {
+        setResumed(true);
+      }
+    })();
+  }, [open]);
 
   /** Asks for a folder and opens it. `false` also means "the user cancelled". */
   const pick = useCallback(async () => {
@@ -30,5 +48,5 @@ export function useWorkspace() {
     return open(chosen);
   }, [open]);
 
-  return { path, error, open, pick };
+  return { path, error, recent, resumed, open, pick };
 }

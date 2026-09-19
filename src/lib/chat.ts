@@ -116,6 +116,12 @@ export async function currentWorkspace(): Promise<string | null> {
   return invoke<string | null>("workspace_current");
 }
 
+/** Folders opened lately that still exist, the last one first. */
+export async function recentWorkspaces(): Promise<string[]> {
+  if (!inTauri()) return [];
+  return invoke<string[]>("workspace_recent");
+}
+
 // --------------------------------------------------------- the folder index
 
 /**

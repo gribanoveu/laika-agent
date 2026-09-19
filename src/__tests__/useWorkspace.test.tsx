@@ -6,10 +6,16 @@ import { act, renderHook } from "@testing-library/react";
 
 const calls: { command: string; args: unknown }[] = [];
 let opened: string | null = null;
+let recent: string[] = [];
+let current: string | null = null;
+let failOpen = false;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     calls.push({ command, args });
+    if (command === "workspace_recent") return Promise.resolve(recent);
+    if (command === "workspace_current") return Promise.resolve(current);
+    if (command === "workspace_open" && failOpen) return Promise.reject("cannot open: gone");
     return Promise.resolve(command === "workspace_open" ? (args as { path: string }).path : null);
   },
   // The dialog plugin imports this from the same module; a mock that omits it
@@ -31,6 +37,74 @@ const { useWorkspace } = await import("../hooks/useWorkspace");
 afterEach(() => {
   calls.length = 0;
   opened = null;
+  recent = [];
+  current = null;
+  failOpen = false;
+});
+
+const settle = () => act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+describe("coming back", () => {
+  test("a new launch reopens the folder opened last, and says it came back", async () => {
+    recent = ["/work/b", "/work/a"];
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    expect(calls).toContainEqual({ command: "workspace_open", args: { path: "/work/b" } });
+    expect(result.current.path).toBe("/work/b");
+    expect(result.current.recent).toEqual(["/work/b", "/work/a"]);
+    expect(result.current.resumed).toBe(true);
+  });
+
+  test("a reloaded window keeps the backend's folder and opens nothing", async () => {
+    recent = ["/work/b"];
+    current = "/work/a";
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    expect(calls.filter((call) => call.command === "workspace_open")).toEqual([]);
+    expect(result.current.path).toBe("/work/a");
+    expect(result.current.resumed).toBe(true);
+  });
+
+  test("nothing opened before: nothing open, nothing resumed", async () => {
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    expect(calls.filter((call) => call.command === "workspace_open")).toEqual([]);
+    expect(result.current.path).toBeNull();
+    expect(result.current.resumed).toBe(false);
+  });
+
+  test("a folder that will not open is not resumed", async () => {
+    recent = ["/work/b"];
+    failOpen = true;
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    expect(result.current.path).toBeNull();
+    expect(result.current.resumed).toBe(false);
+  });
+
+  test("a folder chosen by hand is not a resumed one", async () => {
+    opened = "/work/new";
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    await act(async () => {
+      await result.current.pick();
+    });
+    expect(result.current.path).toBe("/work/new");
+    expect(result.current.resumed).toBe(false);
+  });
+
+  test("the list follows a folder opened by hand", async () => {
+    opened = "/work/new";
+    const { result } = renderHook(() => useWorkspace());
+    await settle();
+    recent = ["/work/new"];
+    await act(async () => {
+      await result.current.pick();
+    });
+    expect(result.current.recent).toEqual(["/work/new"]);
+  });
 });
 
 describe("picking a folder", () => {

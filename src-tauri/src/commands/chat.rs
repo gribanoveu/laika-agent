@@ -123,11 +123,22 @@ pub async fn workspace_open(
     }
 
     let shown = resolved.display().to_string();
+    // Only a convenience for the next launch: a folder that opened stays open
+    // even if the list could not be written.
+    if let Err(e) = crate::infra::recent_workspaces::record(&shown) {
+        eprintln!("recent folders not saved: {e}");
+    }
     let index = Arc::clone(&index);
     let sink = index_event_sink(&app, shown.clone());
     // Reported through the sink; see above.
     let _ = tauri::async_runtime::spawn_blocking(move || index.open(&resolved, sink)).await;
     Ok(shown)
+}
+
+/// Folders opened lately that still exist, the last one first.
+#[tauri::command]
+pub fn workspace_recent() -> Vec<String> {
+    crate::infra::recent_workspaces::load()
 }
 
 #[tauri::command]

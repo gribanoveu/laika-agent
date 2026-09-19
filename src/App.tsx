@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
@@ -28,6 +28,7 @@ import { useTheme, THEMES } from "./hooks/useTheme";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { useBackendSetting } from "./hooks/useBackendSetting";
+import { useFolderConversation } from "./hooks/useFolderConversation";
 import { setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
 import type { AsideTab } from "./types";
 import "./App.css";
@@ -69,6 +70,7 @@ export default function App() {
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
   const agent = useAgentTurn({ onSaved: history.refresh });
+  useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
   const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing || settingsOpen, agent.turn.status);
@@ -124,11 +126,25 @@ export default function App() {
     else if (next) toast.show("Auto — the agent will change files without asking");
   };
 
-  const chooseFolder = async () => {
-    const opened = await workspace.pick();
-    if (!opened && workspace.error) toast.show(workspace.error);
-    return opened;
+  // Read from state rather than after the `await`: the closure there still
+  // holds the render before the failure.
+  useEffect(() => {
+    if (workspace.error) toast.show(workspace.error);
+  }, [workspace.error]);
+
+  // The turn runs in the folder it started in; switching under it would
+  // save its chat somewhere else and stop its processes.
+  const switchable = () => {
+    if (agent.turn.status !== "running") return true;
+    toast.show("Stop the agent before switching folders");
+    return false;
   };
+
+  const openFolder = async (path: string) => {
+    if (switchable()) await workspace.open(path);
+  };
+
+  const chooseFolder = async () => switchable() && workspace.pick();
 
   // Asking before the first message rather than refusing it — and then sending
   // it: the composer has already cleared the box, so anything not sent here is
@@ -168,6 +184,9 @@ export default function App() {
         <Sidebar
           chats={history.chats}
           repo={workspace.path}
+          recent={workspace.recent}
+          onOpenFolder={openFolder}
+          onPickFolder={chooseFolder}
           activeChat={agent.chatId}
           onSelectChat={agent.open}
           onNewChat={newChat}

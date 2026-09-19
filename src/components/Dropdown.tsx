@@ -14,10 +14,12 @@ type Props = {
   onPick: (value: string) => void;
   mono?: boolean;
   emptyLabel?: string;
+  /** Where the menu opens; above by default — the composer sits at the bottom. */
+  below?: boolean;
 };
 
 /** Trigger + role="listbox" menu — the app draws its own dropdowns, never <select>. */
-export function Dropdown({ label, title, options, value, onPick, mono, emptyLabel }: Props) {
+export function Dropdown({ label, title, options, value, onPick, mono, emptyLabel, below }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -51,7 +53,7 @@ export function Dropdown({ label, title, options, value, onPick, mono, emptyLabe
         <ChevronDown className="chip-chev" size={10} />
       </button>
       {open && (
-        <div className="dropdown-menu" role="listbox">
+        <div className={`dropdown-menu${below ? " below" : ""}`} role="listbox">
           {options.length === 0 && (
             <div className="dropdown-empty">{emptyLabel ?? "Nothing here yet"}</div>
           )}
