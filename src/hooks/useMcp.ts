@@ -3,9 +3,11 @@ import { mcpConfig, saveMcpConfig, setMcpServerEnabled, type McpView } from "../
 
 /**
  * The MCP configuration, re-read whenever the tab or the editor opens: the
- * file is the user's, and may have been edited outside the app.
+ * file is the user's, and may have been edited outside the app. Re-read too
+ * when `refreshKey` changes while shown — the turn's status, since a turn is
+ * what starts the servers and what finds one gone.
  */
-export function useMcp(visible: boolean) {
+export function useMcp(visible: boolean, refreshKey?: unknown) {
   const [view, setView] = useState<McpView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,7 +22,7 @@ export function useMcp(visible: boolean) {
 
   useEffect(() => {
     if (visible) reload();
-  }, [visible, reload]);
+  }, [visible, refreshKey, reload]);
 
   /** Resolves to whether it was stored; a refusal is left in `error` for the editor to show. */
   const save = useCallback(async (text: string) => {

@@ -20,7 +20,7 @@ mock.module("@tauri-apps/api/core", () => ({
       } catch {
         return Promise.reject("the MCP configuration is not valid: EOF");
       }
-      disk = { ...disk, text, servers: [{ name: "pasted", command: "npx x", enabled: true, error: null }] };
+      disk = { ...disk, text, servers: [{ name: "pasted", command: "npx x", enabled: true, error: null, state: { state: "notStarted" } }] };
       return Promise.resolve(structuredClone(disk));
     }
     if (command === "mcp_server_set_enabled") {
@@ -47,8 +47,8 @@ beforeEach(() => {
     path: "/home/.atlas-desktop/mcp.json",
     text: '{\n  "mcpServers": {}\n}\n',
     servers: [
-      { name: "github", command: "npx -y server-github", enabled: true, error: null },
-      { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet" },
+      { name: "github", command: "npx -y server-github", enabled: true, error: null, state: { state: "running", tools: 3 } },
+      { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet", state: { state: "notStarted" } },
     ],
   };
   calls = [];
@@ -70,6 +70,16 @@ describe("useMcp", () => {
     await act(() => result.current.setEnabled("github", false));
     expect(result.current.view?.servers[0].enabled).toBe(false);
     expect(calls).toContain("mcp_server_set_enabled");
+  });
+
+  test("a turn starting or ending re-reads what the servers are doing", async () => {
+    const { rerender } = renderHook(({ status }) => useMcp(true, status), { initialProps: { status: "idle" } });
+    await settle();
+    rerender({ status: "running" });
+    await settle();
+    rerender({ status: "idle" });
+    await settle();
+    expect(calls.filter((c) => c === "mcp_config_get")).toHaveLength(3);
   });
 
   test("a refused save says why and reports it was not stored", async () => {
@@ -121,6 +131,31 @@ describe("the MCP tab", () => {
     expect(switches).toHaveLength(1);
     fireEvent.click(switches[0]);
     expect(toggled).toEqual([["github", false]]);
+  });
+
+  test("a switched-on server says what its process is doing", () => {
+    const server = disk.servers[0];
+    panel({
+      ...disk,
+      servers: [
+        server,
+        { ...server, name: "one", state: { state: "running", tools: 1 } },
+        { ...server, name: "idle", state: { state: "notStarted" } },
+        { ...server, name: "boot", state: { state: "starting" } },
+        { ...server, name: "gone", state: { state: "exited", error: "exited with code 1" } },
+        { ...server, name: "bad", state: { state: "failed", error: "npx: not found" } },
+        { ...server, name: "off", enabled: false, state: { state: "failed", error: "stale" } },
+      ],
+    });
+    expect(screen.getByText("3 tools")).toBeTruthy();
+    expect(screen.getByText("1 tool")).toBeTruthy();
+    expect(screen.getByText("Starts with the next Agent turn")).toBeTruthy();
+    expect(screen.getByText("starting")).toBeTruthy();
+    expect(screen.getByText("exited")).toBeTruthy();
+    expect(screen.getByText("Restarts with the next call")).toBeTruthy();
+    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.getByText("Switch off and on to try again")).toBeTruthy();
+    expect(screen.queryByText("stale")).toBeNull();
   });
 
   test("the button opens the editor, and says add when there is nothing yet", () => {

@@ -11,7 +11,7 @@ import {
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
 import { PlanPanel } from "./PlanPanel";
-import type { McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
+import type { McpServerState, McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -99,8 +99,25 @@ function mcpItems(view: McpView | null): PanelItem[] {
           title: server.name,
           desc: server.command,
           enabled: server.enabled,
+          ...(server.enabled ? mcpState(server.state) : {}),
         },
   );
+}
+
+/** What the process is doing, for a server that is switched on. */
+function mcpState(state: McpServerState): Partial<PanelItem> {
+  switch (state.state) {
+    case "notStarted":
+      return { meta: "Starts with the next Agent turn" };
+    case "starting":
+      return { status: { label: "starting", tone: "off" } };
+    case "running":
+      return { status: { label: `${state.tools} ${state.tools === 1 ? "tool" : "tools"}`, tone: "ok" } };
+    case "exited":
+      return { status: { label: "exited", tone: "warn" }, meta: "Restarts with the next call", note: state.error };
+    case "failed":
+      return { status: { label: "failed", tone: "warn" }, meta: "Switch off and on to try again", note: state.error };
+  }
 }
 
 /** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */

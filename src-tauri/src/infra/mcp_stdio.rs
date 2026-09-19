@@ -182,6 +182,10 @@ impl McpClient for Connection {
         let result = self.request("tools/call", json!({ "name": name, "arguments": arguments }), cancelled)?;
         Ok(McpCallResult { text: render_content(&result), is_error: result["isError"].as_bool().unwrap_or(false) })
     }
+
+    fn is_alive(&self) -> bool {
+        !self.closed.load(Ordering::SeqCst)
+    }
 }
 
 /// A tool entry, or nothing for one without a name — there is no way to
@@ -270,6 +274,8 @@ impl StdioServer {
     /// server's own timeout — a first `npx` run downloads the package.
     pub fn start(config: &McpServerConfig, cwd: &Path, cancelled: &dyn Fn() -> bool) -> Result<Self, McpError> {
         let mut command = Command::new(&config.command);
+        // Before the entry's own `env`, which may set a `PATH` of its own.
+        crate::infra::login_path::apply(&mut command);
         command
             .args(&config.args)
             .envs(&config.env)
@@ -308,6 +314,13 @@ impl McpClient for StdioServer {
 
     fn call_tool(&self, name: &str, arguments: Value, cancelled: &dyn Fn() -> bool) -> Result<McpCallResult, McpError> {
         self.connection.call_tool(name, arguments, cancelled)
+    }
+
+    /// The stream closing is how an exit shows first; the process is asked
+    /// too, for one that is gone while its stdout is still held open by a
+    /// child of its own.
+    fn is_alive(&self) -> bool {
+        self.connection.is_alive() && matches!(lock(&self.child).try_wait(), Ok(None))
     }
 }
 
@@ -627,6 +640,19 @@ mod tests {
         assert!(matches!(&err, McpError::Handshake(m) if m == "no token (code -32000)"), "{err}");
     }
 
+    /// A server that hung up is known gone without a call to find out.
+    #[test]
+    fn a_connection_whose_server_hung_up_is_not_alive() {
+        let (connection, _fake) = fake(SECOND, |request| match request["method"].as_str() {
+            Some("tools/list") => None,
+            _ => well_behaved(request),
+        });
+        connection.initialize(&|| false).unwrap();
+        assert!(connection.is_alive());
+        connection.list_tools().unwrap_err();
+        assert!(!connection.is_alive());
+    }
+
     #[test]
     fn an_initialize_answer_without_a_version_is_a_protocol_error() {
         let (connection, _fake) = fake(SECOND, |request| ok(request, json!({})));
@@ -684,6 +710,45 @@ mod tests {
         let lines: Vec<&str> = stderr.lines().collect();
         assert_eq!(lines.len(), STDERR_LINES);
         assert_eq!((lines[0], lines[STDERR_LINES - 1]), ("line 11", "line 30"));
+    }
+
+    /// What the restart in `services::mcp_servers` goes by: a server that
+    /// died on a call is known dead before the next one is sent.
+    #[cfg(unix)]
+    #[test]
+    fn a_process_that_exits_on_a_call_is_no_longer_alive() {
+        let script = r#"
+            read init; echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}'
+            read initialized
+            read call; echo 'crashed' >&2; exit 2
+        "#;
+        let dir = crate::testing::temp_dir("mcp-stdio-alive");
+        let server = StdioServer::start(&sh(script, 5), &dir, &|| false).unwrap();
+        assert!(server.is_alive());
+        let err = server.call_tool("hi", json!({}), &|| false).unwrap_err();
+        assert_eq!(err, McpError::Exited { code: Some(2), stderr: "crashed".into() });
+        assert!(!server.is_alive());
+    }
+
+    /// Its stdout still open — held by a child it left behind — while the
+    /// server itself is gone.
+    #[cfg(unix)]
+    #[test]
+    fn a_server_whose_process_exited_is_not_alive_while_its_stream_stays_open() {
+        let script = r#"
+            read init; echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}'
+            read initialized
+            sleep 300 &
+            exit 0
+        "#;
+        let dir = crate::testing::temp_dir("mcp-stdio-orphan");
+        let server = StdioServer::start(&sh(script, 5), &dir, &|| false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while server.is_alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!server.is_alive());
+        assert!(server.connection.is_alive(), "the stream alone would not have told");
     }
 
     #[test]

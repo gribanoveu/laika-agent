@@ -59,13 +59,14 @@ export default function App() {
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
   const skills = useSkills(tab === "skills" && !asideCollapsed);
-  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing);
   const rules = useRules(tab === "rules" && !asideCollapsed, workspace.path);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
   const agent = useAgentTurn({ onSaved: history.refresh });
+  // Servers start with an Agent turn and may stop during one.
+  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing, agent.turn.status);
   const llm = useLlmSettings();
   const theme = useTheme();
   const panels = usePanelSizes({

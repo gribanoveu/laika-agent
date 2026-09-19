@@ -1,9 +1,13 @@
 //! The MCP tab and its configuration editor.
 
+use std::sync::Arc;
+
 use serde::Serialize;
+use tauri::State;
 
 use crate::domain::mcp::{self, McpConfig, McpServerItem};
 use crate::infra::mcp_config;
+use crate::services::mcp_servers::McpServers;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,29 +19,73 @@ pub struct McpView {
     pub servers: Vec<McpServerItem>,
 }
 
-fn view(config: Option<McpConfig>) -> Result<McpView, String> {
-    let config = match config {
-        Some(config) => config,
-        None => mcp_config::load().map_err(|e| e.to_string())?,
-    };
+fn view(config: McpConfig, servers: &McpServers) -> Result<McpView, String> {
+    let items = mcp::items(&config)
+        .into_iter()
+        .map(|item| McpServerItem { state: servers.state(&item.name, &config.mcp_servers[&item.name]), ..item })
+        .collect();
     Ok(McpView {
         path: mcp_config::path().map_err(|e| e.to_string())?.display().to_string(),
         text: mcp_config::read_text().map_err(|e| e.to_string())?,
-        servers: mcp::items(&config),
+        servers: items,
     })
 }
 
-#[tauri::command]
-pub fn mcp_config_get() -> Result<McpView, String> {
-    view(None)
+/// A change stops what it switched off or changed at once; what it added
+/// starts with the next Agent turn.
+fn changed(config: McpConfig, servers: &McpServers) -> Result<McpView, String> {
+    servers.prune(&config);
+    view(config, servers)
 }
 
 #[tauri::command]
-pub fn mcp_config_save(text: String) -> Result<McpView, String> {
-    view(Some(mcp_config::save_text(&text).map_err(|e| e.to_string())?))
+pub fn mcp_config_get(servers: State<'_, Arc<McpServers>>) -> Result<McpView, String> {
+    view(mcp_config::load().map_err(|e| e.to_string())?, &servers)
 }
 
 #[tauri::command]
-pub fn mcp_server_set_enabled(name: String, enabled: bool) -> Result<McpView, String> {
-    view(Some(mcp_config::set_enabled(&name, enabled).map_err(|e| e.to_string())?))
+pub fn mcp_config_save(text: String, servers: State<'_, Arc<McpServers>>) -> Result<McpView, String> {
+    changed(mcp_config::save_text(&text).map_err(|e| e.to_string())?, &servers)
+}
+
+#[tauri::command]
+pub fn mcp_server_set_enabled(
+    name: String,
+    enabled: bool,
+    servers: State<'_, Arc<McpServers>>,
+) -> Result<McpView, String> {
+    changed(mcp_config::set_enabled(&name, enabled).map_err(|e| e.to_string())?, &servers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::mcp::{McpClient, McpError, McpServerState, McpTool};
+
+    struct Idle;
+    impl McpClient for Idle {
+        fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
+            Ok(vec![])
+        }
+        fn call_tool(&self, _: &str, _: serde_json::Value, _: &dyn Fn() -> bool) -> Result<mcp::McpCallResult, McpError> {
+            Err(McpError::Cancelled)
+        }
+    }
+
+    /// The switch in the tab stops the server, rather than leaving it to the
+    /// next turn, and the row says so at once.
+    #[test]
+    fn a_change_stops_what_it_switched_off_and_the_view_shows_it() {
+        crate::testing::with_app_dir("cmd-mcp-changed", || {
+            let config = mcp_config::save_text(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap();
+            let servers = McpServers::new(Arc::new(|_, _, _| Ok(Arc::new(Idle) as Arc<dyn McpClient>)));
+            servers.for_turn(&config, &crate::testing::temp_dir("cmd-mcp-changed-root"), &|| false);
+            assert_eq!(view(config.clone(), &servers).unwrap().servers[0].state, McpServerState::Running { tools: 0 });
+
+            let off = mcp_config::set_enabled("a", false).unwrap();
+            let shown = changed(off, &servers).unwrap();
+            assert_eq!(shown.servers[0].state, McpServerState::NotStarted);
+            assert_eq!(servers.state("a", &config.mcp_servers["a"]), McpServerState::NotStarted, "stopped");
+        });
+    }
 }

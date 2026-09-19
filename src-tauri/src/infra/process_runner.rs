@@ -68,6 +68,7 @@ pub fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     set_process_group(&mut command);
+    super::login_path::apply(&mut command);
 
     let mut child = command
         .spawn()

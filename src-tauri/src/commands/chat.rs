@@ -32,6 +32,9 @@ use crate::domain::turn::{
 use crate::services::ai_tools::preview;
 use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
 use crate::services::context_compaction;
+use crate::services::mcp_servers::McpServers;
+use crate::domain::mcp::McpTools;
+use crate::infra::mcp_config;
 use crate::services::llm_session;
 use crate::services::workspace_index::WorkspaceIndex;
 
@@ -346,6 +349,24 @@ fn searcher_of<R: Runtime>(app: &AppHandle<R>) -> Option<CodeSearchFn> {
     app.try_state::<Arc<WorkspaceIndex>>()?.searcher()
 }
 
+/// Only an Agent turn starts servers: the others cannot offer their tools,
+/// and a server's start is already something done on the user's machine.
+/// A configuration that does not parse costs the turn its servers, not the
+/// turn — the tab says what is wrong with the file.
+fn mcp_for_turn(
+    servers: Option<&McpServers>,
+    mode: ConversationMode,
+    workspace: &std::path::Path,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> McpTools {
+    match servers {
+        Some(servers) if mode == ConversationMode::Agent => {
+            servers.for_turn(&mcp_config::load().unwrap_or_default(), workspace, cancelled)
+        }
+        _ => McpTools::default(),
+    }
+}
+
 /// Assembles a turn and runs it on a blocking thread.
 ///
 /// Off the event loop because the whole turn is synchronous — provider calls,
@@ -366,6 +387,7 @@ where
     let approval = state.approval()?;
     let mode = state.mode();
     let search = searcher_of(&app);
+    let mcp_servers = app.try_state::<Arc<McpServers>>().map(|servers| Arc::clone(&servers));
 
     tauri::async_runtime::spawn_blocking(move || {
         let events = chat_event_sink(&app, turn_id);
@@ -381,9 +403,10 @@ where
         let rules = crate::services::project_rules::load(&workspace);
         let record = crate::infra::tool_call_log::recorder();
         let log_call = |entry: crate::domain::tool_call_log::ToolCallLogEntry| record(&entry);
-        // No server is started yet — that is F-7.4d. Until then the turn has
-        // the whole path and nothing on it.
-        let mcp = crate::domain::mcp::McpTools::default();
+        // Started only where they can be offered. A configuration that does
+        // not parse costs the turn its servers, not the turn: the tab says
+        // what is wrong with the file.
+        let mcp = mcp_for_turn(mcp_servers.as_deref(), mode, &workspace, &cancelled);
 
         let turn = Turn {
             events: &events,
@@ -418,6 +441,26 @@ mod tests {
     /// checks about behaviour rather than about Tauri.
     fn state() -> Arc<AgentState> {
         Arc::new(AgentState::default())
+    }
+
+    #[test]
+    fn only_an_agent_turn_starts_mcp_servers() {
+        crate::testing::with_app_dir("cmd-mcp-mode", || {
+            mcp_config::save_text(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap();
+            let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = Arc::clone(&starts);
+            let servers = McpServers::new(Arc::new(move |_, _, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Err(crate::domain::mcp::McpError::NotStarted("test".into()))
+            }));
+            let root = temp_dir("cmd-mcp-mode-root");
+            for mode in [ConversationMode::Plan, ConversationMode::Ask] {
+                mcp_for_turn(Some(&servers), mode, &root, &|| false);
+            }
+            assert_eq!(starts.load(Ordering::SeqCst), 0);
+            mcp_for_turn(Some(&servers), ConversationMode::Agent, &root, &|| false);
+            assert_eq!(starts.load(Ordering::SeqCst), 1);
+        });
     }
 
     #[test]

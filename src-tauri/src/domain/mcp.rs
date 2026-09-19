@@ -75,6 +75,26 @@ pub struct McpServerItem {
     /// Why this server will not start, when that is already known from its
     /// entry alone.
     pub error: Option<String>,
+    /// What its process is doing. `items` does not know — it reads only the
+    /// file — and says `NotStarted`; the running servers fill it in.
+    pub state: McpServerState,
+}
+
+/// A server's process, as the tab shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum McpServerState {
+    /// Servers start with the first Agent turn after the file names them.
+    #[default]
+    NotStarted,
+    Starting,
+    Running { tools: usize },
+    /// It was running and stopped; the next call to it starts it again.
+    Exited { error: String },
+    /// It never started. Not retried turn after turn — a server that hangs
+    /// on start would cost every turn its timeout — until its entry changes
+    /// or it is switched off and on.
+    Failed { error: String },
 }
 
 #[derive(Debug, Error)]
@@ -115,6 +135,7 @@ pub fn items(config: &McpConfig) -> Vec<McpServerItem> {
                 command: command_line(server),
                 enabled: !server.disabled,
                 error: clash.or_else(|| problem(name, server)),
+                state: McpServerState::NotStarted,
             }
         })
         .collect()
@@ -193,6 +214,8 @@ pub enum McpError {
     Server { code: i64, message: String },
     #[error("the MCP server's answer is not what the protocol says: {0}")]
     Protocol(String),
+    #[error("the MCP server stopped again after its restart this turn; it is started once more with the next turn")]
+    NotRestarted,
 }
 
 fn last_output(stderr: &str) -> String {
@@ -221,6 +244,13 @@ pub trait McpClient: Send + Sync {
         arguments: Value,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<McpCallResult, McpError>;
+
+    /// `false` once the server is known to be gone — its process exited, its
+    /// stream closed. A client that cannot tell says `true`, and the next
+    /// call finds out.
+    fn is_alive(&self) -> bool {
+        true
+    }
 }
 
 // ------------------------------------------------------ the turn's view
@@ -377,6 +407,7 @@ mod tests {
                 command: "npx -y @modelcontextprotocol/server-github".into(),
                 enabled: true,
                 error: None,
+                state: McpServerState::NotStarted,
             }]
         );
     }

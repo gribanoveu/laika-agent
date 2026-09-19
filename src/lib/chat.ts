@@ -445,8 +445,22 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
 
 // ---------------------------------------------------------------- MCP servers
 
+/** Mirrors `domain::mcp::McpServerState`: what the server's process is doing. */
+export type McpServerState =
+  | { state: "notStarted" }
+  | { state: "starting" }
+  | { state: "running"; tools: number }
+  | { state: "exited"; error: string }
+  | { state: "failed"; error: string };
+
 /** Mirrors `domain::mcp::McpServerItem`. `error` is why it will not start, when the entry alone says. */
-export type McpServerItem = { name: string; command: string; enabled: boolean; error: string | null };
+export type McpServerItem = {
+  name: string;
+  command: string;
+  enabled: boolean;
+  error: string | null;
+  state: McpServerState;
+};
 /** The file (`text`, for the editor), where it is, and its servers as rows. */
 export type McpView = { path: string; text: string; servers: McpServerItem[] };
 

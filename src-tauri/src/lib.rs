@@ -16,6 +16,13 @@ pub fn run() {
         // reach a turn while it runs. `Arc` because a turn runs on a blocking
         // thread that outlives the command call that started it.
         .manage(std::sync::Arc::new(commands::chat::AgentState::default()))
+        // The MCP servers, kept running between turns.
+        .manage(std::sync::Arc::new(services::mcp_servers::McpServers::new(std::sync::Arc::new(
+            |config, cwd, cancelled| {
+                let server = infra::mcp_stdio::StdioServer::start(config, cwd, cancelled)?;
+                Ok(std::sync::Arc::new(server) as std::sync::Arc<dyn domain::mcp::McpClient>)
+            },
+        ))))
         // The index of the open folder, and the one embedding model every
         // folder shares. Built in `setup` because the model's location is
         // Tauri's to know: the resource directory of the installed app.
@@ -72,6 +79,15 @@ pub fn run() {
             commands::tool_log::tool_log_enabled_get,
             commands::tool_log::tool_log_enabled_set,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Servers are in process groups of their own, so the app's exit
+            // does not take them along; most would notice their stdin closing
+            // and exit, and this does not leave that to them.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                app.state::<std::sync::Arc<services::mcp_servers::McpServers>>().stop_all();
+            }
+        });
 }
