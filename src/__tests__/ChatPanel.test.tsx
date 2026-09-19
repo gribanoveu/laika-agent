@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { ChatPanel, Preview } from "../components/ChatPanel";
+import { ChatPanel, Preview, formatDuration } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
 import type { ContextUsage } from "../lib/chat";
 import { fromSnapshot, type IndexState } from "../lib/indexStatus";
@@ -281,6 +281,32 @@ describe("what a call would do", () => {
   test("and so does a call whose preview has not arrived yet", () => {
     const { container } = render(<Preview preview={undefined} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("how long the agent worked", () => {
+  const turn: Block[] = [
+    { kind: "user", id: "u0", text: "fix it", workedMs: 83_000 },
+    { kind: "message", id: "m1", round: 1, text: "fixed" },
+  ] as Block[];
+
+  test("reads like Claude Code's", () => {
+    expect([formatDuration(12_400), formatDuration(83_000), formatDuration(3_900_000)]).toEqual([
+      "12s",
+      "1m 23s",
+      "1h 5m",
+    ]);
+  });
+
+  test("is said under a finished answer", () => {
+    panel(state(turn, { status: "done" }));
+    expect(screen.getByText("Worked for 1m 23s")).toBeTruthy();
+  });
+
+  test("ticks at the end of the thread while the turn runs", () => {
+    panel(state([{ kind: "user", id: "u0", text: "fix it" }], { status: "running", runningSince: Date.now() - 5_000 }));
+    expect(screen.getByRole("timer").textContent).toBe("Working… 5s");
+    expect(screen.queryByText(/Worked for/)).toBeNull();
   });
 });
 

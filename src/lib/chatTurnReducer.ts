@@ -18,7 +18,14 @@ import {
 export type ToolStatus = "running" | "done" | "failed";
 
 export type Block =
-  | { kind: "user"; id: string; text: string }
+  | {
+      kind: "user";
+      id: string;
+      text: string;
+      /** How long the agent worked on this message, in ms — its own time,
+          not the time spent waiting on an approval. Saved with the chat. */
+      workedMs?: number;
+    }
   | { kind: "message"; id: string; round: number; text: string }
   | { kind: "reasoning"; id: string; round: number; text: string }
   | { kind: "steer"; id: string; text: string }
@@ -58,6 +65,8 @@ export type TurnState = {
   retrying: { attempt: number; maxAttempts: number; delaySeconds: number } | null;
   /** Set when the turn pauses; sent back verbatim to continue it. */
   checkpoint: Checkpoint | null;
+  /** When the agent last started working (ms since the epoch); `null` while it is not. */
+  runningSince: number | null;
 };
 
 export const emptyTurn = (): TurnState => ({
@@ -68,12 +77,34 @@ export const emptyTurn = (): TurnState => ({
   usage: null,
   retrying: null,
   checkpoint: null,
+  runningSince: null,
 });
 
-export function appendUserMessage(state: TurnState, text: string): TurnState {
+/**
+ * Stops the clock: the time since `runningSince` is added to the message that
+ * started the turn. Every way a stretch of work ends goes through here — a
+ * pause for approval, the end, a failure.
+ */
+function stopClock(state: TurnState, now: number): TurnState {
+  if (state.runningSince === null) return state;
+  const spent = Math.max(0, now - state.runningSince);
+  const at = state.blocks.map((b) => b.kind).lastIndexOf("user");
+  const blocks = state.blocks.map((block, i) =>
+    i === at && block.kind === "user" ? { ...block, workedMs: (block.workedMs ?? 0) + spent } : block,
+  );
+  return { ...state, blocks, runningSince: null };
+}
+
+/** The turn ended without an outcome — it failed on the way. */
+export function endTurn(state: TurnState, now = Date.now()): TurnState {
+  return { ...stopClock(state, now), status: "done" };
+}
+
+export function appendUserMessage(state: TurnState, text: string, now = Date.now()): TurnState {
   return {
     ...state,
     status: "running",
+    runningSince: now,
     // A fresh turn numbers its events from one again — `seq` is a cursor
     // within a turn, not within the conversation. Carrying the previous
     // turn's cursor over would make every event of this one look like a
@@ -151,7 +182,8 @@ export function acceptEvent(state: TurnState, event: TurnEvent): TurnState {
 }
 
 /** What the turn's own outcome adds: the pause, or the end. */
-export function acceptOutcome(state: TurnState, outcome: Outcome): TurnState {
+export function acceptOutcome(state: TurnState, outcome: Outcome, now = Date.now()): TurnState {
+  state = stopClock(state, now);
   if (outcome.status === "pendingApproval") {
     const checkpoint = outcome.value;
     return {
@@ -178,10 +210,11 @@ export function acceptOutcome(state: TurnState, outcome: Outcome): TurnState {
 }
 
 /** Removes the pause once it has been answered, so the card does not linger. */
-export function clearApproval(state: TurnState): TurnState {
+export function clearApproval(state: TurnState, now = Date.now()): TurnState {
   return {
     ...state,
     status: "running",
+    runningSince: now,
     checkpoint: null,
     blocks: state.blocks.filter((block) => block.kind !== "approval"),
   };

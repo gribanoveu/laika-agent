@@ -23,6 +23,7 @@ import {
   appendNotice,
   appendUserMessage,
   clearApproval,
+  endTurn,
   emptyTurn,
   restoredTurn,
   type TurnState,
@@ -194,7 +195,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
         finish(await startChat(id, history.current, todos.current, planRef.current));
       } catch (e) {
         setError(String(e));
-        setTurn((state) => ({ ...state, status: "done" }));
+        setTurn((state) => endTurn(state));
       }
     },
     [turn.status, turn.blocks.length, listen, finish, makeRoom],
@@ -206,14 +207,14 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       const checkpoint = turn.checkpoint;
       if (!checkpoint) return;
 
-      setTurn(clearApproval);
+      setTurn((state) => clearApproval(state));
       const id = `turn-${turnId.current}`;
       try {
         for (const tool of always) await alwaysAllow(tool);
         finish(await resumeChat(id, checkpoint, decisions, planRef.current));
       } catch (e) {
         setError(String(e));
-        setTurn((state) => ({ ...state, status: "done" }));
+        setTurn((state) => endTurn(state));
       }
     },
     [turn.checkpoint, finish],

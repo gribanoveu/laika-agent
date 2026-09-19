@@ -101,6 +101,33 @@
 .turn:last-child {
   margin-bottom: 0;
 }
+
+/* How long the agent worked: ticking while it does, a quiet line after. */
+.turn-clock {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.turn-clock.live {
+  margin-top: 14px;
+  color: var(--text-dim);
+}
+.turn-clock-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: turn-clock-pulse 1.2s ease-in-out infinite;
+}
+@keyframes turn-clock-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
 .role {
   font-size: var(--fs-xs);
   color: var(--text-faint);

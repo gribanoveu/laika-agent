@@ -5,6 +5,7 @@ import {
   appendUserMessage,
   clearApproval,
   emptyTurn,
+  endTurn,
   restoredTurn,
   type Block,
   type TurnState,
@@ -243,6 +244,24 @@ describe("pausing", () => {
     expect(kinds(state)).toEqual([]);
     expect(state.checkpoint).toBeNull();
     expect(state.status).toBe("running");
+  });
+
+  /// Like Claude Code's "Worked for": the agent's own time. Waiting on the
+  /// user's answer is not work, and a failure still ends the clock.
+  test("the time worked is kept on the message, without the wait for an answer", () => {
+    const result = { text: "", truncated: false, todos: [] };
+    const worked = (state: TurnState) => (state.blocks[0] as { workedMs?: number }).workedMs;
+
+    let state = appendUserMessage(emptyTurn(), "fix it", 1_000);
+    expect(state.runningSince).toBe(1_000);
+    state = acceptOutcome(state, { status: "pendingApproval", value: checkpoint }, 4_000);
+    expect(state.runningSince).toBeNull();
+    state = clearApproval(state, 60_000);
+    state = acceptOutcome(state, { status: "done", value: result }, 62_000);
+    expect(worked(state)).toBe(5_000);
+
+    const failed = endTurn(appendUserMessage(emptyTurn(), "again", 0), 7_000);
+    expect([failed.status, worked(failed)]).toEqual(["done", 7_000]);
   });
 
   test("an ending turn is done, a stopped one is cancelled", () => {

@@ -154,8 +154,11 @@ describe("saving", () => {
       { role: "user", content: "fix the parser" },
       { role: "assistant", content: "here you go" },
     ]);
-    // The transcript, not a reconstruction of it from the messages.
-    expect(args.blocks).toEqual([{ kind: "user", id: "user:0", text: "fix the parser" }]);
+    // The transcript, not a reconstruction of it from the messages — with
+    // how long the agent worked on it, so a reopened chat still says so.
+    expect(args.blocks).toEqual([
+      { kind: "user", id: "user:0", text: "fix the parser", workedMs: expect.any(Number) },
+    ]);
     expect(result.current.chatId).toBe(args.id as string);
   });
 

@@ -235,6 +235,51 @@ function group(blocks: Block[]): Group[] {
   return groups;
 }
 
+/** 12s, 1m 23s, 1h 5m — the way Claude Code says how long it worked. */
+export function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** The time the agent has spent on the turn under way, ticking. */
+function WorkingClock({ since, before }: { since: number; before: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+  return (
+    <div className="turn-clock live" role="timer">
+      <span className="turn-clock-dot" aria-hidden="true" />
+      Working… {formatDuration(before + Math.max(0, now - since))}
+    </div>
+  );
+}
+
+/** The message that started the turn a group belongs to. */
+function turnMessage(groups: Group[], index: number) {
+  for (let i = index; i >= 0; i--) {
+    const found = groups[i].blocks.find((b) => b.kind === "user");
+    if (found?.kind === "user") return found;
+  }
+  return undefined;
+}
+
+/**
+ * "Worked for 1m 23s" under the last group of a finished turn's answer. The
+ * turn under way shows its ticking clock at the end of the thread instead.
+ */
+function workedFooter(groups: Group[], index: number, turn: TurnState) {
+  const next = groups[index + 1];
+  if (groups[index].role !== "agent" || (next && next.role !== "user")) return null;
+  const live = !next && (turn.status === "running" || turn.status === "awaitingApproval");
+  const worked = turnMessage(groups, index)?.workedMs;
+  if (live || !worked) return null;
+  return <div className="turn-clock">Worked for {formatDuration(worked)}</div>;
+}
+
 type Tool = Extract<Block, { kind: "tool" }>;
 type Run = { kind: "run"; id: string; blocks: Block[] };
 
@@ -388,8 +433,12 @@ export function ChatPanel({
                   renderBlock(block, onDecide, block.id === streamingId)
                 ),
               )}
+              {workedFooter(groups, index, turn)}
             </div>
           ))
+        )}
+        {turn.status === "running" && turn.runningSince !== null && (
+          <WorkingClock since={turn.runningSince} before={turnMessage(groups, groups.length - 1)?.workedMs ?? 0} />
         )}
         {planReady && (
           <div className="plan-handoff">
