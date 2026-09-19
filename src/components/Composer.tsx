@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
 import { Dropdown } from "./Dropdown";
-import type { ConversationMode } from "../lib/chat";
+import { ContextMeter } from "./ContextMeter";
+import type { ChatUsage, ContextUsage, ConversationMode } from "../lib/chat";
 import { choiceKey, type ModelChoice } from "../hooks/useLlmSettings";
 import "./Composer.css";
 
@@ -43,6 +44,11 @@ type Props = {
   onModel: (choice: ModelChoice) => void;
   /** Asks the providers what they serve; called when the model menu opens. */
   onLoadModels: () => void;
+  /** What the next request will cost, as the backend's own estimate — the one
+      that decides when a conversation is folded. */
+  context: ContextUsage | null;
+  usage: ChatUsage | null;
+  onCompact: () => void;
 };
 
 export function Composer({
@@ -57,6 +63,9 @@ export function Composer({
   models,
   onModel,
   onLoadModels,
+  context,
+  usage,
+  onCompact,
 }: Props) {
   const [text, setText] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
@@ -149,6 +158,13 @@ export function Composer({
             if (choice) onModel(choice);
           }}
         />
+        {/* Shown from the first render, before anything has been said: an
+            empty conversation already costs the prompt and the schemas. */}
+        {context && (
+          <span className="composer-meter">
+            <ContextMeter context={context} usage={usage} running={running} onCompact={onCompact} up />
+          </span>
+        )}
         {/* One button, two jobs: while a turn runs the only thing worth doing
             with it is stopping — and a send button that does nothing during a
             turn is worse than no button. */}

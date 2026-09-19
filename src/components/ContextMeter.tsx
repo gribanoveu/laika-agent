@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatUsage, ContextUsage } from "../lib/chat";
 import "./ContextMeter.css";
 
-// How full the model's window is, as a ring in the chat header; a click opens
+// How full the model's window is, as a ring beside the send button; a click opens
 // what the tokens are spent on and the one thing to do about it — fold the
 // older part of the conversation into a summary.
 //
@@ -22,9 +22,11 @@ type Props = {
   /** Mid-turn the history is the turn's: folding it from under a running request is not offered. */
   running: boolean;
   onCompact: () => void;
+  /** Opens the panel upwards — for a meter at the bottom of the window. */
+  up?: boolean;
 };
 
-export function ContextMeter({ context, usage, running, onCompact }: Props) {
+export function ContextMeter({ context, usage, running, onCompact, up = false }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -74,7 +76,7 @@ export function ContextMeter({ context, usage, running, onCompact }: Props) {
       </button>
 
       {open && (
-        <div className="ctx-pop" role="dialog" aria-label="Context">
+        <div className={`ctx-pop${up ? " up" : ""}`} role="dialog" aria-label="Context">
           <div className="ctx-head">
             <span>Context window</span>
             {percent !== null && <span className="ctx-percent">{percent}%</span>}

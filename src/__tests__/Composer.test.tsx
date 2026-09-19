@@ -45,6 +45,9 @@ function composer(
       models={{ choices: [], current: null }}
       onModel={() => {}}
       onLoadModels={() => {}}
+      context={null}
+      usage={null}
+      onCompact={() => {}}
     />,
   );
 }
@@ -177,6 +180,9 @@ describe("text handed to the box", () => {
       models={{ choices: [], current: null }}
       onModel={() => {}}
       onLoadModels={() => {}}
+      context={null}
+      usage={null}
+      onCompact={() => {}}
     />
   );
 
@@ -228,6 +234,9 @@ describe("the model chip", () => {
         models={models}
         onModel={(c) => picked.push(`${c.providerId}|${c.model}`)}
         onLoadModels={() => loads++}
+        context={{ instructions: 1_000, tools: 3_000, conversation: 4_000, total: 8_000, limit: 200_000, compactsAt: null }}
+        usage={null}
+        onCompact={() => {}}
       />,
     );
 
@@ -236,5 +245,27 @@ describe("the model chip", () => {
     expect(loads).toBe(1);
     fireEvent.click(screen.getByRole("option", { name: /openrouter\/openai\/gpt-5/ }));
     expect(picked).toEqual(["OpenRouter|openai/gpt-5"]);
+  });
+
+  test("the context ring sits in the bar, beside the send button", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        onStop={() => {}}
+        running={false}
+        conversation="agent"
+        onConversation={() => {}}
+        unattended={false}
+        onUnattended={() => {}}
+        models={{ choices: [], current: null }}
+        onModel={() => {}}
+        onLoadModels={() => {}}
+        context={{ instructions: 1_000, tools: 3_000, conversation: 4_000, total: 8_000, limit: 200_000, compactsAt: null }}
+        usage={null}
+        onCompact={() => {}}
+      />,
+    );
+    const ring = screen.getByRole("button", { name: "Context usage: 4%" });
+    expect(ring.closest(".composer-bar")).toBeTruthy();
   });
 });

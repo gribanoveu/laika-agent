@@ -208,12 +208,9 @@ export default function App() {
             workspace={workspace.path}
             index={index}
             turn={agent.turn}
-            usage={agent.turn.usage}
-            context={agent.context}
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
             onNewChat={newChat}
-            onCompact={compactNow}
             asideOpen={!asideHidden}
             onToggleAside={() => setAsideHidden((v) => !v)}
             onImplement={conversation.value === "plan" ? implement : undefined}
@@ -233,6 +230,9 @@ export default function App() {
             models={llm.models}
             onModel={(choice) => llm.pickModel(choice.providerId, choice.model)}
             onLoadModels={llm.loadModels}
+            context={agent.context}
+            usage={agent.turn.usage}
+            onCompact={compactNow}
           />
         </main>
 

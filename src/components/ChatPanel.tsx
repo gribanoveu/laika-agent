@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { IndexBadge } from "./IndexBadge";
-import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
 import { describeActive, describeRun, describeTool } from "../lib/describeTool";
@@ -26,8 +25,6 @@ import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
-  type ChatUsage,
-  type ContextUsage,
   type ToolCallDecision,
   type ToolPreview,
 } from "../lib/chat";
@@ -363,14 +360,9 @@ type Props = {
   index?: IndexState | null;
   workspace: string | null;
   turn: TurnState;
-  usage: ChatUsage | null;
-  /** What the next request will cost, as the backend's own estimate — the one
-      that decides when a conversation is folded. */
-  context: ContextUsage | null;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
   onOpenRepo: () => void;
   onNewChat: () => void;
-  onCompact: () => void;
   /** Present while the conversation is in Plan mode: hands the plan to Agent mode. */
   onImplement?: () => void;
   /** Opens the Plan tab, where the plan is read and edited before handing it over. */
@@ -386,13 +378,10 @@ export function ChatPanel({
   title = null,
   workspace,
   turn,
-  usage,
-  context,
   index,
   onDecide,
   onOpenRepo,
   onNewChat,
-  onCompact,
   onImplement,
   onOpenPlan,
   branchable = null,
@@ -427,16 +416,6 @@ export function ChatPanel({
               retrying in {turn.retrying.delaySeconds}s ({turn.retrying.attempt}/
               {turn.retrying.maxAttempts})
             </span>
-          )}
-          {/* Shown from the first render, before anything has been said: an
-              empty conversation already costs the prompt and the schemas. */}
-          {context && (
-            <ContextMeter
-              context={context}
-              usage={usage}
-              running={turn.status === "running"}
-              onCompact={onCompact}
-            />
           )}
           {onToggleAside && (
             <button

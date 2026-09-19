@@ -38,6 +38,13 @@
   align-items: center;
   gap: 5px;
 }
+/* The meter and the send button share the right end of the bar. */
+.composer-meter {
+  margin-left: auto;
+}
+.composer .composer-meter + .send {
+  margin-left: 0;
+}
 .composer .send {
   margin-left: auto;
   width: 30px;

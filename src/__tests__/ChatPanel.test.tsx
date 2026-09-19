@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ChatPanel, Preview, formatDuration } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
-import type { ContextUsage } from "../lib/chat";
 import { fromSnapshot, type IndexState } from "../lib/indexStatus";
 
 // The transcript's own rules: who a block belongs to, and what the approval
@@ -15,32 +14,19 @@ const state = (blocks: Block[], over: Partial<TurnState> = {}): TurnState => ({
   ...over,
 });
 
-const usage = (over: Partial<ContextUsage> = {}): ContextUsage => ({
-  instructions: 1_000,
-  tools: 3_000,
-  conversation: 4_000,
-  total: 8_000,
-  limit: null,
-  compactsAt: null,
-  ...over,
-});
-
 const panel = (
   turn: TurnState,
   onDecide = () => {},
-  over: { context?: ContextUsage | null; onCompact?: () => void; index?: IndexState | null; onImplement?: () => void } = {},
+  over: { index?: IndexState | null; onImplement?: () => void } = {},
 ) =>
   render(
     <ChatPanel
       workspace="/tmp/project"
       index={over.index}
       turn={turn}
-      usage={turn.usage}
-      context={over.context === undefined ? usage() : over.context}
       onDecide={onDecide}
       onOpenRepo={() => {}}
       onNewChat={() => {}}
-      onCompact={over.onCompact ?? (() => {})}
       onImplement={over.onImplement}
     />,
   );
@@ -329,12 +315,9 @@ describe("the header", () => {
         title="Fix the tax rounding"
         workspace="/tmp/project"
         turn={state([])}
-        usage={null}
-        context={null}
         onDecide={() => {}}
         onOpenRepo={() => {}}
         onNewChat={() => {}}
-        onCompact={() => {}}
       />,
     );
     expect(screen.getByRole("heading", { name: "Fix the tax rounding" })).toBeTruthy();
@@ -347,12 +330,9 @@ describe("the header", () => {
       <ChatPanel
         workspace="/tmp/project"
         turn={state([])}
-        usage={null}
-        context={null}
         onDecide={() => {}}
         onOpenRepo={() => {}}
         onNewChat={() => {}}
-        onCompact={() => {}}
         onToggleAside={() => toggled++}
       />,
     );
@@ -363,12 +343,9 @@ describe("the header", () => {
       <ChatPanel
         workspace="/tmp/project"
         turn={state([])}
-        usage={null}
-        context={null}
         onDecide={() => {}}
         onOpenRepo={() => {}}
         onNewChat={() => {}}
-        onCompact={() => {}}
         asideOpen
         onToggleAside={() => toggled++}
       />,
@@ -379,90 +356,6 @@ describe("the header", () => {
   test("a chat not saved yet is a new one", () => {
     panel(state([]));
     expect(screen.getByRole("heading", { name: "New chat" })).toBeTruthy();
-  });
-});
-
-describe("the context meter", () => {
-  const hi: Block[] = [{ kind: "user", id: "u0", text: "hi" }];
-  const openMeter = () => fireEvent.click(screen.getByRole("button", { name: /Context usage/ }));
-
-  /// Without the window, a number of tokens says nothing: 8k is nothing on a
-  /// 200k model and the end of the road on a 8k one.
-  test("shows how much of the window is gone, once the window is known", () => {
-    panel(state(hi), () => {}, { context: usage({ limit: 200_000, compactsAt: 160_000 }) });
-
-    expect(screen.getByRole("button", { name: "Context usage: 4%" })).toBeTruthy();
-    openMeter();
-    expect(screen.getByText("8k of 200k tokens")).toBeTruthy();
-  });
-
-  test("and asks for a compaction from its panel", () => {
-    let asked = 0;
-    panel(state(hi), () => {}, { onCompact: () => (asked += 1) });
-
-    openMeter();
-    fireEvent.click(screen.getByText("Compact now"));
-    expect(asked).toBe(1);
-    expect(screen.queryByRole("dialog", { name: "Context" })).toBeNull();
-  });
-
-  /// Mid-turn the history is the turn's, not the window's: shortening it from
-  /// under a running request is not something to offer.
-  test("but not while a turn is running", () => {
-    panel(state(hi, { status: "running" }), () => {}, {});
-
-    openMeter();
-    expect((screen.getByText("Compact now") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  /// The failure this closes: the meter used to read the last turn's reported
-  /// usage, so an untouched chat showed nothing at all — over a window with
-  /// the prompt and the tool schemas already in it.
-  test("is there before anything has been said", () => {
-    panel(state([]), () => {}, { context: usage({ conversation: 0, total: 4_000, limit: 200_000 }) });
-
-    expect(screen.getByRole("button", { name: "Context usage: 2%" })).toBeTruthy();
-  });
-
-  /// Folding the conversation moves one of the numbers. Showing only the
-  /// total hides which one a click would help with.
-  test("says what the tokens are spent on", () => {
-    panel(state(hi), () => {}, { context: usage({ limit: 200_000, compactsAt: 160_000 }) });
-
-    openMeter();
-    const text = screen.getByRole("dialog", { name: "Context" }).textContent ?? "";
-    expect(text).toContain("Instructions and tools4k");
-    expect(text).toContain("Conversation4k");
-    expect(text).toContain("at 160k");
-  });
-
-  /// This is an estimate. When the provider has said what the last request
-  /// really cost, that number belongs next to it rather than behind it.
-  test("puts the provider's own count beside the estimate, with the cached share", () => {
-    panel(
-      state(hi, {
-        usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800, cachedTokens: 9_000 },
-      }),
-    );
-
-    openMeter();
-    expect(screen.getByText("The last request actually cost 10k, 9k of it from the cache.")).toBeTruthy();
-  });
-
-  test("closes on Escape", () => {
-    panel(state(hi));
-    openMeter();
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Context" })).toBeNull();
-  });
-
-  /// No window is a number with no scale — not a ring filled against a guess.
-  test("fills no ring without a known window, and says why", () => {
-    const { container } = panel(state(hi));
-
-    expect(container.querySelector(".ctx-arc")).toBeNull();
-    openMeter();
-    expect(screen.getByText(/window is not known/)).toBeTruthy();
   });
 });
 
@@ -508,12 +401,9 @@ describe("branching from a message", () => {
       <ChatPanel
         workspace="/tmp/project"
         turn={state(blocks, { status: "done" })}
-        usage={null}
-        context={usage()}
         onDecide={() => {}}
         onOpenRepo={() => {}}
         onNewChat={() => {}}
-        onCompact={() => {}}
         branchable={branchable}
         onBranch={onBranch}
       />,
