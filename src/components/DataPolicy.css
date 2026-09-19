@@ -1,0 +1,44 @@
+.data-policy {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.data-policy-title {
+  margin: 0 0 8px;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--text);
+}
+.data-policy-rows {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.data-policy-row {
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  gap: 8px;
+}
+.data-policy-row dt {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--text-faint);
+}
+.data-policy-row dd {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+.data-policy-value {
+  font-size: 0.85em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.data-policy-note {
+  font-size: 0.8em;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+p.data-policy-note {
+  margin: 10px 0 0;
+}

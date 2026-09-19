@@ -1,0 +1,81 @@
+import type { HookItem, McpServerItem, ProviderView } from "../lib/chat";
+import "./DataPolicy.css";
+
+// Where the workspace's contents can go, drawn from what is configured right
+// now. The policy it summarises is `docs/08-data-policy.md`; each row names an
+// exit and who opened it.
+
+type Props = {
+  provider: ProviderView | null;
+  debugLogging: boolean;
+  /** `null` while not loaded yet. */
+  mcpServers: McpServerItem[] | null;
+  hooks: HookItem[] | null;
+};
+
+/** The host a request goes to — what the user would recognise. */
+function host(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host || baseUrl;
+  } catch {
+    return baseUrl;
+  }
+}
+
+function listed(names: string[]): string {
+  return names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+}
+
+export function DataPolicy({ provider, debugLogging, mcpServers, hooks }: Props) {
+  const enabled = mcpServers?.filter((server) => server.enabled).map((server) => server.name) ?? null;
+  const rows: { name: string; value: string; note: string }[] = [
+    {
+      name: "Model provider",
+      value: provider ? `${host(provider.baseUrl)} (${provider.id})` : "none set up",
+      note: "Gets the conversation, including what the agent read from files. The only place the app itself sends anything.",
+    },
+    {
+      name: "MCP servers",
+      value: enabled === null ? "…" : enabled.length ? listed(enabled) : "none enabled",
+      note: "Get what the model puts in a call. Every call asks first.",
+    },
+    {
+      name: "Hooks",
+      value: hooks === null ? "…" : hooks.length ? `${hooks.length} command${hooks.length === 1 ? "" : "s"}` : "none",
+      note: "Your own commands; they get each call's input and result, file contents included.",
+    },
+    {
+      name: "Agent commands",
+      value: "can reach the network",
+      note: "A command that runs curl, ssh, git push and the like asks every time, even when commands are always allowed — but not in Auto. Code run by python or node is not seen.",
+    },
+    {
+      name: "Request log",
+      value: debugLogging ? "on" : "off",
+      note: debugLogging
+        ? "Every request is written whole to ~/.atlas-desktop/logs, on this machine."
+        : "Nothing about requests is written to disk.",
+    },
+  ];
+
+  return (
+    <section className="data-policy" aria-label="Where your data goes">
+      <h3 className="data-policy-title">Where your data goes</h3>
+      <dl className="data-policy-rows">
+        {rows.map((row) => (
+          <div className="data-policy-row" key={row.name}>
+            <dt>{row.name}</dt>
+            <dd>
+              <span className="data-policy-value">{row.value}</span>
+              <span className="data-policy-note">{row.note}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="data-policy-note">
+        Everything else stays in ~/.atlas-desktop: chats, the index (embeddings are computed on this machine) and
+        the tool log, with file contents cut out. No telemetry.
+      </p>
+    </section>
+  );
+}

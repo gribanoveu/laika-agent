@@ -11,6 +11,7 @@ import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useAgentTurn } from "./hooks/useAgentTurn";
+import { DataPolicy } from "./components/DataPolicy";
 import { useChatHistory } from "./hooks/useChatHistory";
 import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
@@ -69,8 +70,9 @@ export default function App() {
   // here: what belongs in it, and in what order, is the store's rule.
   const agent = useAgentTurn({ onSaved: history.refresh });
   // Servers start with an Agent turn and may stop during one.
-  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing, agent.turn.status);
-  const hooks = useHooks((tab === "hooks" && !asideCollapsed) || hooksEditing);
+  // Settings shows both in "Where your data goes".
+  const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing || settingsOpen, agent.turn.status);
+  const hooks = useHooks((tab === "hooks" && !asideCollapsed) || hooksEditing || settingsOpen);
   const processes = useProcesses(tab === "terminal" && !asideCollapsed);
   const llm = useLlmSettings();
   const theme = useTheme();
@@ -294,6 +296,12 @@ export default function App() {
             Open the log
           </button>
         </div>
+        <DataPolicy
+          provider={llm.settings?.providers.find((p) => p.id === llm.settings?.activeProviderId) ?? null}
+          debugLogging={llm.settings?.debugLogging ?? false}
+          mcpServers={mcp.view?.servers ?? null}
+          hooks={hooks.view?.hooks ?? null}
+        />
       </Modal>
 
       <Modal title="Tool calls" wide open={logOpen} onClose={() => setLogOpen(false)}>
