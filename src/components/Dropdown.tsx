@@ -15,6 +15,8 @@ type Props = {
   emptyLabel?: string;
   /** Where the menu opens; above by default — the composer sits at the bottom. */
   below?: boolean;
+  /** Anchors the menu to the trigger's right edge — for a trigger at the right of a narrow panel. */
+  right?: boolean;
   /** A title over the options, saying what question they answer. */
   heading?: string;
   /** Called as the menu opens — for options that are fetched only when wanted. */
@@ -22,7 +24,7 @@ type Props = {
 };
 
 /** Trigger + role="listbox" menu — the app draws its own dropdowns, never <select>. */
-export function Dropdown({ label, title, options, value, onPick, emptyLabel, below, heading, onOpen }: Props) {
+export function Dropdown({ label, title, options, value, onPick, emptyLabel, below, right, heading, onOpen }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -59,7 +61,7 @@ export function Dropdown({ label, title, options, value, onPick, emptyLabel, bel
         <ChevronDown className="chip-chev" size={10} />
       </button>
       {open && (
-        <div className={`dropdown-menu${below ? " below" : ""}`} role="listbox" aria-label={heading}>
+        <div className={`dropdown-menu${below ? " below" : ""}${right ? " right" : ""}`} role="listbox" aria-label={heading}>
           {heading && <div className="dropdown-heading">{heading}</div>}
           {options.length === 0 && (
             <div className="dropdown-empty">{emptyLabel ?? "Nothing here yet"}</div>

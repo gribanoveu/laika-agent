@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
   Clock,
+  FolderOpen,
   GitBranch,
   Keyboard,
   MessageSquare,
   PanelLeft,
   Plus,
   Settings,
-  SlidersHorizontal,
   UserRound,
 } from "lucide-react";
 import { Dropdown } from "./Dropdown";
@@ -51,6 +51,8 @@ export function Sidebar({
   onOnboardingAction,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // The folder's chats fold under its name, the way a project's do.
+  const [folded, setFolded] = useState(false);
   const userWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,9 +76,20 @@ export function Sidebar({
           <Plus size={14} />
           <span className="label">New chat</span>
         </button>
-        <button className="iconbtn" type="button" title="Sort">
-          <SlidersHorizontal size={15} />
-        </button>
+        {/* Switching folders sits with the other things about the panel as
+            a whole; the folder's name below only folds its chats. */}
+        <Dropdown
+          below
+          right
+          label={<FolderOpen size={15} />}
+          title="Switch folder"
+          value={repo ?? ""}
+          options={[
+            ...recent.map((path) => ({ value: path, label: folderName(path), hint: path })),
+            { value: PICK, label: "Open folder…" },
+          ]}
+          onPick={(value) => (value === PICK ? onPickFolder() : value !== repo && onOpenFolder(value))}
+        />
         <button className="iconbtn" type="button" title="Collapse panel" onClick={onToggleCollapse}>
           <PanelLeft size={15} />
         </button>
@@ -84,19 +97,18 @@ export function Sidebar({
 
       <div className="group">
         <div className="group-head">
-          <Dropdown
-            below
-            label={repo ? folderName(repo) : "No workspace"}
-            title="Switch folder"
-            value={repo ?? ""}
-            options={[
-              ...recent.map((path) => ({ value: path, label: folderName(path), hint: path })),
-              { value: PICK, label: "Open folder…" },
-            ]}
-            onPick={(value) => (value === PICK ? onPickFolder() : value !== repo && onOpenFolder(value))}
-          />
+          <button
+            type="button"
+            className={`group-toggle${folded ? " folded" : ""}`}
+            aria-expanded={!folded}
+            title={repo ?? undefined}
+            onClick={() => setFolded((v) => !v)}
+          >
+            <ChevronRight className="group-chev" size={12} />
+            <span>{repo ? folderName(repo) : "No workspace"}</span>
+          </button>
         </div>
-        {chats.length === 0 ? (
+        {folded ? null : chats.length === 0 ? (
           <div className="empty">No chats yet.</div>
         ) : (
           chats.map((chat) => (
