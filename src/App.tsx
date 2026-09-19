@@ -29,8 +29,9 @@ import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
+import { isBoolean, useStoredState } from "./hooks/useStoredState";
 import { setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
-import type { AsideTab } from "./types";
+import { isAsideTab, type AsideTab } from "./types";
 import "./App.css";
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
@@ -48,9 +49,10 @@ const dragOrMaximize = (e: React.MouseEvent) => {
 const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in order.";
 
 export default function App() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [asideCollapsed, setAsideCollapsed] = useState(false);
-  const [tab, setTab] = useState<AsideTab>("changes");
+  // Laid out as it was left.
+  const [collapsed, setCollapsed] = useStoredState("atlas-sidebar-collapsed", false, isBoolean);
+  const [asideCollapsed, setAsideCollapsed] = useStoredState("atlas-aside-collapsed", false, isBoolean);
+  const [tab, setTab] = useStoredState<AsideTab>("atlas-aside-tab", "changes", isAsideTab);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [mcpEditing, setMcpEditing] = useState(false);

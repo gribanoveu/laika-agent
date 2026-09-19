@@ -26,7 +26,11 @@
 - `tool_calls.db` — лог вызовов, содержимое файлов из записей вырезано (CA-12.1);
 - `logs/llm.jsonl` — сырые запросы к провайдеру, **выключено по умолчанию** (CA-12.2);
   включённый пишет на диск всё, что ушло провайдеру;
-- `llm_credentials.enc`, `settings.json`, `mcp.json`, `hooks.json`, `skills/`.
+- `llm_credentials.enc`, `settings.json`, `mcp.json`, `hooks.json`, `skills/`, `recent.json`
+  (недавние папки).
+
+Вне этой папки — раскладка окна: размер и положение (файл `tauri-plugin-window-state` в
+каталоге данных приложения ОС), ширины панелей и тема (хранилище окна).
 
 Телеметрии нет. Зависимостей, существующих ради отправки данных (HTTP-клиенты кроме `ureq`,
 Sentry, PostHog и подобные), нет — `data_policy::no_dependency_exists_to_send_data_elsewhere`.

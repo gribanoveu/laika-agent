@@ -22,6 +22,10 @@ pub fn run() {
             let _ = window.set_focus();
         }
     }));
+    // Saved on exit, applied when the window is created — so the window opens
+    // where it was, not at the config's size and then jumping.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
     builder
         .plugin(tauri_plugin_opener::init())
         // The folder picker. A file chooser is the platform's dialog, not one

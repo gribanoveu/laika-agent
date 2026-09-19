@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
+import { useStoredState } from "./useStoredState";
 
 export const PANEL_LIMITS = {
   // `rail` is the collapsed width — mirrors the CSS in Sidebar.css/AsidePanel.css.
@@ -12,6 +13,15 @@ const COLLAPSE_OVERSHOOT_RATIO = 0.4;
 const EXPAND_THRESHOLD = 40;
 
 type PanelKey = keyof typeof PANEL_LIMITS;
+
+// Within the limits too: they may have changed since the width was stored.
+const isWidths = (value: unknown): value is Record<PanelKey, number> => {
+  const v = value as Record<PanelKey, unknown> | null;
+  return (["sidebar", "aside"] as const).every(
+    (key) =>
+      typeof v?.[key] === "number" && v[key] >= PANEL_LIMITS[key].min && v[key] <= PANEL_LIMITS[key].max,
+  );
+};
 
 export type PanelControl = {
   collapsed: boolean;
@@ -29,10 +39,11 @@ const clamp = (key: PanelKey, width: number) =>
  * drag-to-collapse gesture from docflow's usePanelLayout, plus the way back.
  */
 export function usePanelSizes(controls: Record<PanelKey, PanelControl>) {
-  const [widths, setWidths] = useState({
-    sidebar: PANEL_LIMITS.sidebar.initial,
-    aside: PANEL_LIMITS.aside.initial,
-  });
+  const [widths, setWidths] = useStoredState(
+    "atlas-panel-widths",
+    { sidebar: PANEL_LIMITS.sidebar.initial, aside: PANEL_LIMITS.aside.initial },
+    isWidths,
+  );
   const widthsRef = useRef(widths);
   const overshoot = useRef<Record<PanelKey, number>>({ sidebar: 0, aside: 0 });
   // Distance the pointer still has to travel before it meets the panel edge

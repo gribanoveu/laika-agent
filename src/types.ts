@@ -5,7 +5,9 @@
 
 export type ChangedFile = { name: string; add: number; del: number };
 
-export type AsideTab = "changes" | "plan" | "mcp" | "hooks" | "skills" | "rules" | "files" | "terminal";
+export const ASIDE_TABS = ["changes", "plan", "mcp", "hooks", "skills", "rules", "files", "terminal"] as const;
+export type AsideTab = (typeof ASIDE_TABS)[number];
+export const isAsideTab = (value: unknown): value is AsideTab => ASIDE_TABS.includes(value as AsideTab);
 
 export type PanelItem = {
   id: string;
