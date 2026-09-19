@@ -264,6 +264,13 @@ pub enum ChatEventPayload {
         stream: OutputStream,
         chunk: String,
     },
+    /// A hook refused something or failed. `blocked` tells the two apart: a
+    /// refusal changed what happened, a failure only did not run.
+    HookFeedback {
+        event: String,
+        message: String,
+        blocked: bool,
+    },
     /// Token usage as of the round that just finished. Since every request
     /// resends the whole history, this is the authoritative context size, not
     /// a per-round statistic.

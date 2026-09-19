@@ -26,6 +26,7 @@ use crate::domain::tool_call_log::{self, CallStatus, ToolCallLogEntry};
 use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::SkillMeta;
 use crate::domain::mcp::McpTools;
+use crate::domain::hooks::{HookEvent, Hooks, MAX_STOP_BLOCKS};
 use crate::domain::command_exec::{CommandEvent, CommandSink, Shell};
 use crate::domain::tools::{
     ApprovalPolicy, CodeSearchFn, ReadFiles, Task, ToolDeps, ToolName, ToolResult, ToolScope,
@@ -190,6 +191,8 @@ pub struct Turn<'a> {
     /// The connected MCP servers' tools. Read once per turn, like the
     /// skills: the tools a model was shown must not change between rounds.
     pub mcp: &'a McpTools,
+    /// The user's hooks, read once per turn.
+    pub hooks: &'a Hooks,
 }
 
 
@@ -363,6 +366,9 @@ fn run(
     // Not part of the checkpoint: after a pause the first repeat of a read
     // comes back in full once more, which costs context and loses nothing.
     let mut seen_results: HashMap<String, u64> = HashMap::new();
+    // How often Stop hooks have sent the model back this turn. Not in the
+    // checkpoint: a resume is the user's go-ahead, and starts the count over.
+    let mut stop_blocks = 0;
 
     loop {
         // Checkpoint one. Before the ceiling check as well, so a turn the user
@@ -452,7 +458,24 @@ fn run(
                 // what they typed, and they would have no way to tell it was
                 // never seen.
                 let waiting = (turn.take_steering)();
-                if waiting.is_empty() {
+                // Only a turn that is really ending asks its Stop hooks; they
+                // run every time — one may be a notification — but past the
+                // cap a refusal no longer keeps the turn going.
+                let refused = if waiting.is_empty() {
+                    let fields = serde_json::json!({ "stop_hook_active": stop_blocks > 0 });
+                    match fire_hook(turn, &events, round, HookEvent::Stop, None, fields) {
+                        Some(_) if stop_blocks >= MAX_STOP_BLOCKS => {
+                            report_hook(&events, round, HookEvent::Stop, format!(
+                                "Stop hooks kept the turn going {MAX_STOP_BLOCKS} times; it ends here anyway"
+                            ), false);
+                            None
+                        }
+                        refused => refused,
+                    }
+                } else {
+                    None
+                };
+                if waiting.is_empty() && refused.is_none() {
                     return Ok(ChatStreamOutcome::Done(ChatDone {
                         result,
                         todos: state.todos,
@@ -465,6 +488,12 @@ fn run(
                     tool_calls: vec![],
                     native_content: result.native_content.clone(),
                 });
+                if let Some(reason) = refused {
+                    stop_blocks += 1;
+                    state.history.push(LlmMessage::user(format!(
+                        "[A Stop hook did not let the turn end yet. It said:]\n{reason}"
+                    )));
+                }
                 apply_steering(&events, round, &mut state.history, waiting);
                 continue;
             }
@@ -561,6 +590,14 @@ fn run(
                 _ => parse_tool_call(call)
                     .and_then(|parsed| {
                         logged_args = tool_call_log::redact_args(&parsed);
+                        let fields = serde_json::json!({
+                            "tool_name": call.name,
+                            "tool_input": serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_default(),
+                            "tool_use_id": call.id,
+                        });
+                        if let Some(reason) = fire_hook(turn, &events, round, HookEvent::PreToolUse, Some(&call.name), fields) {
+                            return Err(crate::domain::tools::ToolError::BlockedByHook(reason));
+                        }
                         // Built per call, because the id is what pairs a line
                         // of output with the call that produced it — a round
                         // may have started more than one.
@@ -585,6 +622,17 @@ fn run(
                         format!("Error: {e}")
                     }),
             };
+            // What a hook says about a call that ran goes to the model with
+            // its result: the call happened, and cannot be refused any more.
+            let post_hook = outcome.as_ref().ok().and_then(|result| {
+                let fields = serde_json::json!({
+                    "tool_name": call.name,
+                    "tool_input": serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_default(),
+                    "tool_response": result,
+                    "tool_use_id": call.id,
+                });
+                fire_hook(turn, &events, round, HookEvent::PostToolUse, Some(&call.name), fields)
+            });
             let status = match &outcome {
                 Ok(_) => CallStatus::Ok,
                 Err(_) if denied => CallStatus::Denied,
@@ -620,6 +668,10 @@ fn run(
             let content = truncated_round_note(round_truncated, outcome.is_err(), content);
             let content =
                 dedupe_repeat_result(&mut seen_results, call, outcome.as_ref().ok(), content);
+            let content = match post_hook {
+                Some(said) => format!("{content}\n\n[A PostToolUse hook said:]\n{said}"),
+                None => content,
+            };
             state.history.push(tool_message(&call.id, content));
         }
     }
@@ -929,6 +981,34 @@ fn tool_message(call_id: &str, content: String) -> LlmMessage {
     }
 }
 
+/// Runs the hooks of one event and reports what they said; returns the
+/// reason when they refused.
+fn fire_hook(
+    turn: &Turn,
+    events: &Events,
+    round: u32,
+    event: HookEvent,
+    tool: Option<&str>,
+    fields: serde_json::Value,
+) -> Option<String> {
+    let verdict = turn.hooks.fire(event, tool, fields, turn.scope.root());
+    for warning in verdict.warnings {
+        report_hook(events, round, event, warning, false);
+    }
+    if let Some(reason) = &verdict.blocked {
+        report_hook(events, round, event, reason.clone(), true);
+    }
+    verdict.blocked
+}
+
+fn report_hook(events: &Events, round: u32, event: HookEvent, message: String, blocked: bool) {
+    events.emit(
+        round,
+        None,
+        ChatEventPayload::HookFeedback { event: event.name().to_string(), message, blocked },
+    );
+}
+
 fn report_call(events: &Events, round: u32, call: &LlmToolCall) {
     events.emit(
         round,
@@ -1130,6 +1210,7 @@ mod tests {
         logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
         plan: Option<String>,
         mcp: McpTools,
+        hooks: Hooks,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1169,6 +1250,7 @@ mod tests {
             logged: Arc::new(Mutex::new(Vec::new())),
             plan: None,
             mcp: McpTools::default(),
+            hooks: Hooks::default(),
         }
     }
 
@@ -1214,6 +1296,7 @@ mod tests {
                 log_call: &log_call,
                 plan: self.plan.as_deref(),
                 mcp: &self.mcp,
+                hooks: &self.hooks,
             };
             f(&turn)
         }
@@ -1235,6 +1318,7 @@ mod tests {
                 ChatEventPayload::SteeringApplied { id, .. } => format!("steering:{id}"),
                 ChatEventPayload::CommandOutput { id, .. } => format!("commandOutput:{id}"),
                 ChatEventPayload::HistoryCompacted { folded } => format!("compacted:{folded}"),
+                ChatEventPayload::HookFeedback { event, blocked, .. } => format!("hook:{event}:{blocked}"),
             })
             .collect()
     }
@@ -2354,6 +2438,171 @@ mod tests {
         let offered: &[LlmToolDefinition] = &requests[0].tools;
         // Every built-in one; MCP tools come from servers, and none is connected.
         assert_eq!(offered.len(), ToolName::ALL.len() - 1);
+    }
+
+    // ---------------------------------------------------------------- hooks
+
+    type HookInputs = Arc<Mutex<Vec<(String, serde_json::Value)>>>;
+
+    /// Hooks answered by `answer(command, input) -> (exit code, stderr)`;
+    /// every run is kept, with the input it was given.
+    fn hooked(
+        mut h: Harness,
+        config: serde_json::Value,
+        answer: impl Fn(&str, &serde_json::Value) -> (i32, &'static str) + Send + Sync + 'static,
+    ) -> (Harness, HookInputs) {
+        let inputs: HookInputs = Arc::default();
+        let seen = Arc::clone(&inputs);
+        h.hooks = Hooks::new(
+            serde_json::from_value(config).unwrap(),
+            Arc::new(move |hook: &crate::domain::hooks::HookCommand, input: &str, _: &std::path::Path| {
+                let input: serde_json::Value = serde_json::from_str(input).unwrap();
+                let (code, stderr) = answer(&hook.command, &input);
+                seen.lock().unwrap().push((hook.command.clone(), input));
+                Ok(crate::domain::command_exec::CommandOutput {
+                    stdout: String::new(),
+                    stderr: stderr.into(),
+                    exit_code: Some(code),
+                    timed_out: false,
+                    truncated: false,
+                })
+            }),
+        );
+        (h, inputs)
+    }
+
+    fn hook(event: &str, matcher: &str, command: &str) -> serde_json::Value {
+        serde_json::json!({"hooks": {event: [{"matcher": matcher, "hooks": [{"type": "command", "command": command}]}]}})
+    }
+
+    fn feedback(h: &Harness) -> Vec<(String, String, bool)> {
+        h.events()
+            .into_iter()
+            .filter_map(|e| match e.event {
+                ChatEventPayload::HookFeedback { event, message, blocked } => Some((event, message, blocked)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The approved call does not run; the model reads the hook's reason, the
+    /// log says only that a hook blocked it.
+    #[test]
+    fn a_pre_tool_use_hook_that_exits_two_refuses_the_call() {
+        let (h, inputs) = hooked(
+            harness("hook-pre-block", vec![asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]), text("ok")]),
+            hook("PreToolUse", "writeFile|editFile", "guard"),
+            |_, _| (2, "no writes on Fridays"),
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        assert!(!h.root.join("a.rs").exists());
+        let said = tool_contents(&h.provider.requests()[1]);
+        assert_eq!(said, ["Error: a hook refused this call: no writes on Fridays"]);
+        assert_eq!(feedback(&h), [("PreToolUse".to_string(), "no writes on Fridays".to_string(), true)]);
+        let input = &inputs.lock().unwrap()[0].1;
+        assert_eq!(input["tool_name"], "writeFile");
+        assert_eq!(input["tool_input"]["path"], "a.rs");
+        assert_eq!(input["tool_use_id"], "w1");
+        assert_eq!(input["hook_event_name"], "PreToolUse");
+        let logged = h.logged.lock().unwrap().clone();
+        assert_eq!(logged[0].error.as_deref(), Some("blocked by a hook"));
+    }
+
+    #[test]
+    fn a_hook_that_fails_otherwise_only_warns_and_one_for_another_tool_does_not_run() {
+        let config = serde_json::json!({"hooks": {"PreToolUse": [
+            {"matcher": "writeFile", "hooks": [{"type": "command", "command": "broken"}]},
+            {"matcher": "runCommand", "hooks": [{"type": "command", "command": "elsewhere"}]},
+        ]}});
+        let (h, inputs) = hooked(
+            harness("hook-pre-warn", vec![asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]), text("ok")]),
+            config,
+            |_, _| (1, "jq: not found"),
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        assert_eq!(std::fs::read_to_string(h.root.join("a.rs")).unwrap(), "x", "the call ran");
+        assert_eq!(inputs.lock().unwrap().iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["broken"]);
+        assert_eq!(feedback(&h), [("PreToolUse".to_string(), "hook `broken` failed with code 1: jq: not found".to_string(), false)]);
+    }
+
+    /// A call the user denied never reaches the hooks: nothing is about to run.
+    #[test]
+    fn a_denied_call_does_not_ask_the_hooks() {
+        let (mut h, inputs) = hooked(
+            harness("hook-denied", vec![asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]), text("ok")]),
+            hook("PreToolUse", "", "guard"),
+            |_, _| (0, ""),
+        );
+        h.approval = asking();
+        let Ok(ChatStreamOutcome::PendingApproval(pending)) = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])) else {
+            panic!("expected a pause");
+        };
+        let no = vec![ToolCallDecision { id: "w1".into(), approved: false, reason: None }];
+        h.run(|turn| resume(turn, pending, no)).expect("finishes");
+        assert!(inputs.lock().unwrap().is_empty());
+    }
+
+    /// After the call it is too late to refuse; what the hook says goes to
+    /// the model beside the result.
+    #[test]
+    fn a_post_tool_use_hook_speaks_to_the_model_after_the_call() {
+        let (h, inputs) = hooked(
+            harness("hook-post", vec![asks(vec![wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#)]), text("ok")]),
+            hook("PostToolUse", "writeFile", "lint"),
+            |_, _| (2, "a.rs: missing semicolon"),
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        assert!(h.root.join("a.rs").exists(), "it ran");
+        let said = tool_contents(&h.provider.requests()[1]);
+        assert!(said[0].ends_with("\n\n[A PostToolUse hook said:]\na.rs: missing semicolon"), "{said:?}");
+        assert!(!inputs.lock().unwrap()[0].1["tool_response"].is_null());
+    }
+
+    #[test]
+    fn a_failed_call_does_not_reach_post_tool_use() {
+        let (h, inputs) = hooked(
+            harness("hook-post-failed", vec![asks(vec![wants("r1", "readFile", r#"{"path":"missing.rs"}"#)]), text("ok")]),
+            hook("PostToolUse", "", "lint"),
+            |_, _| (0, ""),
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+        assert!(inputs.lock().unwrap().is_empty());
+    }
+
+    /// "Run the tests before you stop": the hook sends the model back once,
+    /// and lets it go when told it already has.
+    #[test]
+    fn a_stop_hook_sends_the_model_back_until_it_lets_go() {
+        let (h, inputs) = hooked(
+            harness("hook-stop", vec![text("done"), text("tests pass, done")]),
+            hook("Stop", "", "check"),
+            |_, input| if input["stop_hook_active"] == true { (0, "") } else { (2, "run the tests first") },
+        );
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+        let ChatStreamOutcome::Done(done) = outcome else { panic!("expected done") };
+        assert_eq!(done.result.text, "tests pass, done");
+
+        let second = &h.provider.requests()[1];
+        let tail: Vec<_> = second.messages.iter().rev().take(2).collect();
+        assert_eq!(tail[1].content.as_deref(), Some("done"));
+        assert_eq!(tail[0].role, LlmRole::User);
+        assert!(tail[0].content.as_deref().unwrap().ends_with("It said:]\nrun the tests first"));
+        assert_eq!(inputs.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn stop_hooks_keep_a_turn_going_only_so_many_times() {
+        let steps = (0..=MAX_STOP_BLOCKS).map(|i| text(&format!("done {i}"))).collect();
+        let (h, inputs) = hooked(harness("hook-stop-cap", steps), hook("Stop", "", "never"), |_, _| (2, "no"));
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        assert_eq!(h.provider.requests().len(), MAX_STOP_BLOCKS as usize + 1);
+        assert_eq!(inputs.lock().unwrap().len(), MAX_STOP_BLOCKS as usize + 1, "the last one still runs");
+        let last = feedback(&h).pop().unwrap();
+        assert_eq!((last.1.contains("ends here anyway"), last.2), (true, false));
     }
 
     // ------------------------------------------------------------------ MCP

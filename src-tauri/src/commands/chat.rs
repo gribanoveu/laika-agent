@@ -34,6 +34,7 @@ use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
 use crate::services::context_compaction;
 use crate::services::mcp_servers::McpServers;
 use crate::domain::mcp::McpTools;
+use crate::domain::hooks::Hooks;
 use crate::infra::mcp_config;
 use crate::services::llm_session;
 use crate::services::workspace_index::WorkspaceIndex;
@@ -406,6 +407,12 @@ where
         // Started only where they can be offered. A configuration that does
         // not parse costs the turn its servers, not the turn: the tab says
         // what is wrong with the file.
+        // A file that does not parse stops the turn rather than running it
+        // without the hooks: a guard the user wrote, silently off, is worse
+        // than a turn that says why it did not start.
+        let hooks = crate::infra::hooks::load()
+            .map(|config| Hooks::new(config, Arc::new(crate::infra::hooks::run)))
+            .map_err(|e| format!("{e} — fix or remove {}", crate::infra::hooks::path().map(|p| p.display().to_string()).unwrap_or_default()))?;
         let mcp = mcp_for_turn(mcp_servers.as_deref(), mode, &workspace, &cancelled);
 
         let turn = Turn {
@@ -424,6 +431,7 @@ where
             log_call: &log_call,
             plan: plan.as_deref(),
             mcp: &mcp,
+            hooks: &hooks,
         };
         run(&turn).map_err(|e| e.to_string())
     })

@@ -19,3 +19,4 @@ pub mod tool_call_log;
 pub mod mcp_config;
 pub mod mcp_stdio;
 pub mod login_path;
+pub mod hooks;

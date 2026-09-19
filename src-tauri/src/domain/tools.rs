@@ -604,6 +604,11 @@ pub enum ToolError {
     /// model to act on.
     #[error("the tool reported an error: {0}")]
     McpToolFailed(String),
+    /// A `PreToolUse` hook exited 2. Its stderr, for the model to act on —
+    /// the user's rule, which the model should respect rather than route
+    /// around.
+    #[error("a hook refused this call: {0}")]
+    BlockedByHook(String),
     /// Arguments that did not deserialize into the struct their tool expects.
     ///
     /// `reason` is JSON-path-annotated (`edits[1]: missing field \`old\``)

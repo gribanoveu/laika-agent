@@ -1,0 +1,76 @@
+//! `<app dir>/hooks.json`, and running one hook.
+//!
+//! Global only: a hook from a repository would be a stranger's command run on
+//! every tool call of whoever opened it. Project hooks need a "trust this
+//! folder" step first, which is its own feature.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::domain::command_exec::{CommandError, CommandOutput, CommandRequest, Shell};
+use crate::domain::hooks::{self, HookCommand, HooksConfig, HooksConfigError};
+use crate::infra::{app_dir, process_runner};
+
+const FILE: &str = "hooks.json";
+
+pub fn path() -> Result<PathBuf, HooksConfigError> {
+    Ok(app_dir::dir().map_err(HooksConfigError::Read)?.join(FILE))
+}
+
+/// No file is no hooks.
+pub fn load() -> Result<HooksConfig, HooksConfigError> {
+    match fs::read_to_string(path()?) {
+        Ok(text) => hooks::parse(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HooksConfig::default()),
+        Err(e) => Err(HooksConfigError::Read(e.to_string())),
+    }
+}
+
+/// Through `sh -c`, as Claude Code runs a hook, in the workspace, with
+/// `CLAUDE_PROJECT_DIR` set to it — the variable hooks written for Claude
+/// Code use to find their own scripts.
+pub fn run(hook: &HookCommand, input: &str, cwd: &Path) -> Result<CommandOutput, CommandError> {
+    let request = CommandRequest {
+        command: hook.command.clone(),
+        cwd: None,
+        timeout_seconds: Some(hook.timeout_secs()),
+    };
+    let project = cwd.display().to_string();
+    process_runner::run_with(&Shell::default(), &request, cwd, None, Some(input), &[("CLAUDE_PROJECT_DIR", &project)])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::hooks::{outcome, HookOutcome};
+    use crate::testing::{temp_dir, with_app_dir};
+
+    #[test]
+    fn no_file_is_no_hooks_and_a_broken_one_says_so() {
+        with_app_dir("hooks-config", || {
+            assert!(load().unwrap().hooks.is_empty());
+            fs::write(path().unwrap(), "{").unwrap();
+            assert!(matches!(load(), Err(HooksConfigError::Parse(_))));
+            fs::write(path().unwrap(), r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x"}]}]}}"#).unwrap();
+            assert_eq!(load().unwrap().hooks["Stop"][0].hooks[0].command, "x");
+        });
+    }
+
+    /// A guard written the Claude Code way: read the event, exit 2 with a
+    /// reason.
+    #[cfg(unix)]
+    #[test]
+    fn a_real_hook_reads_its_input_and_blocks() {
+        let dir = temp_dir("hooks-run");
+        let hook = HookCommand {
+            kind: "command".into(),
+            command: r#"grep -q '"tool_name":"runCommand"' && [ "$CLAUDE_PROJECT_DIR" = "$PWD" ] && echo 'no commands today' >&2 && exit 2; exit 0"#.into(),
+            timeout: Some(10),
+            ..Default::default()
+        };
+        let dir = dir.canonicalize().unwrap();
+        let blocked = outcome(&hook, run(&hook, r#"{"tool_name":"runCommand"}"#, &dir));
+        assert_eq!(blocked, HookOutcome::Block("no commands today".into()));
+        assert_eq!(outcome(&hook, run(&hook, r#"{"tool_name":"readFile"}"#, &dir)), HookOutcome::Pass);
+    }
+}

@@ -50,6 +50,19 @@ pub fn run(
     cwd: &Path,
     events: Option<&CommandSink>,
 ) -> Result<CommandOutput, CommandError> {
+    run_with(shell, request, cwd, events, None, &[])
+}
+
+/// [`run`], with `input` written to the command's stdin and closed, and
+/// `env` added to its environment — what a hook is given.
+pub fn run_with(
+    shell: &Shell,
+    request: &CommandRequest,
+    cwd: &Path,
+    events: Option<&CommandSink>,
+    input: Option<&str>,
+    env: &[(&str, &str)],
+) -> Result<CommandOutput, CommandError> {
     if !cwd.is_dir() {
         return Err(CommandError::Cwd(format!(
             "{} is not a directory",
@@ -64,7 +77,8 @@ pub fn run(
         .current_dir(cwd)
         // A command that waits for input nobody is going to type must fail at
         // once rather than hold the turn until the timeout.
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     set_process_group(&mut command);
@@ -73,6 +87,16 @@ pub fn run(
     let mut child = command
         .spawn()
         .map_err(|e| CommandError::NotStarted(format!("{}: {e}", shell.program)))?;
+
+    // From a thread of its own: a command that does not read its stdin
+    // before writing a pipe-full of output would otherwise deadlock with us.
+    // Dropping the pipe afterwards is the end of input it may be waiting for.
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let input = input.to_string();
+        thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut stdin, input.as_bytes());
+        });
+    }
 
     let stdout = collect(child.stdout.take(), OutputStream::Stdout, events.cloned());
     let stderr = collect(child.stderr.take(), OutputStream::Stderr, events.cloned());
@@ -207,6 +231,23 @@ mod tests {
 
     fn run_in(dir: &Path, command: &str) -> CommandOutput {
         run(&Shell::default(), &ask(command, Some(10)), dir, None).expect("runs")
+    }
+
+    /// What a hook is given: the event on stdin, the project in its env.
+    #[cfg(unix)]
+    #[test]
+    fn input_and_environment_reach_the_command() {
+        let dir = temp_dir("run-input");
+        let out = run_with(
+            &Shell::default(),
+            &ask("cat; printf ' %s' \"$HOOK_TEST\"", Some(10)),
+            &dir,
+            None,
+            Some("{\"a\":1}"),
+            &[("HOOK_TEST", "here")],
+        )
+        .expect("runs");
+        assert_eq!(out.stdout, "{\"a\":1} here");
     }
 
     #[test]

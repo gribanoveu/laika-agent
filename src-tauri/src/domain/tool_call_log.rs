@@ -184,6 +184,8 @@ pub fn redact_error(error: &ToolError) -> String {
         ToolError::McpToolFailed(_) => "the MCP tool reported an error".to_string(),
         // Carries the server's last stderr lines.
         ToolError::McpUnavailable(_) => "the MCP server was not available".to_string(),
+        // A script's stderr: whatever it chose to quote from the call.
+        ToolError::BlockedByHook(_) => "blocked by a hook".to_string(),
         ToolError::InvalidArguments { tool, reason } => {
             let before_quote = reason.split('"').next().unwrap_or_default().trim_end();
             format!("invalid arguments for {tool}: {before_quote}")
@@ -318,7 +320,7 @@ mod tests {
         );
         let odd = ToolCall::Mcp(McpCallArgs { name: "mcp__a__b".into(), arguments: serde_json::json!([1, true, null, 2.5]) });
         assert_eq!(redact_args(&odd)["args"]["arguments"], "<array, 4 items>");
-        for error in [ToolError::McpToolFailed(LEAK.into()), ToolError::McpUnavailable(LEAK.into())] {
+        for error in [ToolError::McpToolFailed(LEAK.into()), ToolError::McpUnavailable(LEAK.into()), ToolError::BlockedByHook(LEAK.into())] {
             assert!(!redact_error(&error).contains(LEAK), "{error}");
         }
     }
