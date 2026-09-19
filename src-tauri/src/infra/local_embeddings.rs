@@ -418,6 +418,7 @@ mod tests {
     /// an LFS pointer. Here that fails: a green run that checked nothing is
     /// how a clone without `git lfs pull` ships an app that cannot index.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn rust_matches_the_python_parity_fixture() {
         let raw = fs::read_to_string(bundled_model_dir(None).join("parity.json")).unwrap();
         let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -447,6 +448,7 @@ mod tests {
     /// that made it: a rebuild that forgot the prune step would ship twice the
     /// memory and nobody would notice until a user did.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn the_shipped_vocabulary_is_russian_and_english_only() {
         let raw = fs::read_to_string(bundled_model_dir(None).join("tokenizer.json")).unwrap();
         let tokenizer: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -472,6 +474,7 @@ mod tests {
     /// averaged it: 17 of 10 970 fragments of two repositories came out
     /// different from their text without the stray character.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn a_character_outside_the_vocabulary_changes_nothing() {
         let provider = model();
         // No space before them: a space is a token of its own (`▁`), and a
@@ -484,6 +487,7 @@ mod tests {
     /// question lands nearer the English code it is about than English code
     /// it is not about.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn a_russian_question_is_nearest_the_code_it_is_about() {
         let provider = model();
         let question = embed(&provider, "как сжимается история, когда переполняется контекст");
@@ -494,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn texts_come_back_in_order_one_vector_each() {
         let provider = model();
         let texts = ["alpha", "keyring fallback", ""];
@@ -589,6 +594,24 @@ mod tests {
 
     // ------------------------------------------------------- the files
 
+    /// The tests that load the weights are `#[ignore]`d — each run would
+    /// otherwise pay seconds and most of a gigabyte for them, which a
+    /// mutation run pays once per mutant. This stays in the default run, so
+    /// a clone without `git lfs pull` still fails here rather than passing
+    /// with a model that cannot load. It reads a few bytes of each file.
+    #[test]
+    fn the_bundled_files_are_the_real_ones() {
+        use std::io::Read;
+        for name in ["model.safetensors", "tokenizer.json"] {
+            let path = bundled_model_dir(None).join(name);
+            let mut head = [0u8; 64];
+            let read = fs::File::open(&path)
+                .and_then(|mut file| file.read(&mut head))
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert!(!head[..read].starts_with(LFS_POINTER_PREFIX), "{name} is an LFS pointer: run `git lfs pull`");
+        }
+    }
+
     /// The one-command fix gets its own message.
     #[test]
     fn an_lfs_pointer_is_named_as_one() {
@@ -631,6 +654,7 @@ mod tests {
     /// weight file from some other model, and each must be refused at load
     /// rather than embed with the wrong rows.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn a_table_that_does_not_fit_the_tokenizer_is_refused() {
         let dir = temp_dir("model-mismatch");
         fs::copy(bundled_model_dir(None).join("tokenizer.json"), dir.join("tokenizer.json")).unwrap();
@@ -651,6 +675,7 @@ mod tests {
     /// Past `MAX_TOKENS` a text is not read: two texts that agree on their
     /// first 512 tokens are the same vector.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn only_the_first_tokens_count() {
         let provider = model();
         let head = "compact the history ".repeat(200);
@@ -660,6 +685,7 @@ mod tests {
     /// The text is cut before it is tokenized, not after: embedding a
     /// five-megabyte file must cost what embedding its first page does.
     #[test]
+    #[ignore = "loads the bundled model; run with: cargo test local_embeddings -- --ignored"]
     fn a_huge_text_is_not_tokenized_whole() {
         let provider = model();
         embed(provider, "warm");

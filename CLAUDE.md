@@ -44,6 +44,16 @@ cd src-tauri && cargo test              # all
 cd src-tauri && cargo test resolve      # by name substring
 ```
 
+Tests that load the bundled embedding model (`infra/local_embeddings.rs`) are
+`#[ignore]`d: they cost seconds and most of a gigabyte per run, which a mutation run
+pays once per mutant. Run them after touching the model, its loading, or embedding:
+
+```bash
+cd src-tauri && cargo test local_embeddings -- --ignored
+```
+
+The default run still checks that the weights are real files and not Git LFS pointers.
+
 Search quality has its own bench, ignored by default because it indexes real
 repositories (`src-tauri/bench/search-queries.json` lists them and the questions).
 Run it after touching ranking in `services/code_search.rs`:
