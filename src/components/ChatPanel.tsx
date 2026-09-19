@@ -577,13 +577,17 @@ function renderBlock(
       );
     case "reasoning":
       return (
-        <details className="reasoning" key={block.id}>
-          <summary>
-            <Brain size={13} />
-            Thinking
+        // Drawn as a call row, so thinking and calls read as one list.
+        <details className="tool-item reasoning" key={block.id}>
+          <summary className="tool">
+            <span className="ico">
+              <Brain size={13} />
+            </span>
+            <span className="name">Thinking</span>
+            <span className="arg reasoning-preview">{block.text.split("\n", 1)[0]}</span>
             <ChevronRight className="chev" size={12} />
           </summary>
-          <p className="reasoning-text">{block.text}</p>
+          <p className="tool-detail reasoning-text">{block.text}</p>
         </details>
       );
     case "tool":
