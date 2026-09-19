@@ -377,3 +377,25 @@ describe("hooks", () => {
     );
   });
 });
+
+describe("background processes", () => {
+  /// The model was told at the start of its round; the reader sees the same.
+  test("each ended process is a notice", () => {
+    const state = run([
+      ev({
+        type: "processesEnded",
+        seq: 1,
+        payload: {
+          processes: [
+            { id: 2, command: "npm run dev", cwd: ".", state: { state: "exited", code: 1 } },
+            { id: 3, command: "tail -f log", cwd: ".", state: { state: "stopped" } },
+          ],
+        },
+      }),
+    ]);
+    expect(state.blocks.map((b) => (b as { text: string }).text)).toEqual([
+      "Background process #2 `npm run dev` ended: exit 1",
+      "Background process #3 `tail -f log` ended: stopped",
+    ]);
+  });
+});

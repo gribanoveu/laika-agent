@@ -78,6 +78,7 @@ export type TurnEvent = { turnId: string; seq: number; round: number; targetId?:
   | { type: "steeringApplied"; payload: { id: string; text: string } }
   | { type: "historyCompacted"; payload: { folded: number } }
   | { type: "hookFeedback"; payload: { event: string; message: string; blocked: boolean } }
+  | { type: "processesEnded"; payload: { processes: ProcessInfo[] } }
   | { type: "roundStarted" }
   | { type: "roundCompleted"; payload: { text: string; reasoning?: string } }
   | { type: "toolCallDelta"; payload: LlmToolCall }
@@ -479,6 +480,38 @@ export async function saveMcpConfig(text: string): Promise<McpView> {
 export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<McpView> {
   requireBackend();
   return invoke<McpView>("mcp_server_set_enabled", { name, enabled });
+}
+
+// ---------------------------------------------------------------- background processes
+
+/** Mirrors `domain::background::ProcessState`. */
+export type ProcessState = { state: "running" } | { state: "exited"; code: number | null } | { state: "stopped" };
+/** Mirrors `domain::background::ProcessInfo`. */
+export type ProcessInfo = { id: number; command: string; cwd: string; state: ProcessState };
+/** A row of the Terminal tab: the process and the end of what it wrote. */
+export type ProcessView = ProcessInfo & { tail: string };
+
+export async function processesList(): Promise<ProcessView[]> {
+  if (!inTauri()) return [];
+  return invoke<ProcessView[]>("processes_list");
+}
+
+/** The model is told at its next round that the user stopped it. */
+export async function stopProcess(id: number): Promise<ProcessView[]> {
+  requireBackend();
+  return invoke<ProcessView[]>("process_stop", { id });
+}
+
+/** How a process stands, in a few words: `running`, `exit 1`, `stopped`. */
+export function processStatus(state: ProcessState): string {
+  switch (state.state) {
+    case "running":
+      return "running";
+    case "stopped":
+      return "stopped";
+    case "exited":
+      return state.code === null ? "killed by a signal" : `exit ${state.code}`;
+  }
 }
 
 // ---------------------------------------------------------------- hooks

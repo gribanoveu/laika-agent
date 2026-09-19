@@ -1,4 +1,4 @@
-import type { ChatUsage, Checkpoint, Outcome, TurnEvent } from "./chat";
+import { processStatus, type ChatUsage, type Checkpoint, type Outcome, type TurnEvent } from "./chat";
 
 // The transcript, assembled from one ordered stream of events.
 //
@@ -214,6 +214,13 @@ function applyEvent(state: TurnState, event: TurnEvent): TurnState {
 
     case "hookFeedback":
       return appendNotice(state, hookNotice(event.payload));
+
+    case "processesEnded":
+      // What the model was just told, said to the reader too.
+      return event.payload.processes.reduce(
+        (next, p) => appendNotice(next, `Background process #${p.id} \`${p.command}\` ended: ${processStatus(p.state)}`),
+        state,
+      );
 
     case "steeringApplied":
       return {

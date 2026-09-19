@@ -75,6 +75,8 @@ pub fn run() {
             commands::mcp::mcp_server_set_enabled,
             commands::hooks::hooks_config_get,
             commands::hooks::hooks_config_save,
+            commands::processes::processes_list,
+            commands::processes::process_stop,
             commands::skills::skills_set_enabled,
             commands::skills::rules_list,
             commands::skills::rules_set_enabled,

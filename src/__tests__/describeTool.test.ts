@@ -18,6 +18,38 @@ const tool = (over: Partial<Extract<Block, { kind: "tool" }>>): Extract<Block, {
 });
 
 describe("what each call shows", () => {
+  test("a background start shows its number, not an exit code", () => {
+    const waiting = describeTool(tool({ name: "runCommand", arguments: '{"command":"npm run dev","background":true}', status: "running" }));
+    expect(waiting).toMatchObject({ name: "Bash", arg: "npm run dev", meta: "background" });
+    const started = describeTool(
+      tool({
+        name: "runCommand",
+        arguments: '{"command":"npm run dev","background":true}',
+        result: { result: "processStarted", id: 3, command: "npm run dev", cwd: ".", state: { state: "running" } },
+      }),
+    );
+    expect(started.meta).toBe("background #3");
+  });
+
+  test("reading a process shows what it wrote and how it stands", () => {
+    const read = describeTool(
+      tool({
+        name: "readOutput",
+        arguments: '{"id":3}',
+        result: { id: 3, command: "npm run dev", cwd: ".", state: { state: "exited", code: 1 }, output: "EADDRINUSE", missed: true, truncated: false },
+      }),
+    );
+    expect(read).toMatchObject({ name: "Output", arg: "#3 npm run dev", meta: "exit 1 · some output lost", detail: "EADDRINUSE" });
+    const stopped = describeTool(
+      tool({ name: "stopProcess", arguments: '{"id":3}', result: { id: 3, command: "npm run dev", cwd: ".", state: { state: "stopped" } } }),
+    );
+    expect(stopped).toMatchObject({ name: "Stop", arg: "#3 npm run dev", meta: "stopped" });
+    const killed = describeTool(
+      tool({ name: "readOutput", arguments: '{"id":4}', result: { id: 4, command: "x", cwd: ".", state: { state: "exited", code: null }, output: "" } }),
+    );
+    expect(killed.meta).toBe("killed by a signal");
+  });
+
   test("a read names the file and the lines it actually returned", () => {
     const shown = describeTool(
       tool({

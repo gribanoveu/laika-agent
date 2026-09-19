@@ -19,6 +19,7 @@ import { useIndexStatus } from "./hooks/useIndexStatus";
 import { useSkills } from "./hooks/useSkills";
 import { useMcp } from "./hooks/useMcp";
 import { useHooks } from "./hooks/useHooks";
+import { useProcesses } from "./hooks/useProcesses";
 import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
@@ -70,6 +71,7 @@ export default function App() {
   // Servers start with an Agent turn and may stop during one.
   const mcp = useMcp((tab === "mcp" && !asideCollapsed) || mcpEditing, agent.turn.status);
   const hooks = useHooks((tab === "hooks" && !asideCollapsed) || hooksEditing);
+  const processes = useProcesses(tab === "terminal" && !asideCollapsed);
   const llm = useLlmSettings();
   const theme = useTheme();
   const panels = usePanelSizes({
@@ -223,6 +225,9 @@ export default function App() {
           hooks={hooks.view}
           hooksError={hooksEditing ? null : hooks.error}
           onHooksEdit={() => setHooksEditing(true)}
+          processes={processes.processes}
+          processesError={processes.error}
+          onProcessStop={processes.stop}
           skills={skills.view}
           skillsError={skills.error}
           onSkillToggle={skills.setEnabled}

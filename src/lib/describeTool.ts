@@ -1,4 +1,5 @@
 import type { Block } from "./chatTurnReducer";
+import { processStatus, type ProcessState } from "./chat";
 
 // One tool call, as a row in the transcript: what it did, to what, and the
 // body you get when you expand it.
@@ -40,6 +41,8 @@ export const LABELS: Record<string, string> = {
   semanticSearch: "Search",
   skill: "Skill",
   writePlan: "Plan",
+  readOutput: "Output",
+  stopProcess: "Stop",
 };
 
 /** `mcp__<server>__<tool>` as `server · tool`; `null` for any other name. */
@@ -172,6 +175,11 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
       };
 
     case "runCommand": {
+      // Started to run on: the answer is a number, not an exit code.
+      if (args.background === true) {
+        const id = num(result.id);
+        return { name, arg: str(args.command) ?? "", meta: id === undefined ? "background" : `background #${id}`, detail: "" };
+      }
       const streamed = block.output;
       const settled = `${str(result.stdout) ?? ""}${str(result.stderr) ?? ""}`;
       const code = num(result.exitCode);
@@ -186,6 +194,17 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         // captured output is authoritative — and shorter, being truncated in
         // the middle rather than cut off wherever the turn ended.
         detail: settled || streamed,
+      };
+    }
+
+    case "readOutput":
+    case "stopProcess": {
+      const state = asObject(result.state);
+      return {
+        name,
+        arg: [num(args.id) === undefined ? "" : `#${num(args.id)}`, str(result.command) ?? ""].filter(Boolean).join(" "),
+        meta: state.state === undefined ? undefined : [processStatus(state as ProcessState), result.missed ? "some output lost" : ""].filter(Boolean).join(" · "),
+        detail: str(result.output) ?? "",
       };
     }
 

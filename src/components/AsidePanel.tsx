@@ -11,8 +11,9 @@ import {
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
+import { ProcessList } from "./ProcessList";
 import { PlanPanel } from "./PlanPanel";
-import type { HooksView, McpServerState, McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
+import type { HooksView, McpServerState, McpView, ProcessView, RuleListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
 
@@ -45,6 +46,9 @@ type Props = {
   hooksError: string | null;
   /** Opens the hooks editor. */
   onHooksEdit: () => void;
+  processes: ProcessView[];
+  processesError: string | null;
+  onProcessStop: (id: number) => void;
   skills: SkillsView | null;
   skillsError: string | null;
   onSkillToggle: (name: string, enabled: boolean) => void;
@@ -179,6 +183,9 @@ export function AsidePanel({
   hooks,
   hooksError,
   onHooksEdit,
+  processes,
+  processesError,
+  onProcessStop,
   skills,
   skillsError,
   onSkillToggle,
@@ -327,9 +334,10 @@ export function AsidePanel({
           {tab === "terminal" && (
             <div className="panel-section">
               <div className="section-label">
-                <span>Last command</span>
+                <span>Background processes</span>
+                <span>{processes.filter((p) => p.state.state === "running").length} running</span>
               </div>
-              <div className="empty">Nothing has run yet.</div>
+              <ProcessList processes={processes} error={processesError} onStop={onProcessStop} />
             </div>
           )}
         </div>
