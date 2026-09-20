@@ -151,6 +151,14 @@ pub fn workspace_current(state: State<'_, Arc<AgentState>>) -> Option<String> {
         .map(|path| path.display().to_string())
 }
 
+/// The branch checked out in the open folder; `None` when it is not a
+/// repository or nothing is open.
+#[tauri::command]
+pub fn workspace_branch(state: State<'_, Arc<AgentState>>) -> Option<String> {
+    let root = state.workspace.lock().ok()?.clone()?;
+    crate::infra::git_head::current_branch(&root)
+}
+
 /// The open folder's index as it stands — what a window that was not
 /// listening when the sync began (a reload, say) starts from before the next
 /// `workspace-index:event`.

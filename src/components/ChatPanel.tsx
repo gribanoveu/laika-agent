@@ -356,6 +356,8 @@ type Props = {
   onToggleAside?: () => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
+  /** The git branch checked out in the folder; `null` outside a repository. */
+  branch?: string | null;
   /** The open folder's index; `null` until anything is known about it. */
   index?: IndexState | null;
   workspace: string | null;
@@ -376,6 +378,7 @@ export function ChatPanel({
   asideOpen = false,
   onToggleAside,
   title = null,
+  branch = null,
   workspace,
   turn,
   index,
@@ -402,9 +405,11 @@ export function ChatPanel({
           <h1 title={title ?? undefined}>{title ?? "New chat"}</h1>
           {workspace && (
             <div className="head-sub">
+              {/* The branch where there is one: in one open folder at a time it
+                  is what changes. The folder stays in the tooltip. */}
               <span className="chat-path" title={workspace}>
-                <Folder size={11} />
-                <span>{name}</span>
+                {branch ? <GitBranch size={11} /> : <Folder size={11} />}
+                <span>{branch ?? name}</span>
               </span>
               {index && <IndexBadge state={index} />}
             </div>

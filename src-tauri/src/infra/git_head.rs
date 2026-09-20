@@ -1,0 +1,64 @@
+//! The branch checked out in a working tree — what the chat header shows
+//! under the chat's title.
+
+use std::path::Path;
+
+use git2::Repository;
+
+/// The checked-out branch of the repository `root` is in, or the short commit
+/// id when HEAD is detached. `None` outside a repository: an ordinary folder
+/// is not an error, and the header then shows the folder instead.
+///
+/// A repository with no commits yet still has a branch — HEAD names it
+/// before anything is on it — so that case reads the name from HEAD itself.
+pub fn current_branch(root: &Path) -> Option<String> {
+    let repo = Repository::discover(root).ok()?;
+    // Bound before returning: the references borrow `repo`, and a tail
+    // expression's temporaries would outlive it.
+    let branch = match repo.head() {
+        Ok(head) if head.is_branch() => head.shorthand().ok().map(String::from),
+        Ok(head) => head.target().map(|id| id.to_string().chars().take(7).collect()),
+        Err(_) => {
+            let head = repo.find_reference("HEAD").ok()?;
+            let target = head.symbolic_target().ok()??;
+            target.strip_prefix("refs/heads/").map(String::from)
+        }
+    };
+    branch
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::temp_dir;
+    use git2::Signature;
+
+    fn commit(repo: &Repository) -> git2::Oid {
+        let tree = repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap()
+    }
+
+    #[test]
+    fn names_the_branch_even_before_the_first_commit() {
+        let dir = temp_dir("git-head-branch");
+        let repo = Repository::init(&dir).unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+        assert_eq!(current_branch(&dir).as_deref(), Some("feature"));
+
+        commit(&repo);
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        assert_eq!(current_branch(&dir.join("sub")).as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn a_detached_head_is_its_short_commit_and_a_plain_folder_nothing() {
+        let dir = temp_dir("git-head-detached");
+        let repo = Repository::init(&dir).unwrap();
+        let id = commit(&repo);
+        repo.set_head_detached(id).unwrap();
+        assert_eq!(current_branch(&dir), Some(id.to_string()[..7].to_string()));
+
+        assert_eq!(current_branch(&temp_dir("git-head-plain")), None);
+    }
+}

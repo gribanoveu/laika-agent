@@ -25,6 +25,7 @@ import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
 import { useChatFontSize } from "./hooks/useChatFontSize";
+import { useGitBranch } from "./hooks/useGitBranch";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { useBackendSetting } from "./hooks/useBackendSetting";
@@ -73,6 +74,7 @@ export default function App() {
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
   const agent = useAgentTurn({ onSaved: history.refresh });
+  const branch = useGitBranch(workspace.path, agent.turn.status);
   useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
@@ -205,6 +207,7 @@ export default function App() {
         <main className="main">
           <ChatPanel
             title={history.chats.find((chat) => chat.id === agent.chatId)?.title ?? null}
+            branch={branch}
             workspace={workspace.path}
             index={index}
             turn={agent.turn}

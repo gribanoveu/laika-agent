@@ -353,6 +353,20 @@ describe("the header", () => {
     expect(screen.getByTitle("Hide panel").getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("shows the checked-out branch under the title, the folder in its tooltip", () => {
+    render(
+      <ChatPanel
+        branch="feature/parser"
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+      />,
+    );
+    expect(screen.getByTitle("/tmp/project").textContent).toBe("feature/parser");
+  });
+
   test("a chat not saved yet is a new one", () => {
     panel(state([]));
     expect(screen.getByRole("heading", { name: "New chat" })).toBeTruthy();

@@ -116,6 +116,12 @@ export async function currentWorkspace(): Promise<string | null> {
   return invoke<string | null>("workspace_current");
 }
 
+/** The branch checked out in the open folder; `null` outside a repository. */
+export async function currentBranch(): Promise<string | null> {
+  if (!inTauri()) return null;
+  return invoke<string | null>("workspace_branch");
+}
+
 /** Folders opened lately that still exist, the last one first. */
 export async function recentWorkspaces(): Promise<string[]> {
   if (!inTauri()) return [];

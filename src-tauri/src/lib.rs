@@ -64,6 +64,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::chat::workspace_open,
             commands::chat::workspace_current,
+            commands::chat::workspace_branch,
             commands::chat::workspace_recent,
             commands::chat::workspace_index_status,
             commands::chat::chat_start,
