@@ -15,6 +15,25 @@
   display: none;
 }
 
+/* Leaving `display: none` restarts the animation, so showing the panel
+   slides it in from the edge it sits on. There is no matching exit: the
+   panel is gone the moment it is hidden, and animating that would hold a
+   width the chat has already taken back. */
+@keyframes aside-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+.aside {
+  animation: aside-in 0.18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aside {
+    animation: none;
+  }
+}
+
 .aside-head {
   flex: none;
   display: flex;
