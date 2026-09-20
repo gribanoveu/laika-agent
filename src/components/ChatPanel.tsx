@@ -10,6 +10,7 @@ import {
   GitBranch,
   ListTodo,
   Pencil,
+  Download,
   Search,
   ShieldAlert,
   Terminal,
@@ -17,6 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
+import { ChatMenu } from "./ChatMenu";
 import { IndexBadge } from "./IndexBadge";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
@@ -353,6 +355,8 @@ function ToolRun({ run, live }: { run: Run; live: boolean }) {
 type Props = {
   /** Whether the side panel is showing; the header's button shows and hides it. */
   asideOpen?: boolean;
+  /** Writes the conversation out as a file. One entry of the header's "…" menu. */
+  onExport?: () => void;
   onToggleAside?: () => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
@@ -376,6 +380,7 @@ type Props = {
 
 export function ChatPanel({
   asideOpen = false,
+  onExport,
   onToggleAside,
   title = null,
   branch = null,
@@ -421,6 +426,19 @@ export function ChatPanel({
               retrying in {turn.retrying.delaySeconds}s ({turn.retrying.attempt}/
               {turn.retrying.maxAttempts})
             </span>
+          )}
+          {onExport && (
+            <ChatMenu
+              items={[
+                {
+                  id: "export",
+                  label: "Export chat…",
+                  hint: "The whole conversation as Markdown",
+                  icon: <Download size={14} />,
+                  onSelect: onExport,
+                },
+              ]}
+            />
           )}
           {onToggleAside && (
             <button

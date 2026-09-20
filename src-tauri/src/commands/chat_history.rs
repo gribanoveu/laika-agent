@@ -56,6 +56,14 @@ pub fn chat_save(
     .map_err(|e| e.to_string())
 }
 
+/// Writes one saved chat to a file the user picked, as Markdown. The path is
+/// theirs — it comes back from the system save dialog — so nothing here
+/// second-guesses where it points.
+#[tauri::command]
+pub fn chat_export(id: String, path: String) -> Result<(), String> {
+    chat_store::export(&id, std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn chat_delete(id: String) -> Result<(), String> {
     chat_store::delete(&id).map_err(|e| e.to_string())

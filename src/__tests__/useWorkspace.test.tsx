@@ -23,8 +23,11 @@ mock.module("@tauri-apps/api/core", () => ({
   transformCallback: (callback: unknown) => callback,
 }));
 
+// Module mocks are global to the run: every export the app imports from here
+// has to be in it, or another file's import of `lib/dialog` fails.
 mock.module("@tauri-apps/plugin-dialog", () => ({
   open: () => Promise.resolve(opened),
+  save: () => Promise.resolve(null),
 }));
 
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};

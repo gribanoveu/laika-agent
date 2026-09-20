@@ -6,6 +6,7 @@ pub mod settings;
 pub mod llm_retry;
 pub mod command_exec;
 pub mod chat_record;
+pub mod chat_export;
 pub mod compaction;
 pub mod conversation_mode;
 pub mod embeddings;

@@ -353,6 +353,55 @@ describe("the header", () => {
     expect(screen.getByTitle("Hide panel").getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("the … menu offers the export, and closes once it is picked", () => {
+    let exported = 0;
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onExport={() => exported++}
+      />,
+    );
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    fireEvent.click(screen.getByTitle("More"));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Export chat/ }));
+
+    expect(exported).toBe(1);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  test("the … menu closes on Escape, and is not there with nothing in it", () => {
+    const { unmount } = render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onExport={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("More"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    unmount();
+
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+      />,
+    );
+    expect(screen.queryByTitle("More")).toBeNull();
+  });
+
   test("shows the checked-out branch under the title, the folder in its tooltip", () => {
     render(
       <ChatPanel

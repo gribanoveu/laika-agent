@@ -28,10 +28,11 @@ import { useChatFontSize } from "./hooks/useChatFontSize";
 import { useGitBranch } from "./hooks/useGitBranch";
 import { useToast } from "./hooks/useToast";
 import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
+import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
-import { setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
+import { exportChat, setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import "./App.css";
 
@@ -157,6 +158,22 @@ export default function App() {
     agent.send(text);
   };
 
+  // The conversation as a file, for reading it somewhere else. Only what is
+  // on disk can be written out — a turn saves when it comes to rest, so this
+  // exports everything up to the one still running.
+  const exportOpenChat = async () => {
+    const chat = history.chats.find((one) => one.id === agent.chatId);
+    if (!chat) return toast.show("Nothing saved to export yet");
+    const path = await pickSavePath(chat.title, "md");
+    if (!path) return;
+    try {
+      await exportChat(chat.id, path);
+      toast.show(`Exported to ${path.split("/").pop()}`);
+    } catch (e) {
+      toast.show(String(e));
+    }
+  };
+
   // The mode first, and only then the message: the backend reads the mode
   // when the turn starts, and a turn sent a moment early would still be a
   // plan that cannot write.
@@ -216,6 +233,7 @@ export default function App() {
             onNewChat={newChat}
             asideOpen={!asideHidden}
             onToggleAside={() => setAsideHidden((v) => !v)}
+            onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}
             onOpenPlan={() => openTab("plan")}
             branchable={agent.branchable}

@@ -444,6 +444,12 @@ export async function saveChat(
   return invoke<ChatSummary>("chat_save", { id, messages, blocks, todos, plan, branchedFrom });
 }
 
+/** Writes the saved chat to `path` as Markdown — a transcript to read or analyse elsewhere. */
+export async function exportChat(id: string, path: string): Promise<void> {
+  requireBackend();
+  return invoke("chat_export", { id, path });
+}
+
 export async function deleteChat(id: string): Promise<void> {
   requireBackend();
   return invoke("chat_delete", { id });

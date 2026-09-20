@@ -17,11 +17,12 @@
 //! the rest open normally.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use crate::domain::chat_export;
 use crate::domain::chat_record::{
     self, ChatError, ChatRecord, ChatSummary, CHAT_SCHEMA_VERSION,
 };
@@ -130,6 +131,14 @@ pub fn save(
     Ok(ChatSummary::from(&record))
 }
 
+/// Writes one chat as a Markdown transcript, wherever the user chose to put
+/// it — an ordinary file of theirs, not one of ours, so it is written plainly
+/// rather than with the app directory's private permissions.
+pub fn export(id: &str, path: &Path) -> Result<(), ChatError> {
+    let record = load(id)?;
+    fs::write(path, chat_export::to_markdown(&record)).map_err(|e| ChatError::Write(e.to_string()))
+}
+
 pub fn delete(id: &str) -> Result<(), ChatError> {
     match fs::remove_file(path(id)?) {
         Ok(()) => Ok(()),
@@ -173,6 +182,30 @@ mod tests {
             assert_eq!(record.messages, vec![LlmMessage::user("why does it drop the token?")]);
             assert_eq!(record.blocks, blocks("why does it drop the token?"));
             assert_eq!(record.plan.as_deref(), Some("# Plan"));
+        });
+    }
+
+    /// The transcript goes where the user pointed, not into the app's own
+    /// folder — the whole point of an export is that it leaves.
+    #[test]
+    fn a_chat_is_exported_as_markdown_where_it_was_asked_for() {
+        with_app_dir("chat-store-export", || {
+            save_one("one", "/repo", "why does it drop the token?");
+            let path = dir().unwrap().join("transcript.md");
+
+            export("one", &path).unwrap();
+
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(text.starts_with("# why does it drop the token?"), "{text}");
+            assert!(text.contains("## User"), "{text}");
+        });
+    }
+
+    #[test]
+    fn exporting_a_chat_that_is_not_there_says_so() {
+        with_app_dir("chat-store-export-missing", || {
+            let path = dir().unwrap().join("transcript.md");
+            assert!(matches!(export("nope", &path), Err(ChatError::NotFound(_))));
         });
     }
 

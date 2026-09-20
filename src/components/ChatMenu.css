@@ -1,0 +1,71 @@
+.chat-menu-wrap {
+  position: relative;
+}
+
+.chat-menu-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+.chat-menu-button.on {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+.chat-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Anchored to the trigger's right edge: it sits at the end of the header. */
+  right: 0;
+  min-width: 230px;
+  max-width: 320px;
+  background: var(--bg-panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 30;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.chat-menu-item {
+  display: flex;
+  /* The icon belongs to the label, not to the middle of the two lines. */
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chat-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.chat-menu-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--text-faint);
+}
+.chat-menu-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-menu-text .hint {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
