@@ -20,9 +20,9 @@ Context for AI coding agents (Claude Code and others) working in this repository
 - Package manager: **bun** — always use `bun`/`bunx`, never `npm`/`pnpm`/`yarn`
 
 Tech stack
-Frontend: React 19 + TypeScript, Vite build, plain CSS files per component (no CSS-in-JS/Tailwind), lucide-react for icons. No global state library (Redux/Zustand/Context store) — state lives in custom hooks (`src/hooks/*`, ~80 of them) composed directly into components (e.g. `useLlmChat`, `useLlmSetup`).
+Frontend: React 19 + TypeScript, Vite build, plain CSS files per component (no CSS-in-JS/Tailwind), lucide-react for icons, streamdown + shiki for streamed Markdown and highlighting (`components/Markdown.tsx`). No global state library (Redux/Zustand/Context store) — state lives in custom hooks (`src/hooks/*`, ~20 of them) composed directly into components (e.g. `useAgentTurn`, `useWorkspace`).
 
-`App.tsx` is the composition root: it calls ~55 of those hooks and passes their results down as props. That is where cross-cutting state actually lives, and it is why the file is ~1300 lines — adding a hook that more than one panel needs usually means editing it. Before adding state there, check whether the hook can own it privately, or whether an existing hook already exposes it. React Context is used in exactly one place (`AsciiDocPreview/AscPreviewContext.tsx`, scoped to that subtree) — it is a deliberate local exception for preview rendering, not a pattern to spread.
+`App.tsx` is the composition root: it calls most of those hooks and passes their results down as props. That is where cross-cutting state actually lives — adding a hook that more than one panel needs usually means editing it, and the file grows with every one. Before adding state there, check whether the hook can own it privately, or whether an existing hook already exposes it. React Context is not used at all; keep it that way unless a subtree genuinely needs it.
 
 Backend: Tauri v2 (Rust), ureq (blocking HTTP client, not reqwest) for LLM provider calls, tauri::async_runtime::spawn_blocking to run them off the async runtime. Streaming deltas and other progress reach the frontend as tauri::Emitter events, emitted in commands/ only — services report through sinks (see Architecture).
 
@@ -64,7 +64,7 @@ Dependency direction points inward: `commands → services → domain`, and `inf
 
 Don't pre-build all four layers for something trivial. Introduce a trait boundary when there's a real second implementation (e.g. a test double) or a use-case spanning multiple infra calls — not speculatively.
 
-See [`AI_HARNESS.md`](AI_HARNESS.md) for the AI-agent tool-access infrastructure (`domain/ai_access.rs`, `domain/ai_tools.rs`, `services/ai_tools/`). It is fully wired: `services::llm_chat` runs the tool-calling loop against it, and the assistant panel drives it from the UI.
+The AI-agent tool surface lives in `domain/tools.rs` (tool identity, loop cost, the approval gate) and `services/ai_tools/` (one module per tool under `tools/`, plus path resolution, argument parsing and previews). It is fully wired: `services::llm_chat` runs the tool-calling loop against it, and the chat panel drives it from the UI. Adding a tool is a variant in the two enums, a module under `services/ai_tools/tools/`, and a branch in the `match` — if a fifth place needs editing, that contract is broken.
 
 ## Errors
 
@@ -94,7 +94,7 @@ See [`AI_HARNESS.md`](AI_HARNESS.md) for the AI-agent tool-access infrastructure
 
 **Don't use a browser control where the app already draws its own.** The app renders its interactive widgets itself, so a native one arrives with the platform's look — a macOS `<select>` among hand-styled panels reads as something pasted in from another program, and it ignores the theme tokens everything else is built from.
 
-The pattern for a dropdown is a `<button>` trigger plus a menu of `role="option"` buttons, dismissed by an outside `pointerdown` or `Escape`. Existing implementations to copy: `.method-select*` (`HttpRequestBuilder`), `.oas-select*` (`OpenApiExplorer`), `.assistant-mode-*` (`AssistantConversation`). The same applies to anything else the platform would draw its own way — `<input type="checkbox">` is styled through `.settings-check`, dialogs are the app's own modal shell rather than `alert`/`confirm`.
+The pattern for a dropdown is a `<button>` trigger plus a `role="listbox"` menu of `role="option"` buttons, dismissed by an outside `pointerdown` or `Escape`. It is written once, in `src/components/Dropdown.tsx` — use that component instead of a second implementation (`Composer`, `Sidebar`, `ChatMenu` and `ToolLog` all do). The same applies to anything else the platform would draw its own way: dialogs go through `src/components/Modal.tsx`, never `alert`/`confirm`.
 
 Colours, spacing and fonts come from the tokens in `src/styles/tokens.css` (`--bg-*`, `--text-*`, `--border`, `--accent`, `--font-ui*`). A literal hex or pixel font size in a component is a bug: it will not follow the user's theme or font-size preference.
 

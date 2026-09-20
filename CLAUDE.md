@@ -17,8 +17,10 @@ The agent core is being ported here from Alfa Atlas
 what is next, and — for each ported module — what had to change and what must not be
 lost. Read it before adding backend code, and update it when a feature lands.
 
-Until the port reaches stage 3, `src/mock/data.ts` stands in for the backend and there
-are no `#[tauri::command]`s.
+The backend is live: the shell talks to real `#[tauri::command]`s, and the mock data the
+plan started from is gone. Stages 5–7 (index and search, skills and observability,
+extensions) are the ones still landing — the plan's own progress tables say where each
+stands.
 
 ## Tests
 
