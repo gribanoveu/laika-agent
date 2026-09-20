@@ -66,17 +66,18 @@ cd src-tauri && cargo test --release search_bench -- --ignored --nocapture
 
 ## Mutation testing
 
-New Rust code is not done when `cargo test` is green — the tests have to be shown to
-catch something. Mutate the logic you just wrote (flip a comparison, drop a branch,
-return the empty value, remove a guard), run the tests it belongs to, and keep going
-until every mutant fails a test; a survivor means a missing test, not a bad mutant.
-Report the count and what survived, the way `docs/06-port-plan.md` does per feature.
+New backend code is not done when `cargo test` is green — the tests have to be shown to
+catch something. Break your own logic one edit at a time and check that each break fails
+a test; a survivor is a missing test, not a bad mutant. This is how every ported feature
+was checked, and the run is reported in `docs/06-port-plan.md`.
 
-There is no `cargo-mutants` here — it is a throwaway script per run. Whatever runs it
-must: check the unmutated baseline is green first, put a per-mutant time limit on
-`cargo test` and count a hang as caught (a mutant can make a test wait forever), print
-unbuffered, and back the file up outside the repo so an interrupted run can be restored
-with `cp` rather than `git checkout`.
+The method, the outcomes and what to write in the report are in
+[`docs/11-mutation-testing.md`](docs/11-mutation-testing.md). The runner takes a JSON plan
+(there is no `cargo-mutants` here):
+
+```bash
+python3 scripts/mutate.py plan.json -k
+```
 
 ## Checks before done
 
