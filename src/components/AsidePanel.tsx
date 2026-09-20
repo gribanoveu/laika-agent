@@ -1,38 +1,18 @@
-import {
-  BookText,
-  ClipboardList,
-  FolderClosed,
-  Plug,
-  Sparkles,
-  SquareTerminal,
-  Table2,
-  Webhook,
-} from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
 import { ItemList } from "./ItemList";
 import { ProcessList } from "./ProcessList";
 import { PlanPanel } from "./PlanPanel";
 import type { HooksView, McpServerState, McpView, ProcessView, RuleListItem, SkillsView, Task } from "../lib/chat";
+import { ASIDE_PANELS } from "./asidePanels";
 import type { AsideTab, PanelItem } from "../types";
 import "./AsidePanel.css";
-
-const TABS: { id: AsideTab; label: string; icon: typeof Table2 }[] = [
-  { id: "changes", label: "Changes", icon: Table2 },
-  { id: "plan", label: "Plan", icon: ClipboardList },
-  { id: "mcp", label: "MCP", icon: Plug },
-  { id: "hooks", label: "Hooks", icon: Webhook },
-  { id: "skills", label: "Skills", icon: Sparkles },
-  { id: "rules", label: "Rules", icon: BookText },
-  { id: "files", label: "Files", icon: FolderClosed },
-  { id: "terminal", label: "Terminal", icon: SquareTerminal },
-];
 
 // Each list is filled by its own command wrapper once that command exists.
 const WORKSPACE_FILES: string[] = [];
 
 type Props = {
+  /** Which panel is showing. It is picked from the chat header's "⋮". */
   tab: AsideTab;
-  onTabChange: (tab: AsideTab) => void;
   onNotify: (msg: string) => void;
   mcp: McpView | null;
   mcpError: string | null;
@@ -169,7 +149,6 @@ function skillItems(view: SkillsView | null): PanelItem[] {
 
 export function AsidePanel({
   tab,
-  onTabChange,
   onNotify,
   mcp,
   mcpError,
@@ -197,28 +176,20 @@ export function AsidePanel({
   const mcpList = mcpItems(mcp);
   const hookList = hookItems(hooks);
   const skillList = skillItems(skills);
+  const panel = ASIDE_PANELS.find((p) => p.id === tab);
   return (
     <aside className="aside">
       <div className="aside-head">
-        <div className="tabs" role="tablist">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              title={label}
-              aria-selected={tab === id}
-              className={`tab${tab === id ? " active" : ""}`}
-              onClick={() => onTabChange(id)}
-            >
-              <Icon size={15} />
-            </button>
-          ))}
-        </div>
+        {panel && (
+          <h2 className="aside-title">
+            <panel.icon size={14} />
+            {panel.label}
+          </h2>
+        )}
       </div>
 
       <div className="aside-body">
-        <div className="tabpanel" role="tabpanel">
+        <div className="tabpanel">
           {tab === "changes" && <ChangesPanel onNotify={onNotify} />}
           {tab === "plan" && (
             <PlanPanel

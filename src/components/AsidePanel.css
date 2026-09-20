@@ -37,40 +37,21 @@
 .aside-head {
   flex: none;
   display: flex;
-  align-items: flex-end;
-  gap: 0;
-  padding: 10px 8px 0;
+  align-items: center;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border-soft);
 }
 
-.tabs {
-  flex: 1;
-  min-width: 0;
+/* The panel says which one it is, since nothing else does any more: it is
+   chosen in the chat header and opens over here. */
+.aside-title {
   display: flex;
-  flex-wrap: nowrap;
-  justify-content: space-between;
-  column-gap: 2px;
-  padding: 4px 4px 0;
-}
-/* Icon only — the name lives in the tooltip, so the row never has to wrap. */
-.tab {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  color: var(--text-faint);
-  padding: 2px 4px 8px;
-  border-bottom: 1.5px solid transparent;
-  margin-bottom: -1px;
-}
-.tab:hover {
-  color: var(--text-dim);
-}
-.tab.active {
+  gap: 7px;
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--text);
-  border-bottom-color: var(--text-dim);
 }
 
 .aside-body {

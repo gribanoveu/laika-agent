@@ -102,7 +102,6 @@ describe("the MCP tab", () => {
     render(
       <AsidePanel
         tab="mcp"
-        onTabChange={() => {}}
         onNotify={() => {}}
         mcp={view}
         mcpError={null}

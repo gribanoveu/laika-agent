@@ -100,6 +100,9 @@ export default function App() {
   const hideAsideWhenNarrow = useCallback((narrow: boolean) => narrow && setAsideHidden(true), [setAsideHidden]);
   useNarrowCollapse("(max-width: 900px)", hideAsideWhenNarrow);
 
+  // Every panel opens the same way: pick it in the header's "⋮", and the side
+  // panel shows it. Which one that was is remembered, so the button beside the
+  // menu shows and hides what is already open — Changes until asked otherwise.
   const openTab = (next: AsideTab) => {
     setTab(next);
     setAsideHidden(false);
@@ -233,6 +236,7 @@ export default function App() {
             onNewChat={newChat}
             asideOpen={!asideHidden}
             onToggleAside={() => setAsideHidden((v) => !v)}
+            onOpenPanel={openTab}
             onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}
             onOpenPlan={() => openTab("plan")}
@@ -268,7 +272,6 @@ export default function App() {
 
         <AsidePanel
           tab={tab}
-          onTabChange={setTab}
           onNotify={toast.show}
           mcp={mcp.view}
           mcpError={mcpEditing ? null : mcp.error}

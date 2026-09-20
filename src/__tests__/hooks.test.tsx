@@ -84,7 +84,6 @@ describe("the Hooks tab", () => {
     render(
       <AsidePanel
         tab="hooks"
-        onTabChange={() => {}}
         onNotify={() => {}}
         mcp={null}
         mcpError={null}

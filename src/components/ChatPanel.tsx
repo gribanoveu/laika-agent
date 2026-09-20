@@ -18,7 +18,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
-import { ChatMenu } from "./ChatMenu";
+import { ChatMenu, type ChatMenuItem } from "./ChatMenu";
+import { ASIDE_PANELS } from "./asidePanels";
+import type { AsideTab } from "../types";
 import { IndexBadge } from "./IndexBadge";
 import { Markdown } from "./Markdown";
 import type { IndexState } from "../lib/indexStatus";
@@ -358,6 +360,8 @@ type Props = {
   /** Writes the conversation out as a file. One entry of the header's "…" menu. */
   onExport?: () => void;
   onToggleAside?: () => void;
+  /** Shows the side panel on one particular panel — the rest of that menu. */
+  onOpenPanel?: (tab: AsideTab) => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
   /** The git branch checked out in the folder; `null` outside a repository. */
@@ -382,6 +386,7 @@ export function ChatPanel({
   asideOpen = false,
   onExport,
   onToggleAside,
+  onOpenPanel,
   title = null,
   branch = null,
   workspace,
@@ -402,6 +407,31 @@ export function ChatPanel({
   // after a stop or a failure it may be half of one.
   const planReady = onImplement && turn.status === "done" && groups[groups.length - 1]?.role === "agent";
   const name = workspace?.split("/").filter(Boolean).pop() ?? null;
+
+  // The side panels first — they are what the menu is opened for — then what
+  // can be done to the conversation itself.
+  const menu: ChatMenuItem[] = [
+    ...(onOpenPanel
+      ? ASIDE_PANELS.map(({ id, label, icon: Icon }) => ({
+          id,
+          label,
+          icon: <Icon size={14} />,
+          onSelect: () => onOpenPanel(id),
+        }))
+      : []),
+    ...(onExport
+      ? [
+          {
+            id: "export",
+            label: "Export chat…",
+            hint: "The whole conversation as Markdown",
+            icon: <Download size={14} />,
+            divided: Boolean(onOpenPanel),
+            onSelect: onExport,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <section className="chat-panel">
@@ -427,19 +457,7 @@ export function ChatPanel({
               {turn.retrying.maxAttempts})
             </span>
           )}
-          {onExport && (
-            <ChatMenu
-              items={[
-                {
-                  id: "export",
-                  label: "Export chat…",
-                  hint: "The whole conversation as Markdown",
-                  icon: <Download size={14} />,
-                  onSelect: onExport,
-                },
-              ]}
-            />
-          )}
+          {menu.length > 0 && <ChatMenu items={menu} />}
           {onToggleAside && (
             <button
               type="button"

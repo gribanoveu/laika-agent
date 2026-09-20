@@ -353,6 +353,25 @@ describe("the header", () => {
     expect(screen.getByTitle("Hide panel").getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("the … menu opens a side panel by name", () => {
+    const opened: string[] = [];
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onOpenPanel={(tab) => opened.push(tab)}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("More"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+
+    expect(opened).toEqual(["terminal"]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   test("the … menu offers the export, and closes once it is picked", () => {
     let exported = 0;
     render(

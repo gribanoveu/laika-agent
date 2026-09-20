@@ -13,6 +13,8 @@ export type ChatMenuItem = {
   hint?: string;
   icon?: ReactNode;
   disabled?: boolean;
+  /** Starts a new group: a line above this row. */
+  divided?: boolean;
   onSelect: () => void;
 };
 
@@ -64,7 +66,7 @@ export function ChatMenu({ items }: { items: ChatMenuItem[] }) {
               key={item.id}
               type="button"
               role="menuitem"
-              className="chat-menu-item"
+              className={`chat-menu-item${item.divided ? " divided" : ""}`}
               disabled={item.disabled}
               onClick={() => {
                 setOpen(false);

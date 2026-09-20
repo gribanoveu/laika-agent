@@ -103,7 +103,6 @@ describe("the skills tab", () => {
         rulesError={null}
         onRuleToggle={() => {}}
         tab="skills"
-        onTabChange={() => {}}
         onNotify={() => {}}
         skills={view}
         skillsError={null}
@@ -173,7 +172,6 @@ describe("the rules tab", () => {
     render(
       <AsidePanel
         tab="rules"
-        onTabChange={() => {}}
         onNotify={() => {}}
         skills={null}
         skillsError={null}
