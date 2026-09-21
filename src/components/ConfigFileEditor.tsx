@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { jsonError, type Merged } from "../lib/configSnippets";
 import "./ConfigFileEditor.css";
 
 // A settings file edited whole, in one box, because its format is one that
@@ -14,43 +15,132 @@ type Props = {
   error: string | null;
   /** What the format is and where the file lives. */
   note: ReactNode;
+  /** A working entry, shown beside the box and added to the file on request. */
+  example?: string;
+  /**
+   * Joins a pasted snippet to the file, or `null` for text that is not one —
+   * which is then pasted as it is.
+   */
+  merge?: (current: string, pasted: string) => Merged | null;
   /** Resolves to whether it was stored. */
   onSave: (text: string) => Promise<boolean>;
   onClose: () => void;
 };
 
-export function ConfigFileEditor({ label, text, error, note, onSave, onClose }: Props) {
+const INDENT = "  ";
+
+export function ConfigFileEditor({ label, text, error, note, example, merge, onSave, onClose }: Props) {
   const [draft, setDraft] = useState(text ?? "");
   // Follows the file until the user starts typing, so the box is never a
   // stale copy of what is on disk.
   const [touched, setTouched] = useState(false);
+  // What the last paste did to the file, until the next keystroke.
+  const [merged, setMerged] = useState<string | null>(null);
   useEffect(() => {
     if (!touched) setDraft(text ?? "");
   }, [text, touched]);
 
+  const problem = draft.trim() ? jsonError(draft) : null;
+
+  const edit = (next: string, message: string | null = null) => {
+    setDraft(next);
+    setTouched(true);
+    setMerged(message);
+  };
+
   const save = async () => {
+    if (problem) return;
     if (await onSave(draft)) {
       setTouched(false);
       onClose();
     }
   };
 
+  // A snippet joins the file rather than landing wherever the caret was. Not
+  // when everything is selected: pasting over all of it means "this instead".
+  const paste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const box = e.currentTarget;
+    if (!merge || (box.selectionStart === 0 && box.selectionEnd === box.value.length && box.value)) return;
+    const result = merge(draft, e.clipboardData.getData("text"));
+    if (!result) return;
+    e.preventDefault();
+    edit(result.text, result.message);
+  };
+
+  const keys = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      void save();
+    } else if (e.key === "Tab" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // An indent, as in any editor. Shift+Tab still leaves the box.
+      // `insertText` keeps the edit on the undo stack; a plain value change would not.
+      e.preventDefault();
+      if (!document.execCommand?.("insertText", false, INDENT)) {
+        const { selectionStart: from, selectionEnd: to, value } = e.currentTarget;
+        edit(value.slice(0, from) + INDENT + value.slice(to));
+      }
+    }
+  };
+
+  const addExample = () => {
+    if (!example || !merge) return;
+    const result = merge(draft, example);
+    if (result) edit(result.text, result.message);
+  };
+
   return (
     <div className="config-file">
-      <textarea
-        className="config-file-text"
-        aria-label={label}
-        spellCheck={false}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          setTouched(true);
-        }}
-      />
-      {error && <p className="modal-note config-file-error">{error}</p>}
-      <p className="modal-note">{note}</p>
+      <div className="config-file-main">
+        <textarea
+          className="config-file-text"
+          aria-label={label}
+          aria-invalid={problem ? true : undefined}
+          spellCheck={false}
+          value={draft}
+          onChange={(e) => edit(e.target.value)}
+          onPaste={paste}
+          onKeyDown={keys}
+        />
+        {problem ? (
+          <p className="config-file-status bad" role="status">
+            {problem.line ? `Line ${problem.line}, column ${problem.column}: ` : "Not valid JSON: "}
+            {problem.message}
+          </p>
+        ) : merged ? (
+          <p className="config-file-status" role="status">
+            {merged}
+          </p>
+        ) : (
+          merge && <p className="config-file-status hint">Paste a snippet anywhere — it is added to the file.</p>
+        )}
+        {error && <p className="modal-note config-file-error">{error}</p>}
+      </div>
+
+      <aside className="config-file-side">
+        <p className="modal-note">{note}</p>
+        {example && (
+          <>
+            <div className="config-file-example-head">
+              <span>Example</span>
+              {merge && (
+                <button type="button" className="link-btn" disabled={!!problem} onClick={addExample}>
+                  Add to the file
+                </button>
+              )}
+            </div>
+            <pre className="config-file-example">{example}</pre>
+          </>
+        )}
+      </aside>
+
       <div className="config-file-actions">
-        <button className="btn btn-primary" type="button" onClick={save}>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={!!problem}
+          title={problem ? "Fix the JSON first" : "Save (⌘S)"}
+          onClick={save}
+        >
           Save
         </button>
         <button className="btn btn-ghost" type="button" onClick={onClose}>

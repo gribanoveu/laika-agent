@@ -30,6 +30,7 @@ import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
+import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, type Docks } from "./lib/docks";
 import { exportChat, setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
@@ -394,9 +395,11 @@ export default function App() {
         />
       </Modal>
 
-      <Modal title="MCP servers" open={mcpEditing} onClose={() => setMcpEditing(false)}>
+      <Modal title="MCP servers" wide open={mcpEditing} onClose={() => setMcpEditing(false)}>
         <ConfigFileEditor
           label="MCP configuration"
+          example={MCP_EXAMPLE}
+          merge={mergeMcp}
           text={mcp.view?.text}
           error={mcp.error}
           onSave={mcp.save}
@@ -412,9 +415,11 @@ export default function App() {
         />
       </Modal>
 
-      <Modal title="Hooks" open={hooksEditing} onClose={() => setHooksEditing(false)}>
+      <Modal title="Hooks" wide open={hooksEditing} onClose={() => setHooksEditing(false)}>
         <ConfigFileEditor
           label="Hooks configuration"
+          example={HOOKS_EXAMPLE}
+          merge={mergeHooks}
           text={hooks.view?.text}
           error={hooks.error}
           onSave={hooks.save}
