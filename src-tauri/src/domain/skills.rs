@@ -37,7 +37,8 @@ pub struct SkillMeta {
 }
 
 /// Where a skill was found: the open folder's `.claude/skills` or
-/// `.agents/skills`, or the user's own folder in the app directory.
+/// `.agents/skills`, or one of the user's — the app's own, `~/.agents/skills`,
+/// `~/.claude/skills`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SkillSource {
@@ -64,15 +65,13 @@ pub struct SkillListItem {
     pub enabled: bool,
     pub error: Option<String>,
     pub source: SkillSource,
-    /// What its switch is stored under: the name for the user's own, the
-    /// folder's path for a project's — so turning one repository's `release`
-    /// off leaves every other repository's alone.
-    pub key: String,
-    /// The skill's folder, shown so the user can find the file.
+    /// The skill's folder, shown so the user can find the file. Two rows can
+    /// share a name — the switch, by name, covers both — but not a path.
     pub path: String,
     /// Valid and on, but another skill of the same name comes first — a
-    /// project's before the user's — and is the one the model gets.
-    pub shadowed: bool,
+    /// project's before the user's, the app's own before another agent's —
+    /// and is the one the model gets: its folder.
+    pub shadowed_by: Option<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

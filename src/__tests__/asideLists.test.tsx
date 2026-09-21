@@ -14,7 +14,7 @@ let holdToggle: Promise<void> | null = null;
 let ruleFiles: RuleListItem[] = [];
 
 mock.module("@tauri-apps/api/core", () => ({
-  invoke: (command: string, args?: { key: string; enabled: boolean }) => {
+  invoke: (command: string, args?: { name: string; enabled: boolean }) => {
     calls.push(command);
     if (command === "skills_list") return Promise.resolve(structuredClone(disk));
     if (command === "rules_list") return Promise.resolve(structuredClone(ruleFiles));
@@ -26,7 +26,7 @@ mock.module("@tauri-apps/api/core", () => ({
     if (command === "skills_set_enabled") {
       if (failToggle) return Promise.reject("settings.json is not valid");
       if (holdToggle) return holdToggle;
-      disk.skills = disk.skills.map((s) => (s.key === args!.key ? { ...s, enabled: args!.enabled } : s));
+      disk.skills = disk.skills.map((s) => (s.name === args!.name ? { ...s, enabled: args!.enabled } : s));
       return Promise.resolve();
     }
     return Promise.resolve(null);
@@ -41,7 +41,7 @@ afterAll(() => {
 
 const { useSkills } = await import("../hooks/useSkills");
 const { useRules } = await import("../hooks/useRules");
-const { RulesList, SkillsList } = await import("../components/panes");
+const { RulesList, SkillsList, folderOf } = await import("../components/panes");
 const { AsidePanel } = await import("../components/AsidePanel");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
@@ -51,13 +51,12 @@ const skill = (name: string, enabled = true, extra: Partial<SkillListItem> = {})
   enabled,
   error: null,
   source: "user",
-  key: name,
   path: `/home/.laika/skills/${name}`,
-  shadowed: false,
+  shadowedBy: null,
   ...extra,
 });
 const theirs = (name: string, extra: Partial<SkillListItem> = {}) =>
-  skill(name, true, { source: "project", key: `/repo/.claude/skills/${name}`, path: `/repo/.claude/skills/${name}`, ...extra });
+  skill(name, true, { source: "project", path: `/repo/.claude/skills/${name}`, ...extra });
 
 beforeEach(() => {
   disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")] };
@@ -108,8 +107,8 @@ describe("useSkills", () => {
     expect(result.current.view?.skills[0].enabled).toBe(false);
   });
 
-  test("a switch flips its own row at once, not every row of that name", async () => {
-    disk = { dir: "/d", skills: [theirs("release"), skill("release")] };
+  test("a switch flips every row of its name at once: it is by name", async () => {
+    disk = { dir: "/d", skills: [theirs("release"), skill("release"), skill("review")] };
     let release = () => {};
     holdToggle = new Promise((resolve) => (release = resolve));
     const { result } = renderHook(() => useSkills(true));
@@ -117,9 +116,9 @@ describe("useSkills", () => {
 
     let saving: Promise<void> = Promise.resolve();
     act(() => {
-      saving = result.current.setEnabled("/repo/.claude/skills/release", false);
+      saving = result.current.setEnabled("release", false);
     });
-    expect(result.current.view?.skills.map((s) => s.enabled)).toEqual([false, true]);
+    expect(result.current.view?.skills.map((s) => s.enabled)).toEqual([false, false, true]);
     release();
     await act(() => saving);
   });
@@ -207,15 +206,44 @@ describe("the skills tab", () => {
 
   test("an empty folder says where skills go, the repository's folders too", () => {
     panel({ dir: "/home/.laika/skills", skills: [] });
-    expect(screen.getByText(/in \/home\/\.laika\/skills for every repository, or in the repository's \.claude\/skills or \.agents\/skills/)).toBeTruthy();
+    expect(
+      screen.getByText(/in \/home\/\.laika\/skills, ~\/\.agents\/skills or ~\/\.claude\/skills for every repository, or in the repository's \.claude\/skills or \.agents\/skills/),
+    ).toBeTruthy();
     expect(screen.queryByText("This repository")).toBeNull();
+  });
+
+  test("a copy hidden by another of the user's names that folder, not its whole path", () => {
+    panel({
+      dir: "/home/.laika/skills",
+      skills: [
+        skill("rspack-debugging", true, { path: "/Users/me/.agents/skills/rspack-debugging" }),
+        skill("rspack-debugging", true, {
+          path: "/Users/me/.claude/skills/rspack-debugging",
+          shadowedBy: "/Users/me/.agents/skills/rspack-debugging",
+        }),
+      ],
+    });
+    expect(screen.getByText("Used instead: ~/.agents/skills")).toBeTruthy();
+  });
+
+  test("a skill's folder is named the same on every platform", () => {
+    expect(folderOf("/Users/me/.agents/skills/review")).toBe("~/.agents/skills");
+    expect(folderOf("C:\\Users\\me\\.claude\\skills\\review")).toBe("~/.claude/skills");
+    expect(folderOf("/opt/skills/review")).toBe("/opt/skills");
   });
 
   test("the repository's skills come first, and one it hides says so", () => {
     const toggled: [string, boolean][] = [];
     panel(
-      { dir: "/home/.laika/skills", skills: [theirs("release"), skill("release", true, { shadowed: true }), skill("review")] },
-      (key, on) => toggled.push([key, on]),
+      {
+        dir: "/home/.laika/skills",
+        skills: [
+          theirs("release"),
+          skill("release", true, { shadowedBy: "/repo/.claude/skills/release" }),
+          skill("review", true, { path: "/Users/me/.agents/skills/review" }),
+        ],
+      },
+      (name, on) => toggled.push([name, on]),
     );
 
     const [repo, mine] = screen.getAllByText(/^(This repository|Yours)$/);
@@ -223,11 +251,14 @@ describe("the skills tab", () => {
     expect(screen.getByText("1/1")).toBeTruthy();
     expect(screen.getByText("2/2")).toBeTruthy();
     expect(screen.getByText("hidden")).toBeTruthy();
-    expect(screen.getByText("The repository's skill of this name is used")).toBeTruthy();
+    expect(screen.getByText("Used instead: this repository")).toBeTruthy();
+    // Each of the user's says which folder it is from.
+    expect(screen.getByText("~/.laika/skills")).toBeTruthy();
+    expect(screen.getByText("~/.agents/skills")).toBeTruthy();
 
-    // Keyed by folder: switching off the repository's release leaves the user's alone.
-    fireEvent.click(screen.getAllByRole("button", { pressed: true })[0]);
-    expect(toggled).toEqual([["/repo/.claude/skills/release", false]]);
+    // The switch is by name, whichever row it is on.
+    fireEvent.click(screen.getAllByRole("button", { pressed: true })[2]);
+    expect(toggled).toEqual([["review", false]]);
   });
 });
 

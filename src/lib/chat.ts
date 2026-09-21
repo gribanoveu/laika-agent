@@ -459,9 +459,10 @@ export async function deleteChat(id: string): Promise<void> {
 
 /**
  * Mirrors `domain::skills::SkillListItem`: one skill folder, the open
- * folder's (`.claude/skills`, `.agents/skills`) or the user's. `error` is set
- * when its SKILL.md did not parse; `key` is what its switch is stored under;
- * `shadowed` is a valid, switched-on skill whose name an earlier one took.
+ * folder's (`.claude/skills`, `.agents/skills`) or the user's (the app's,
+ * `~/.agents/skills`, `~/.claude/skills`). `error` is set when its SKILL.md did
+ * not parse. The switch is by name — two rows can share one — and `path` tells
+ * rows apart. `shadowedBy` is the folder of the skill used instead of this one.
  */
 export type SkillListItem = {
   name: string;
@@ -469,9 +470,8 @@ export type SkillListItem = {
   enabled: boolean;
   error: string | null;
   source: "project" | "user";
-  key: string;
   path: string;
-  shadowed: boolean;
+  shadowedBy: string | null;
 };
 
 /** `dir` is where the user's own skills go, so an empty list can say so. */
@@ -482,10 +482,10 @@ export async function skillsList(): Promise<SkillsView> {
   return invoke<SkillsView>("skills_list");
 }
 
-/** By the row's `key`: a name for the user's skill, a folder for a repository's. */
-export async function setSkillEnabled(key: string, enabled: boolean): Promise<void> {
+/** By name: off in every folder and every repository. */
+export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
   requireBackend();
-  return invoke<void>("skills_set_enabled", { key, enabled });
+  return invoke<void>("skills_set_enabled", { name, enabled });
 }
 
 // ---------------------------------------------------------------- MCP servers

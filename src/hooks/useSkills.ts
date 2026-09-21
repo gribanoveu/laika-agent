@@ -24,13 +24,13 @@ export function useSkills(visible: boolean, workspace: string | null = null) {
   }, [visible, workspace, reload]);
 
   const setEnabled = useCallback(
-    async (key: string, enabled: boolean) => {
-      // Shown at once; the reload that follows is what the file now says —
-      // including which skill of a name now wins.
+    async (name: string, enabled: boolean) => {
+      // Shown at once, on every row of the name — the switch is by name; the
+      // reload that follows is what the file now says.
       setError(null);
-      setView((v) => v && { ...v, skills: v.skills.map((s) => (s.key === key ? { ...s, enabled } : s)) });
+      setView((v) => v && { ...v, skills: v.skills.map((s) => (s.name === name ? { ...s, enabled } : s)) });
       try {
-        await setSkillEnabled(key, enabled);
+        await setSkillEnabled(name, enabled);
       } catch (e) {
         setError(String(e));
       }

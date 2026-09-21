@@ -1,8 +1,9 @@
 //! Skill folders on disk: `<skills dir>/<name>/SKILL.md`, plus whatever files
-//! a skill keeps beside it. The skills dirs are the user's own, under the app
-//! directory, and the open folder's `.claude/skills` and `.agents/skills` —
-//! where Claude Code and other agents keep a repository's skills, so theirs
-//! load here unchanged.
+//! a skill keeps beside it. The skills dirs are the open folder's
+//! `.claude/skills` and `.agents/skills`, and the user's: the app's own under
+//! the app directory, then `~/.agents/skills` (Codex's) and `~/.claude/skills`
+//! (Claude Code's) — where other agents keep skills, so theirs load here
+//! unchanged.
 //!
 //! Ported from Alfa Atlas `infra/user_skills_store.rs`, without import,
 //! removal and the Settings preview — those arrive with the skills tab.
@@ -20,9 +21,28 @@ const SKILL_MD: &str = "SKILL.md";
 /// otherwise put thousands of paths into the model's context.
 const MAX_LISTED_FILES: usize = 100;
 
-/// The user's own skills.
+/// The app's own skills folder — the one an empty tab points to.
 pub fn dir() -> Result<PathBuf, SkillError> {
     Ok(app_dir::dir().map_err(SkillError::Io)?.join("skills"))
+}
+
+/// The user's skills dirs, in the order a name is looked up in them: the
+/// app's own first, then the ones other agents install into.
+pub fn user_dirs() -> Result<[PathBuf; 3], SkillError> {
+    let home = home()?;
+    Ok([dir()?, home.join(".agents").join("skills"), home.join(".claude").join("skills")])
+}
+
+#[cfg(not(test))]
+fn home() -> Result<PathBuf, SkillError> {
+    dirs::home_dir().ok_or_else(|| SkillError::Io("no home directory".into()))
+}
+
+/// Under test, the throwaway app directory stands in for the home: the
+/// developer's own `~/.agents` and `~/.claude` never reach a test.
+#[cfg(test)]
+fn home() -> Result<PathBuf, SkillError> {
+    app_dir::dir().map_err(SkillError::Io)
 }
 
 /// A repository's skills dirs, in the order a name is looked up in them.
@@ -220,6 +240,14 @@ mod tests {
     fn a_repositorys_skills_dirs_are_claudes_then_the_agents_one() {
         let ws = Path::new("/repo");
         assert_eq!(project_dirs(ws), [ws.join(".claude/skills"), ws.join(".agents/skills")]);
+    }
+
+    #[test]
+    fn the_users_skills_dirs_are_the_apps_then_codexs_then_claude_codes() {
+        with_app_dir("skills-user-dirs", || {
+            let home = app_dir::dir().unwrap();
+            assert_eq!(user_dirs().unwrap(), [dir().unwrap(), home.join(".agents/skills"), home.join(".claude/skills")]);
+        });
     }
 
     #[test]

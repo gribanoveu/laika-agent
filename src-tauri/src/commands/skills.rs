@@ -9,10 +9,10 @@ pub fn skills_list(state: tauri::State<'_, std::sync::Arc<super::chat::AgentStat
     skills::list(state.workspace().ok().as_deref()).map_err(|e| e.to_string())
 }
 
-/// `key` is the row's: a name for the user's skill, a folder for a repository's.
+/// By name: a skill switched off is off in every folder and every repository.
 #[tauri::command]
-pub fn skills_set_enabled(key: String, enabled: bool) -> Result<(), String> {
-    skills::set_enabled(&key, enabled).map_err(|e| e.to_string())
+pub fn skills_set_enabled(name: String, enabled: bool) -> Result<(), String> {
+    skills::set_enabled(&name, enabled).map_err(|e| e.to_string())
 }
 
 /// The open folder's instruction files; none while no folder is open.

@@ -65,10 +65,14 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Wraps rather than pushing a tag past the card's edge. */
 .item-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin-top: 4px;
   font-size: var(--fs-xs);
   color: var(--text-faint);

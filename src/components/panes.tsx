@@ -188,16 +188,30 @@ export function HooksList({ view, error, onAdd, onEditHook, onRemoveHook, onEdit
 type SkillsListProps = {
   view: SkillsView | null;
   error: string | null;
-  /** By the row's key: a name for the user's skill, a folder for a repository's. */
-  onToggle: (key: string, enabled: boolean) => void;
+  /** By name: a skill switched off is off in every folder and repository. */
+  onToggle: (name: string, enabled: boolean) => void;
 };
 
+/**
+ * `~/.agents/skills` for a skill in it: which of the user's folders a row is
+ * from. Either separator: on Windows the path comes with backslashes.
+ */
+export function folderOf(path: string): string {
+  const dir = path.replace(/[\\/][^\\/]*$/, "");
+  const agent = /[\\/](\.laika|\.agents|\.claude)[\\/]skills$/.exec(dir);
+  return agent ? `~/${agent[1]}/skills` : dir;
+}
+
 /** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
-function skillItems(skills: SkillListItem[]): PanelItem[] {
+function skillItems(skills: SkillListItem[], project: boolean, all: SkillListItem[]): PanelItem[] {
+  // Where the skill used instead of a hidden one is, in a word or two: the
+  // full path is in the expanded row, and a card has no room for it.
+  const usedFrom = (path: string) =>
+    all.find((s) => s.path === path)?.source === "project" ? "this repository" : folderOf(path);
   return skills.map((skill) =>
     skill.error
       ? {
-          id: skill.key,
+          id: skill.path,
           badge: "!",
           kind: "skill",
           title: skill.name,
@@ -206,12 +220,15 @@ function skillItems(skills: SkillListItem[]): PanelItem[] {
           source: skill.path,
         }
       : {
-          id: skill.key,
+          id: skill.path,
           badge: skill.name.slice(0, 2).toUpperCase(),
           kind: "skill",
           title: skill.name,
-          // On, but the model gets the repository's skill of this name instead.
-          ...(skill.shadowed ? { status: { label: "hidden", tone: "off" as const }, meta: "The repository's skill of this name is used" } : {}),
+          // On, but another skill of this name comes first and is the one used.
+          ...(skill.shadowedBy
+            ? { status: { label: "hidden", tone: "off" as const }, meta: `Used instead: ${usedFrom(skill.shadowedBy)}` }
+            : {}),
+          ...(project ? {} : { tags: [folderOf(skill.path)] }),
           desc: skill.description,
           enabled: skill.enabled,
           note: skill.description,
@@ -229,12 +246,15 @@ const count = (items: PanelItem[]) => `${items.filter((s) => s.enabled).length}/
  */
 export function SkillsList({ view, error, onToggle }: SkillsListProps) {
   const all = view?.skills ?? [];
-  const project = skillItems(all.filter((s) => s.source === "project"));
-  const mine = skillItems(all.filter((s) => s.source === "user"));
+  const project = skillItems(all.filter((s) => s.source === "project"), true, all);
+  const mine = skillItems(all.filter((s) => s.source === "user"), false, all);
+  // Rows are told apart by folder; the switch goes by the name in it.
+  const byPath = new Map(all.map((s) => [s.path, s.name]));
+  const toggle = (path: string, enabled: boolean) => onToggle(byPath.get(path) ?? path, enabled);
   return (
     <>
       {project.length > 0 && (
-        <ItemList label="This repository" count={count(project)} items={project} emptyLabel="" onToggle={onToggle} />
+        <ItemList label="This repository" count={count(project)} items={project} emptyLabel="" onToggle={toggle} />
       )}
       <ItemList
         label={project.length > 0 ? "Yours" : "Skills"}
@@ -242,10 +262,10 @@ export function SkillsList({ view, error, onToggle }: SkillsListProps) {
         items={mine}
         emptyLabel={
           project.length > 0
-            ? `None of your own. A skill is a folder with a SKILL.md in ${view?.dir || "the app directory"}.`
-            : `No skills yet. A skill is a folder with a SKILL.md — in ${view?.dir || "the app directory"} for every repository, or in the repository's .claude/skills or .agents/skills.`
+            ? `None of your own. A skill is a folder with a SKILL.md in ${view?.dir || "the app directory"}, ~/.agents/skills or ~/.claude/skills.`
+            : `No skills yet. A skill is a folder with a SKILL.md — in ${view?.dir || "the app directory"}, ~/.agents/skills or ~/.claude/skills for every repository, or in the repository's .claude/skills or .agents/skills.`
         }
-        onToggle={onToggle}
+        onToggle={toggle}
       />
       {error && <div className="empty">{error}</div>}
     </>
