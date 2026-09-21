@@ -19,6 +19,7 @@ import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
 import { useMcp } from "./hooks/useMcp";
 import { useHooks } from "./hooks/useHooks";
+import { useSkills } from "./hooks/useSkills";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
@@ -105,6 +106,9 @@ export default function App() {
   // Settings shows both in "Where your data goes".
   const mcp = useMcp(shown("mcp") || mcpEditing || settingsOpen, agent.turn.status);
   const hooks = useHooks(shown("hooks") || hooksEditing || settingsOpen);
+  // Settings has its own copy: which skills folders are read. The Skills
+  // pane reads the same list for itself while it is open.
+  const skillSources = useSkills(settingsOpen, workspace.path);
   const llm = useLlmSettings();
   const theme = useTheme();
   const fontSize = useChatFontSize();
@@ -375,6 +379,7 @@ export default function App() {
 
       <Modal title="Settings" wide open={settingsOpen} onClose={() => setSettingsOpen(false)}>
         <Settings
+          skills={{ view: skillSources.view, error: skillSources.error, onToggle: skillSources.setSourceEnabled }}
           provider={{
             settings: llm.settings,
             busy: llm.busy,

@@ -474,12 +474,25 @@ export type SkillListItem = {
   shadowedBy: string | null;
 };
 
+/**
+ * Mirrors `domain::skills::SkillSourceItem`: a folder skills are read from —
+ * `project` (the repository's, `path` its root, empty with no folder open),
+ * `app`, `agents`, `claude` — and whether it is read at all.
+ */
+export type SkillSourceItem = { id: "project" | "app" | "agents" | "claude"; path: string; enabled: boolean };
+
 /** `dir` is where the user's own skills go, so an empty list can say so. */
-export type SkillsView = { dir: string; skills: SkillListItem[] };
+export type SkillsView = { dir: string; skills: SkillListItem[]; sources: SkillSourceItem[] };
 
 export async function skillsList(): Promise<SkillsView> {
-  if (!inTauri()) return { dir: "", skills: [] };
+  if (!inTauri()) return { dir: "", skills: [], sources: [] };
   return invoke<SkillsView>("skills_list");
+}
+
+/** A skills folder read or not, for every repository. */
+export async function setSkillSourceEnabled(id: SkillSourceItem["id"], enabled: boolean): Promise<void> {
+  requireBackend();
+  return invoke<void>("skills_set_source_enabled", { id, enabled });
 }
 
 /** By name: off in every folder and every repository. */

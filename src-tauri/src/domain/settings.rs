@@ -118,6 +118,9 @@ pub struct AppSettings {
     pub llm: LlmSettings,
     /// Skills switched off, by name.
     pub skills: OptOut,
+    /// Skills folders not read at all, by id: `project`, `app`, `agents`,
+    /// `claude` — see `services::skills::SOURCES`.
+    pub skill_sources: OptOut,
     /// Project instruction files switched off, by canonical path — per
     /// file rather than per name, so turning off one repository's
     /// `AGENTS.md` leaves every other repository's alone.

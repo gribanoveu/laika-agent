@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { setSkillEnabled, skillsList, type SkillsView } from "../lib/chat";
+import { setSkillEnabled, setSkillSourceEnabled, skillsList, type SkillSourceItem, type SkillsView } from "../lib/chat";
 
 /**
  * The skills — the open folder's and the user's — re-read whenever the tab
@@ -39,5 +39,20 @@ export function useSkills(visible: boolean, workspace: string | null = null) {
     [reload],
   );
 
-  return { view, error, setEnabled };
+  /** A whole folder on or off, from Settings; the list is read again, since its skills come and go. */
+  const setSourceEnabled = useCallback(
+    async (id: SkillSourceItem["id"], enabled: boolean) => {
+      setError(null);
+      setView((v) => v && { ...v, sources: v.sources.map((s) => (s.id === id ? { ...s, enabled } : s)) });
+      try {
+        await setSkillSourceEnabled(id, enabled);
+      } catch (e) {
+        setError(String(e));
+      }
+      await reload();
+    },
+    [reload],
+  );
+
+  return { view, error, setEnabled, setSourceEnabled };
 }

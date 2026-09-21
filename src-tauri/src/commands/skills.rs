@@ -9,6 +9,12 @@ pub fn skills_list(state: tauri::State<'_, std::sync::Arc<super::chat::AgentStat
     skills::list(state.workspace().ok().as_deref()).map_err(|e| e.to_string())
 }
 
+/// A skills folder — `project`, `app`, `agents`, `claude` — read or not, for every repository.
+#[tauri::command]
+pub fn skills_set_source_enabled(id: String, enabled: bool) -> Result<(), String> {
+    skills::set_source_enabled(&id, enabled).map_err(|e| e.to_string())
+}
+
 /// By name: a skill switched off is off in every folder and every repository.
 #[tauri::command]
 pub fn skills_set_enabled(name: String, enabled: bool) -> Result<(), String> {

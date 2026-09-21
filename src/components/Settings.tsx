@@ -1,7 +1,10 @@
 import { useState, type ComponentProps } from "react";
-import { Bot, Palette, Shield } from "lucide-react";
+import { Bot, Palette, Shield, Sparkles } from "lucide-react";
 import { ProviderSettings } from "./ProviderSettings";
 import { DataPolicy } from "./DataPolicy";
+import { ItemList } from "./ItemList";
+import type { SkillSourceItem, SkillsView } from "../lib/chat";
+import type { PanelItem } from "../types";
 import { THEMES, type ThemePreference } from "../hooks/useTheme";
 import { FONT_SIZES, type FontSize } from "../hooks/useChatFontSize";
 import "./Settings.css";
@@ -12,13 +15,38 @@ import "./Settings.css";
 const SECTIONS = [
   { id: "models", label: "Models", icon: Bot },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "skills", label: "Skills", icon: Sparkles },
   { id: "privacy", label: "Privacy", icon: Shield },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"];
 
+/** What each skills folder is called here, and what reading it means. */
+const SOURCES: Record<SkillSourceItem["id"], { badge: string; title: string; desc: string }> = {
+  project: {
+    badge: "PR",
+    title: "The repository's",
+    desc: ".claude/skills and .agents/skills, from the open folder up to the git root",
+  },
+  app: { badge: "LA", title: "Laika's", desc: "This app's own skills folder" },
+  agents: { badge: "AG", title: "Codex and other agents'", desc: "Where skill installers put them" },
+  claude: { badge: "CL", title: "Claude Code's", desc: "Your personal Claude Code skills" },
+};
+
+function sourceItems(sources: SkillSourceItem[]): PanelItem[] {
+  return sources.map((source) => ({
+    id: source.id,
+    kind: "skill",
+    ...SOURCES[source.id],
+    enabled: source.enabled,
+    meta: source.path || "No folder open",
+  }));
+}
+
 type Props = {
   provider: ComponentProps<typeof ProviderSettings>;
+  /** The skills folders: which of them are read at all. */
+  skills: { view: SkillsView | null; error: string | null; onToggle: (id: SkillSourceItem["id"], enabled: boolean) => void };
   debugLogging: boolean;
   onDebugLogging: (enabled: boolean) => void;
   theme: ThemePreference;
@@ -31,6 +59,7 @@ type Props = {
 
 export function Settings({
   provider,
+  skills,
   debugLogging,
   onDebugLogging,
   theme,
@@ -104,6 +133,24 @@ export function Settings({
                 ))}
               </div>
             </div>
+          </>
+        )}
+
+        {section === "skills" && (
+          <>
+            <h3 className="settings-title">Skills</h3>
+            <ItemList
+              label="Where skills come from"
+              count={`${(skills.view?.sources ?? []).filter((s) => s.enabled).length}/${skills.view?.sources.length ?? 0}`}
+              items={sourceItems(skills.view?.sources ?? [])}
+              emptyLabel="Reading the folders…"
+              onToggle={(id, enabled) => skills.onToggle(id as SkillSourceItem["id"], enabled)}
+            />
+            {skills.error && <p className="modal-note settings-error">{skills.error}</p>}
+            <p className="modal-note settings-list-note">
+              A folder switched off is not read at all, in any repository. When two folders have a skill of the same
+              name, the one higher in this list is used. Single skills are switched off in the Skills panel.
+            </p>
           </>
         )}
 

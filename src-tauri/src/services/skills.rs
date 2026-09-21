@@ -11,9 +11,15 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::domain::settings::OptOut;
-use crate::domain::skills::{Skill, SkillError, SkillListItem, SkillSource};
+use crate::domain::skills::{Skill, SkillError, SkillListItem, SkillSource, SkillSourceItem};
 use crate::infra::skills_store::{self, SkillEntry};
 use crate::infra::settings_store;
+
+/// The folders skills come from, as Settings switches them: the repository's
+/// (every `.claude/skills` and `.agents/skills` up to its root), then the
+/// user's in `skills_store::user_dirs` order. On unless switched off.
+pub const PROJECT_SOURCE: &str = "project";
+const USER_SOURCES: [&str; 3] = ["app", "agents", "claude"];
 
 /// One skill folder, from wherever it was found.
 struct Found {
@@ -24,16 +30,20 @@ struct Found {
 /// Every skill folder in the order a name is looked up: the open folder's
 /// `.claude/skills` and `.agents/skills` — a repository's skill knows that
 /// repository — then the user's, the app's own before other agents'.
-fn found(workspace: Option<&Path>) -> Result<Vec<Found>, SkillError> {
+fn found(workspace: Option<&Path>, sources: &OptOut) -> Result<Vec<Found>, SkillError> {
     let mut all = Vec::new();
-    if let Some(workspace) = workspace {
+    if let Some(workspace) = workspace.filter(|_| sources.is_enabled(PROJECT_SOURCE)) {
+        let root = skills_store::project_root(workspace);
         for dir in skills_store::project_dirs(workspace) {
-            for entry in skills_store::scan(&dir, Some(workspace))? {
+            for entry in skills_store::scan(&dir, Some(&root))? {
                 all.push(Found { source: SkillSource::Project, entry });
             }
         }
     }
-    for dir in skills_store::user_dirs()? {
+    for (id, dir) in USER_SOURCES.into_iter().zip(skills_store::user_dirs()?) {
+        if !sources.is_enabled(id) {
+            continue;
+        }
         for entry in skills_store::scan(&dir, None)? {
             all.push(Found { source: SkillSource::User, entry });
         }
@@ -66,9 +76,9 @@ fn winners(all: &[Found], settings: &OptOut) -> Vec<Option<usize>> {
 /// the turn — the settings store already refuses to overwrite a file it
 /// could not parse, so nothing is lost by reading past it here.
 pub fn enabled_catalog(workspace: Option<&Path>) -> Result<Vec<Skill>, SkillError> {
-    let settings = settings_store::load().unwrap_or_default().skills;
-    let all = found(workspace)?;
-    let wins = winners(&all, &settings);
+    let loaded = settings_store::load().unwrap_or_default();
+    let all = found(workspace, &loaded.skill_sources)?;
+    let wins = winners(&all, &loaded.skills);
     Ok(all
         .into_iter()
         .enumerate()
@@ -84,11 +94,14 @@ pub fn enabled_catalog(workspace: Option<&Path>) -> Result<Vec<Skill>, SkillErro
 pub struct SkillsView {
     pub dir: PathBuf,
     pub skills: Vec<SkillListItem>,
+    /// Every folder skills may come from, read or not — what Settings lists.
+    pub sources: Vec<SkillSourceItem>,
 }
 
 pub fn list(workspace: Option<&Path>) -> Result<SkillsView, SkillError> {
-    let settings = settings_store::load().unwrap_or_default().skills;
-    let all = found(workspace)?;
+    let loaded = settings_store::load().unwrap_or_default();
+    let settings = loaded.skills;
+    let all = found(workspace, &loaded.skill_sources)?;
     let wins = winners(&all, &settings);
     let paths: Vec<String> = all.iter().map(|f| f.entry.root.display().to_string()).collect();
     let skills = all
@@ -118,7 +131,28 @@ pub fn list(workspace: Option<&Path>) -> Result<SkillsView, SkillError> {
             }
         })
         .collect();
-    Ok(SkillsView { dir: skills_store::dir()?, skills })
+    let source = |id: &str, path: String| SkillSourceItem {
+        id: id.to_string(),
+        path,
+        enabled: loaded.skill_sources.is_enabled(id),
+    };
+    let project_root = workspace.map(|w| skills_store::project_root(w).display().to_string()).unwrap_or_default();
+    let sources = std::iter::once(source(PROJECT_SOURCE, project_root))
+        .chain(USER_SOURCES.into_iter().zip(skills_store::user_dirs()?).map(|(id, dir)| source(id, dir.display().to_string())))
+        .collect();
+    Ok(SkillsView { dir: skills_store::dir()?, skills, sources })
+}
+
+/// A folder skills are read from, switched on or off for every repository.
+/// Fails on settings it cannot read rather than overwrite them.
+pub fn set_source_enabled(id: &str, enabled: bool) -> Result<(), SkillError> {
+    if id != PROJECT_SOURCE && !USER_SOURCES.contains(&id) {
+        return Err(SkillError::Io(format!("no skills folder called {id:?}")));
+    }
+    let io = |e: crate::domain::settings::SettingsError| SkillError::Io(e.to_string());
+    let mut settings = settings_store::load().map_err(io)?;
+    settings.skill_sources.set_enabled(id, enabled);
+    settings_store::save(&settings).map_err(io)
 }
 
 /// By name, for every folder and repository at once. Unlike the catalog, this
@@ -144,9 +178,9 @@ mod tests {
     /// A repository with `release` in `.claude/skills` and `lint` in `.agents/skills`.
     fn repository(label: &str) -> PathBuf {
         let ws = temp_dir(label);
-        let [claude, agents] = skills_store::project_dirs(&ws);
-        write_skill_in(&claude, "release", "The repository's release.", "");
-        write_skill_in(&agents, "lint", "Lints.", "");
+        let dirs = skills_store::project_dirs(&ws);
+        write_skill_in(&dirs[0], "release", "The repository's release.", "");
+        write_skill_in(&dirs[1], "lint", "Lints.", "");
         ws
     }
 
@@ -186,6 +220,33 @@ mod tests {
             assert_eq!(listed[0].path, skills_store::project_dirs(&ws)[0].join("release").display().to_string());
             // No folder open: only the user's.
             assert_eq!(names(&enabled_catalog(None).unwrap()), ["review"]);
+        });
+    }
+
+    /// Opened at a package of a monorepo: the package's skills, then the
+    /// root's, the package's winning a name they share. A package's skill that
+    /// links to one at the root stays inside the repository and is read.
+    #[cfg(unix)]
+    #[test]
+    fn a_monorepo_package_sees_the_roots_skills_behind_its_own() {
+        with_app_dir("skills-svc-monorepo", || {
+            let repo = temp_dir("skills-svc-monorepo-repo");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            let package = repo.join("packages/app");
+            let root_skills = repo.join(".claude/skills");
+            write_skill_in(&root_skills, "release", "The root's release.", "");
+            write_skill_in(&root_skills, "lint", "Lints everything.", "");
+            let own = package.join(".agents/skills");
+            write_skill_in(&own, "release", "The package's release.", "");
+            std::os::unix::fs::symlink(root_skills.join("lint"), own.join("lint")).unwrap();
+
+            let catalog = enabled_catalog(Some(&package)).unwrap();
+            assert_eq!(names(&catalog), ["lint", "release"]);
+            assert_eq!(catalog[0].dir, own.join("lint"));
+            assert_eq!(catalog[1].meta.description, "The package's release.");
+            let listed = list(Some(&package)).unwrap().skills;
+            assert_eq!(listed.len(), 4);
+            assert!(listed.iter().all(|s| s.error.is_none()), "{listed:?}");
         });
     }
 
@@ -247,6 +308,36 @@ mod tests {
             assert_eq!(listed.len(), 4);
             let copy = listed.iter().find(|s| s.path == claude.join("streamdown").display().to_string()).unwrap();
             assert_eq!(copy.shadowed_by, Some(agents.join("streamdown").display().to_string()));
+        });
+    }
+
+    /// A folder switched off in Settings is not read: its skills are neither
+    /// listed nor offered, and the name they had goes to the next folder.
+    #[test]
+    fn a_skills_folder_switched_off_is_not_read() {
+        with_app_dir("skills-svc-sources", || {
+            let ws = repository("skills-svc-sources-ws");
+            let [mine, agents, _] = skills_store::user_dirs().unwrap();
+            write_skill_in(&mine, "release", "Mine.", "");
+            write_skill_in(&agents, "streamdown", "Codex's.", "");
+
+            set_source_enabled(PROJECT_SOURCE, false).unwrap();
+            set_source_enabled("agents", false).unwrap();
+            let catalog = enabled_catalog(Some(&ws)).unwrap();
+            assert_eq!(names(&catalog), ["release"]);
+            assert_eq!(catalog[0].meta.description, "Mine.");
+            let view = list(Some(&ws)).unwrap();
+            assert_eq!(view.skills.len(), 1);
+            let switches: Vec<(&str, bool)> = view.sources.iter().map(|s| (s.id.as_str(), s.enabled)).collect();
+            assert_eq!(switches, [("project", false), ("app", true), ("agents", false), ("claude", true)]);
+            assert_eq!(view.sources[0].path, skills_store::project_root(&ws).display().to_string());
+            assert_eq!(view.sources[2].path, agents.display().to_string());
+
+            set_source_enabled("agents", true).unwrap();
+            assert_eq!(names(&enabled_catalog(Some(&ws)).unwrap()), ["release", "streamdown"]);
+            assert!(set_source_enabled("elsewhere", false).is_err());
+            // No folder open: the repository's row is there, with no path.
+            assert_eq!(list(None).unwrap().sources[0].path, "");
         });
     }
 

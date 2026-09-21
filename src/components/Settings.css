@@ -88,3 +88,11 @@
 .settings-pane > .settings-hint {
   max-width: 416px;
 }
+
+.settings-error {
+  color: var(--red);
+}
+/* Under a list rather than a labelled field: no label column to line up with. */
+.settings-list-note {
+  margin: 4px 8px 0;
+}

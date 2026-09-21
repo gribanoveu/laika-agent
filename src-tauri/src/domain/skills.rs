@@ -46,6 +46,17 @@ pub enum SkillSource {
     User,
 }
 
+/// A folder skills are read from, as Settings lists it: whether it is read,
+/// and where it is. The words for it are the UI's, by `id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSourceItem {
+    pub id: String,
+    /// The folder; for the repository's, its root — empty with no folder open.
+    pub path: String,
+    pub enabled: bool,
+}
+
 /// A skill a turn may load: what the model is shown, and the folder the
 /// `skill` tool reads it from — which is not always the user's.
 #[derive(Debug, Clone, PartialEq, Eq)]

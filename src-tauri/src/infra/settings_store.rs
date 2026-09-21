@@ -52,6 +52,7 @@ mod tests {
                 debug_logging: true,
             },
             skills: crate::domain::settings::OptOut { disabled: vec!["release".to_string()] },
+            skill_sources: crate::domain::settings::OptOut { disabled: vec!["agents".to_string()] },
             rules: crate::domain::settings::OptOut { disabled: vec!["/repo/AGENTS.md".to_string()] },
             tool_log: crate::domain::settings::ToolLogSettings { enabled: false },
         }

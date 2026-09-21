@@ -23,6 +23,11 @@ mock.module("@tauri-apps/api/core", () => ({
       ruleFiles = ruleFiles.map((r) => (r.path === path ? { ...r, enabled } : r));
       return Promise.resolve();
     }
+    if (command === "skills_set_source_enabled") {
+      const { id, enabled } = args as unknown as { id: string; enabled: boolean };
+      disk.sources = disk.sources.map((s) => (s.id === id ? { ...s, enabled } : s));
+      return Promise.resolve();
+    }
     if (command === "skills_set_enabled") {
       if (failToggle) return Promise.reject("settings.json is not valid");
       if (holdToggle) return holdToggle;
@@ -59,7 +64,7 @@ const theirs = (name: string, extra: Partial<SkillListItem> = {}) =>
   skill(name, true, { source: "project", path: `/repo/.claude/skills/${name}`, ...extra });
 
 beforeEach(() => {
-  disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")] };
+  disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")], sources: [] };
   calls = [];
   failToggle = false;
   holdToggle = null;
@@ -108,7 +113,7 @@ describe("useSkills", () => {
   });
 
   test("a switch flips every row of its name at once: it is by name", async () => {
-    disk = { dir: "/d", skills: [theirs("release"), skill("release"), skill("review")] };
+    disk = { dir: "/d", skills: [theirs("release"), skill("release"), skill("review")], sources: [] };
     let release = () => {};
     holdToggle = new Promise((resolve) => (release = resolve));
     const { result } = renderHook(() => useSkills(true));
@@ -121,6 +126,17 @@ describe("useSkills", () => {
     expect(result.current.view?.skills.map((s) => s.enabled)).toEqual([false, false, true]);
     release();
     await act(() => saving);
+  });
+
+  test("a folder switched off is saved and the list read again", async () => {
+    disk.sources = [{ id: "agents", path: "/home/.agents/skills", enabled: true }];
+    const { result } = renderHook(() => useSkills(true));
+    await settle();
+
+    await act(() => result.current.setSourceEnabled("agents", false));
+
+    expect(calls).toEqual(["skills_list", "skills_set_source_enabled", "skills_list"]);
+    expect(result.current.view?.sources[0].enabled).toBe(false);
   });
 
   test("a switch that fails says why and shows what is really saved", async () => {

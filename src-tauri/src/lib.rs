@@ -101,6 +101,7 @@ pub fn run() {
             commands::processes::processes_list,
             commands::processes::process_stop,
             commands::skills::skills_set_enabled,
+            commands::skills::skills_set_source_enabled,
             commands::skills::rules_list,
             commands::skills::rules_set_enabled,
             commands::tool_log::tool_log_query,

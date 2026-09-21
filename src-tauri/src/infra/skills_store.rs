@@ -45,9 +45,36 @@ fn home() -> Result<PathBuf, SkillError> {
     app_dir::dir().map_err(SkillError::Io)
 }
 
-/// A repository's skills dirs, in the order a name is looked up in them.
-pub fn project_dirs(workspace: &Path) -> [PathBuf; 2] {
-    [workspace.join(".claude").join("skills"), workspace.join(".agents").join("skills")]
+/// The open folder's repository: the nearest folder from it up that has a
+/// `.git` — a directory, or the file a worktree or a submodule has. `None`
+/// outside git.
+fn git_root(workspace: &Path) -> Option<&Path> {
+    workspace.ancestors().find(|dir| dir.join(".git").exists())
+}
+
+/// A repository's skills dirs, in the order a name is looked up in them:
+/// `.claude/skills` and `.agents/skills` of the open folder, then of each
+/// folder above it up to the repository's root — the nearest first, so a
+/// package in a monorepo overrides the root's skill of the same name. As
+/// OpenCode does. Outside git only the open folder's: walking up from a folder
+/// in the home would reach `~/.claude/skills` and call it the project's.
+pub fn project_dirs(workspace: &Path) -> Vec<PathBuf> {
+    let top = git_root(workspace).unwrap_or(workspace);
+    let mut dirs = Vec::new();
+    for dir in workspace.ancestors() {
+        dirs.push(dir.join(".claude").join("skills"));
+        dirs.push(dir.join(".agents").join("skills"));
+        if dir == top {
+            break;
+        }
+    }
+    dirs
+}
+
+/// What a repository's skills must stay inside: the repository's root, or
+/// the open folder outside git.
+pub fn project_root(workspace: &Path) -> PathBuf {
+    git_root(workspace).unwrap_or(workspace).to_path_buf()
 }
 
 /// Each folder under the skills directory, parsed or not. A folder whose
@@ -64,7 +91,7 @@ pub struct SkillEntry {
 /// A missing directory is no skills yet, not an error. Sorted by folder name
 /// so the catalog the model sees is the same bytes from one turn to the next.
 ///
-/// `within` is the open folder a repository's skills must stay inside: their
+/// `within` is the repository a repository's skills must stay inside: their
 /// text is sent to the provider, and a link to somewhere else on the disk
 /// would send that too. Such a skill is an entry with the reason, like any
 /// other that cannot be used.
@@ -72,7 +99,7 @@ pub fn scan(dir: &Path, within: Option<&Path>) -> Result<Vec<SkillEntry>, SkillE
     let within = match within.map(Path::canonicalize) {
         None => None,
         Some(Ok(root)) => Some(root),
-        // The open folder is gone: nothing in it to offer.
+        // The repository is gone: nothing in it to offer.
         Some(Err(_)) => return Ok(Vec::new()),
     };
     let read = match fs::read_dir(dir) {
@@ -89,7 +116,7 @@ pub fn scan(dir: &Path, within: Option<&Path>) -> Result<Vec<SkillEntry>, SkillE
         }
         let outside = within.as_ref().is_some_and(|root| !path.canonicalize().is_ok_and(|p| p.starts_with(root)));
         let parsed = if outside {
-            Err(SkillError::Io("links outside the open folder".into()))
+            Err(SkillError::Io("links outside the repository".into()))
         } else {
             match fs::read_to_string(path.join(SKILL_MD)) {
                 Ok(contents) => parse_skill_md(&contents, dir_name),
@@ -236,10 +263,47 @@ mod tests {
         });
     }
 
+    /// Outside git: the open folder's two, and nothing above it — not the
+    /// home's `.claude/skills`, which are the user's.
     #[test]
-    fn a_repositorys_skills_dirs_are_claudes_then_the_agents_one() {
-        let ws = Path::new("/repo");
-        assert_eq!(project_dirs(ws), [ws.join(".claude/skills"), ws.join(".agents/skills")]);
+    fn outside_git_only_the_open_folders_skills_dirs() {
+        let ws = temp_dir("skills-dirs-no-git").join("app");
+        fs::create_dir_all(&ws).unwrap();
+        assert_eq!(project_dirs(&ws), [ws.join(".claude/skills"), ws.join(".agents/skills")]);
+        assert_eq!(project_root(&ws), ws);
+    }
+
+    /// In a monorepo package: its own dirs, then each folder's above it up to
+    /// the repository's root, and not past it.
+    #[test]
+    fn in_git_every_folder_up_to_the_repositorys_root_nearest_first() {
+        let outer = temp_dir("skills-dirs-git");
+        let repo = outer.join("repo");
+        let package = repo.join("packages/app");
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let dirs: Vec<PathBuf> = project_dirs(&package);
+        let expected: Vec<PathBuf> = [package.clone(), repo.join("packages"), repo.clone()]
+            .iter()
+            .flat_map(|d| [d.join(".claude/skills"), d.join(".agents/skills")])
+            .collect();
+        assert_eq!(dirs, expected);
+        assert_eq!(project_root(&package), repo);
+    }
+
+    /// A worktree or a submodule has a `.git` file, not a directory: it is a
+    /// repository's root all the same.
+    #[test]
+    fn a_git_file_is_a_repositorys_root_too() {
+        let outer = temp_dir("skills-dirs-git-file");
+        fs::create_dir_all(outer.join(".git")).unwrap();
+        let module = outer.join("vendor/lib");
+        fs::create_dir_all(&module).unwrap();
+        fs::write(module.join(".git"), "gitdir: ../../.git/modules/lib").unwrap();
+
+        assert_eq!(project_dirs(&module), [module.join(".claude/skills"), module.join(".agents/skills")]);
+        assert_eq!(project_root(&module), module);
     }
 
     #[test]
@@ -312,7 +376,7 @@ mod tests {
         let entries = scan(&skills, Some(&ws)).unwrap();
         assert_eq!(names(&entries), ["inside", "outside"]);
         assert!(entries[0].parsed.is_ok());
-        assert_eq!(entries[1].parsed.as_ref().unwrap_err(), &SkillError::Io("links outside the open folder".into()));
+        assert_eq!(entries[1].parsed.as_ref().unwrap_err(), &SkillError::Io("links outside the repository".into()));
         // The user's own folder has no such bound.
         assert!(scan(&skills, None).unwrap()[1].parsed.is_ok());
     }
