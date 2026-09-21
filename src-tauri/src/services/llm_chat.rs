@@ -39,8 +39,7 @@ use crate::domain::turn::{
 };
 use crate::infra::llm_debug_log;
 use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
-use crate::services::ai_tools::tools::list_files::render_file_tree;
-use crate::services::text_diff::render_for_model;
+use crate::services::ai_tools::model_text::for_model;
 use crate::services::ai_tools::tools::{execute_tool, tool_definitions};
 use crate::services::context_compaction;
 use crate::services::llm_session::LlmSession;
@@ -662,28 +661,11 @@ fn run(
                 outcome.as_ref().err().map(String::as_str),
             );
 
-            // What the model reads, as opposed to what the UI was given: a
-            // listing is a tree rather than a flat array of paths, because the
-            // model would otherwise have to rebuild the directory structure
-            // from N separate strings.
+            // What the model reads, as opposed to what the UI was given:
+            // plain text in the shape each answer usually takes — see
+            // `model_text`.
             let content = match &outcome {
-                Ok(ToolResult::FileList { entries, truncated }) => {
-                    render_file_tree(entries, *truncated)
-                }
-                // A diff reads best as a diff, not as a JSON string of escapes.
-                Ok(ToolResult::FileWritten { path, diff }) => render_for_model("Wrote", path, diff, true),
-                Ok(ToolResult::FileEdited { path, diff }) => render_for_model("Edited", path, diff, true),
-                Ok(ToolResult::FileDeleted { path, diff }) => render_for_model("Deleted", path, diff, false),
-                Ok(ToolResult::GitDiff { path, is_binary: true, label, .. }) => {
-                    format!("{path} is a binary file — no text diff ({label})")
-                }
-                Ok(ToolResult::GitDiff { path, label, diff, .. }) => {
-                    render_for_model(&format!("Diff ({label}):"), path, diff, true)
-                }
-                // Already the text the server meant for a model.
-                Ok(ToolResult::Mcp { text }) => text.clone(),
-                Ok(result) => serde_json::to_string(result)
-                    .unwrap_or_else(|_| "Error: the result could not be serialized".to_string()),
+                Ok(result) => for_model(result),
                 Err(message) => message.clone(),
             };
             let content = truncated_round_note(round_truncated, outcome.is_err(), content);
@@ -1892,7 +1874,7 @@ mod tests {
         let second = &h.provider.requests()[1];
         let results = tool_contents(second);
         assert_eq!(results.len(), 1);
-        assert!(results[0].contains("directoryCreated"), "{}", results[0]);
+        assert_eq!(results[0], "Created directory src");
         // The assistant's own tool-call turn has to precede its results, or
         // the provider sees answers to a question it was never shown.
         let assistant = second
@@ -2539,7 +2521,7 @@ mod tests {
         h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
 
         let said = tool_contents(&h.provider.requests()[1]);
-        assert!(said[0].contains("\"result\":\"processStarted\""), "{said:?}");
+        assert!(said[0].starts_with("Started #1 `sleep 30` is running"), "{said:?}");
         assert!(processes.list()[0].running());
     }
 
@@ -3266,11 +3248,11 @@ mod tests {
         // What the model was told after the first run: the failure, in full.
         let first_run = tool_contents(&rounds[1]).pop().expect("the run was reported");
         assert!(first_run.contains("expected 42, got 41"), "{first_run}");
-        assert!(first_run.contains("\"exitCode\":1"), "{first_run}");
+        assert!(first_run.starts_with("Exit code 1\n"), "{first_run}");
         // And after the second: the pass.
         let second_run = tool_contents(rounds.last().unwrap()).pop().expect("reported");
         assert!(second_run.contains("PASS"), "{second_run}");
-        assert!(second_run.contains("\"exitCode\":0"), "{second_run}");
+        assert!(second_run.starts_with("Exit code 0\n"), "{second_run}");
     }
 
     /// Output reaches the UI while the command is still running, tagged with
