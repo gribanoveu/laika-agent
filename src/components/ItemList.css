@@ -221,3 +221,30 @@
   color: var(--text-dim);
   background: var(--bg-hover);
 }
+
+.section-tail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Edit and Remove under an expanded row; Remove asks once more in place. */
+.item-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 2px 2px;
+}
+.item-row-actions .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.item-row-actions .link-btn.danger {
+  color: var(--red);
+}
+.item-confirm {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}

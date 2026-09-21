@@ -30,6 +30,8 @@ import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
+import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
+import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, type Docks } from "./lib/docks";
 import { exportChat, setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
@@ -55,6 +57,9 @@ const isPaneIn =
 // Any pane may sit under the top one: Changes goes there when the top is taken.
 const isBottomTab = (value: unknown): value is AsideTab | null => value === null || isAsideTab(value);
 
+/** A config file's dialog: the whole file, one entry of it (null for a new one), or closed. */
+type EntryDialog<K> = "json" | { entry: K | null } | null;
+
 /** What "Implement in Agent mode" says on the user's behalf. Shown in the transcript like anything they type. */
 const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in order.";
 
@@ -74,8 +79,12 @@ export default function App() {
   const [commitMessage, setCommitMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [mcpEditing, setMcpEditing] = useState(false);
-  const [hooksEditing, setHooksEditing] = useState(false);
+  // The MCP and hooks files open as a whole (JSON) or one entry at a time
+  // (a form): `entry` is the server's name or the hook's row, null for a new one.
+  const [mcpDialog, setMcpDialog] = useState<EntryDialog<string>>(null);
+  const [hooksDialog, setHooksDialog] = useState<EntryDialog<number>>(null);
+  const mcpEditing = mcpDialog !== null;
+  const hooksEditing = hooksDialog !== null;
   // What the agent may do this turn, and whether anyone is asked before it
   // does it. Two chips, two questions — and both are enforced on the backend,
   // so these hold only what the chips read back.
@@ -217,14 +226,26 @@ export default function App() {
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
+      onAdd: () => setMcpDialog({ entry: null }),
+      onEditServer: (name) => setMcpDialog({ entry: name }),
+      onRemoveServer: (name) => {
+        const next = removeMcpServer(mcp.view?.text ?? "", name);
+        if (next) void mcp.save(next);
+      },
       onToggle: mcp.setEnabled,
       onOpen: mcp.connect,
-      onEdit: () => setMcpEditing(true),
+      onEditFile: () => setMcpDialog("json"),
     },
     hooks: {
       view: hooks.view,
       error: hooksEditing ? null : hooks.error,
-      onEdit: () => setHooksEditing(true),
+      onAdd: () => setHooksDialog({ entry: null }),
+      onEditHook: (index) => setHooksDialog({ entry: index }),
+      onRemoveHook: (index) => {
+        const next = removeHook(hooks.view?.text ?? "", index);
+        if (next) void hooks.save(next);
+      },
+      onEditFile: () => setHooksDialog("json"),
     },
     plan: {
       plan: agent.plan,
@@ -395,7 +416,23 @@ export default function App() {
         />
       </Modal>
 
-      <Modal title="MCP servers" wide open={mcpEditing} onClose={() => setMcpEditing(false)}>
+      <Modal
+        title={mcpDialog === "json" || mcpDialog === null ? "MCP servers" : mcpDialog.entry ?? "Add an MCP server"}
+        wide={mcpDialog === "json"}
+        open={mcpEditing}
+        onClose={() => setMcpDialog(null)}
+      >
+        {mcpDialog !== null && mcpDialog !== "json" ? (
+          <McpServerForm
+            key={mcpDialog.entry ?? ""}
+            name={mcpDialog.entry}
+            text={mcp.view?.text}
+            error={mcp.error}
+            onSave={mcp.save}
+            onClose={() => setMcpDialog(null)}
+            onEditJson={() => setMcpDialog("json")}
+          />
+        ) : (
         <ConfigFileEditor
           label="MCP configuration"
           example={MCP_EXAMPLE}
@@ -403,7 +440,7 @@ export default function App() {
           text={mcp.view?.text}
           error={mcp.error}
           onSave={mcp.save}
-          onClose={() => setMcpEditing(false)}
+          onClose={() => setMcpDialog(null)}
           note={
             <>
               The <code>mcpServers</code> format of Claude Desktop and Cursor: paste a server's snippet as it is.
@@ -413,9 +450,26 @@ export default function App() {
             </>
           }
         />
+        )}
       </Modal>
 
-      <Modal title="Hooks" wide open={hooksEditing} onClose={() => setHooksEditing(false)}>
+      <Modal
+        title={hooksDialog === "json" || hooksDialog === null ? "Hooks" : hooksDialog.entry === null ? "Add a hook" : "Edit hook"}
+        wide={hooksDialog === "json"}
+        open={hooksEditing}
+        onClose={() => setHooksDialog(null)}
+      >
+        {hooksDialog !== null && hooksDialog !== "json" ? (
+          <HookForm
+            key={hooksDialog.entry ?? -1}
+            index={hooksDialog.entry}
+            text={hooks.view?.text}
+            error={hooks.error}
+            onSave={hooks.save}
+            onClose={() => setHooksDialog(null)}
+            onEditJson={() => setHooksDialog("json")}
+          />
+        ) : (
         <ConfigFileEditor
           label="Hooks configuration"
           example={HOOKS_EXAMPLE}
@@ -423,7 +477,7 @@ export default function App() {
           text={hooks.view?.text}
           error={hooks.error}
           onSave={hooks.save}
-          onClose={() => setHooksEditing(false)}
+          onClose={() => setHooksDialog(null)}
           note={
             <>
               Claude Code's <code>hooks</code> format: <code>PreToolUse</code>, <code>PostToolUse</code> and{" "}
@@ -434,6 +488,7 @@ export default function App() {
             </>
           }
         />
+        )}
       </Modal>
 
       <Toast message={toast.message} />

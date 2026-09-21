@@ -80,9 +80,16 @@ describe("useHooks", () => {
 
 describe("the Hooks tab", () => {
   test("lists what each hook runs on, and one that will not run says why", () => {
-    let edits = 0;
+    const actions: string[] = [];
     render(
-      <HooksList view={disk} error={null} onEdit={() => edits++} />,
+      <HooksList
+        view={disk}
+        error={null}
+        onAdd={() => actions.push("add")}
+        onEditHook={(i) => actions.push(`edit ${i}`)}
+        onRemoveHook={(i) => actions.push(`remove ${i}`)}
+        onEditFile={() => actions.push("file")}
+      />,
     );
     expect(screen.getByText("PreToolUse · runCommand")).toBeTruthy();
     expect(screen.getByText("PostToolUse · every tool")).toBeTruthy();
@@ -91,7 +98,11 @@ describe("the Hooks tab", () => {
     expect(screen.getByText("won't run")).toBeTruthy();
     expect(screen.getByText("names none of this app's tools")).toBeTruthy();
     expect(screen.getByText("3/4")).toBeTruthy();
-    act(() => screen.getByText("Edit hooks").click());
-    expect(edits).toBe(1);
+    act(() => screen.getByText("Add a hook").click());
+    act(() => screen.getByText("Edit JSON").click());
+    // The row is the hook's place in the file: the form reads it back by that.
+    act(() => screen.getByText("prettier --write").click());
+    act(() => screen.getByText("Edit").click());
+    expect(actions).toEqual(["add", "file", "edit 1"]);
   });
 });

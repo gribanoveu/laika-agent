@@ -102,8 +102,17 @@ describe("the side panel", () => {
     workspace: "/repo",
     onNotify: () => {},
     commitDraft: { message: "", onMessage: () => {} },
-    mcp: { view: null, error: null, onToggle: () => {}, onOpen: () => {}, onEdit: () => {} },
-    hooks: { view: null, error: null, onEdit: () => {} },
+    mcp: {
+      view: null,
+      error: null,
+      onToggle: () => {},
+      onOpen: () => {},
+      onAdd: () => {},
+      onEditServer: () => {},
+      onRemoveServer: () => {},
+      onEditFile: () => {},
+    },
+    hooks: { view: null, error: null, onAdd: () => {}, onEditHook: () => {}, onRemoveHook: () => {}, onEditFile: () => {} },
     plan: { plan: null, checklist: [], onEdit: () => {}, locked: false },
   });
 

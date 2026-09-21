@@ -62,8 +62,11 @@ export type McpListProps = {
   onToggle: (name: string, enabled: boolean) => void;
   /** Opening a server's row starts it, so the row can list its tools. */
   onOpen: (name: string) => void;
-  /** Opens the configuration editor. */
-  onEdit: () => void;
+  /** A new server, one server, or the whole file. */
+  onAdd: () => void;
+  onEditServer: (name: string) => void;
+  onRemoveServer: (name: string) => void;
+  onEditFile: () => void;
 };
 
 /** A server that cannot start says why and has no switch, like a broken skill. */
@@ -110,7 +113,7 @@ function mcpState(state: McpServerState): Partial<PanelItem> {
   }
 }
 
-export function McpList({ view, error, onToggle, onOpen, onEdit }: McpListProps) {
+export function McpList({ view, error, onToggle, onOpen, onAdd, onEditServer, onRemoveServer, onEditFile }: McpListProps) {
   const items = mcpItems(view);
   return (
     <>
@@ -119,10 +122,13 @@ export function McpList({ view, error, onToggle, onOpen, onEdit }: McpListProps)
         count={`${items.filter((s) => s.enabled).length}/${items.length}`}
         items={items}
         emptyLabel="No MCP servers configured."
-        addLabel={items.length ? "Edit servers" : "Add MCP server"}
-        onAdd={onEdit}
+        addLabel="Add MCP server"
+        onAdd={onAdd}
         onToggle={onToggle}
         onOpen={onOpen}
+        onEdit={onEditServer}
+        onRemove={onRemoveServer}
+        onEditFile={onEditFile}
       />
       {error && <div className="empty">{error}</div>}
     </>
@@ -134,8 +140,11 @@ export function McpList({ view, error, onToggle, onOpen, onEdit }: McpListProps)
 export type HooksListProps = {
   view: HooksView | null;
   error: string | null;
-  /** Opens the hooks editor. */
-  onEdit: () => void;
+  /** A new hook, one hook by its row, or the whole file. */
+  onAdd: () => void;
+  onEditHook: (index: number) => void;
+  onRemoveHook: (index: number) => void;
+  onEditFile: () => void;
 };
 
 const HOOK_BADGES: Record<string, string> = { PreToolUse: "PRE", PostToolUse: "PST", Stop: "STP" };
@@ -154,7 +163,7 @@ function hookItems(view: HooksView | null): PanelItem[] {
   }));
 }
 
-export function HooksList({ view, error, onEdit }: HooksListProps) {
+export function HooksList({ view, error, onAdd, onEditHook, onRemoveHook, onEditFile }: HooksListProps) {
   const items = hookItems(view);
   return (
     <>
@@ -163,8 +172,11 @@ export function HooksList({ view, error, onEdit }: HooksListProps) {
         count={`${items.filter((h) => !h.status).length}/${items.length}`}
         items={items}
         emptyLabel="No hooks. A hook runs a command before a tool call, after one, or when the agent finishes."
-        addLabel={items.length ? "Edit hooks" : "Add a hook"}
-        onAdd={onEdit}
+        addLabel="Add a hook"
+        onAdd={onAdd}
+        onEdit={(id) => onEditHook(Number(id))}
+        onRemove={(id) => onRemoveHook(Number(id))}
+        onEditFile={onEditFile}
       />
       {error && <div className="empty">{error}</div>}
     </>

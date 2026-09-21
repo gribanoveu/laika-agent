@@ -134,14 +134,27 @@ describe("useMcp", () => {
 });
 
 describe("the MCP tab", () => {
+  let actions: string[] = [];
+  beforeEach(() => {
+    actions = [];
+  });
   const panel = (
     view: McpView,
-    onEdit = () => {},
+    onAdd = () => {},
     onToggle = (_: string, __: boolean) => {},
     onOpen = (_: string) => {},
   ) =>
     render(
-      <McpList view={view} error={null} onToggle={onToggle} onOpen={onOpen} onEdit={onEdit} />,
+      <McpList
+        view={view}
+        error={null}
+        onToggle={onToggle}
+        onOpen={onOpen}
+        onAdd={onAdd}
+        onEditServer={(name) => actions.push(`edit ${name}`)}
+        onRemoveServer={(name) => actions.push(`remove ${name}`)}
+        onEditFile={() => actions.push("file")}
+      />,
     );
 
   test("lists the servers, and one that cannot start says why and has no switch", () => {
@@ -200,11 +213,30 @@ describe("the MCP tab", () => {
     expect(screen.getByText("Searches code").className).toBe("tdesc");
   });
 
-  test("the button opens the editor, and says add when there is nothing yet", () => {
-    let edits = 0;
-    panel({ ...disk, servers: [] }, () => edits++);
+  test("the button adds a server, and the heading opens the whole file", () => {
+    let adds = 0;
+    panel({ ...disk, servers: [] }, () => adds++);
     fireEvent.click(screen.getByText("Add MCP server"));
-    expect(edits).toBe(1);
+    expect(adds).toBe(1);
+    fireEvent.click(screen.getByText("Edit JSON"));
+    expect(actions).toEqual(["file"]);
+  });
+
+  test("an open row edits its server, and removes it only once confirmed", () => {
+    panel(disk);
+    fireEvent.click(screen.getByText("npx -y server-github"));
+    fireEvent.click(screen.getByText("Edit"));
+    expect(actions).toEqual(["edit github"]);
+
+    fireEvent.click(screen.getByText("Remove"));
+    expect(actions).toEqual(["edit github"], "the first click only asks");
+    expect(screen.getByText("Remove github from the file?")).toBeTruthy();
+    fireEvent.click(screen.getByText("Keep"));
+    expect(screen.queryByText("Remove github from the file?")).toBeNull();
+
+    fireEvent.click(screen.getByText("Remove"));
+    fireEvent.click(screen.getAllByText("Remove").at(-1)!);
+    expect(actions).toEqual(["edit github", "remove github"]);
   });
 });
 

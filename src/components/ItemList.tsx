@@ -1,10 +1,20 @@
 import { useState } from "react";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import type { PanelItem } from "../types";
 import "./ItemList.css";
 
-function Item({ item, onToggle, onOpen }: { item: PanelItem; onToggle?: (id: string, enabled: boolean) => void; onOpen?: (id: string) => void }) {
+type ItemProps = {
+  item: PanelItem;
+  onToggle?: (id: string, enabled: boolean) => void;
+  onOpen?: (id: string) => void;
+  onEdit?: (id: string) => void;
+  onRemove?: (id: string) => void;
+};
+
+function Item({ item, onToggle, onOpen, onEdit, onRemove }: ItemProps) {
   const [open, setOpen] = useState(false);
+  // Removing asks once more, in the row itself: it rewrites the user's file.
+  const [confirming, setConfirming] = useState(false);
   const enabled = item.enabled ?? false;
 
   return (
@@ -67,6 +77,36 @@ function Item({ item, onToggle, onOpen }: { item: PanelItem; onToggle?: (id: str
               <div className="empty item-note">{item.note}</div>
             ))}
           {item.source && <div className="rule-source">{item.source}</div>}
+          {(onEdit || onRemove) && (
+            <div className="item-row-actions">
+              {confirming ? (
+                <>
+                  <span className="item-confirm">Remove {item.title} from the file?</span>
+                  <button type="button" className="link-btn danger" onClick={() => onRemove?.(item.id)}>
+                    Remove
+                  </button>
+                  <button type="button" className="link-btn" onClick={() => setConfirming(false)}>
+                    Keep
+                  </button>
+                </>
+              ) : (
+                <>
+                  {onEdit && (
+                    <button type="button" className="link-btn" onClick={() => onEdit(item.id)}>
+                      <Pencil size={11} />
+                      Edit
+                    </button>
+                  )}
+                  {onRemove && (
+                    <button type="button" className="link-btn danger" onClick={() => setConfirming(true)}>
+                      <Trash2 size={11} />
+                      Remove
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -84,18 +124,42 @@ type Props = {
   onToggle?: (id: string, enabled: boolean) => void;
   /** Called when a row is expanded, for details that are fetched rather than held. */
   onOpen?: (id: string) => void;
+  /** Per-row actions in the expanded row. Remove asks to confirm first. */
+  onEdit?: (id: string) => void;
+  onRemove?: (id: string) => void;
+  /** A link in the heading to the whole file the list is read from. */
+  onEditFile?: () => void;
 };
 
-export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd, onToggle, onOpen }: Props) {
+export function ItemList({
+  label,
+  count,
+  items,
+  emptyLabel,
+  addLabel,
+  onAdd,
+  onToggle,
+  onOpen,
+  onEdit,
+  onRemove,
+  onEditFile,
+}: Props) {
   return (
     <div className="panel-section">
       <div className="section-label">
         <span>{label}</span>
-        <span className="count">{count}</span>
+        <span className="section-tail">
+          {onEditFile && (
+            <button type="button" className="link-btn" onClick={onEditFile}>
+              Edit JSON
+            </button>
+          )}
+          <span className="count">{count}</span>
+        </span>
       </div>
       {items.length === 0 && <div className="empty">{emptyLabel}</div>}
       {items.map((item) => (
-        <Item key={item.id} item={item} onToggle={onToggle} onOpen={onOpen} />
+        <Item key={item.id} item={item} onToggle={onToggle} onOpen={onOpen} onEdit={onEdit} onRemove={onRemove} />
       ))}
       {addLabel && (
         <button className="add-btn" type="button" onClick={onAdd}>
