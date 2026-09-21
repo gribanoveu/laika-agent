@@ -121,7 +121,11 @@ def main() -> int:
             verdict = classify(*(r := run(cmd, cwd, timeout)))
             why = first_failure(r[1]) if verdict == CAUGHT else ""
         finally:
+            # Contents back, but the time now: copy2 restores the original's
+            # mtime, older than the last mutant's build, and cargo would go on
+            # testing that mutant after the run.
             shutil.copy2(bak, src)
+            os.utime(src)
         print(f"    {verdict}, {time.monotonic() - t:.0f} c" + (f" — {why}" if why else ""))
         results.append((i, verdict, m.get("note", "")))
         if verdict != CAUGHT and not keep_going:
