@@ -3,10 +3,10 @@
 //!
 //! Ported from Alfa Atlas `domain/agent_skills.rs`. What did not come across:
 //!
-//! - **The bundled catalog and `SkillSource`.** Atlas shipped five skills for
-//!   writing documentation; none of them is about code, and a source enum with
-//!   one variant distinguishes nothing. It comes back with the first skill
-//!   worth shipping.
+//! - **The bundled catalog.** Atlas shipped five skills for writing
+//!   documentation; none of them is about code. It comes back with the first
+//!   skill worth shipping. `SkillSource` came back without it: skills are
+//!   read from the open folder as well as the user's own.
 //! - **`search` and its ranking.** Atlas never showed the model its catalog —
 //!   a skill existed only if a substring search found it, and upstream kept a
 //!   test listing every phrase each skill had to answer to, because no
@@ -17,7 +17,10 @@
 //! - **`requires-project`.** It hid a skill while no project was open; every
 //!   turn here runs in an open folder.
 //!
-//! No I/O — the folder under the app directory is `infra::skills_store`.
+//! No I/O — the folders are `infra::skills_store`, and which skill of a name
+//! wins is `services::skills`.
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,6 +36,23 @@ pub struct SkillMeta {
     pub description: String,
 }
 
+/// Where a skill was found: the open folder's `.claude/skills` or
+/// `.agents/skills`, or the user's own folder in the app directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillSource {
+    Project,
+    User,
+}
+
+/// A skill a turn may load: what the model is shown, and the folder the
+/// `skill` tool reads it from — which is not always the user's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skill {
+    pub meta: SkillMeta,
+    pub dir: PathBuf,
+}
+
 /// One row of the skills tab. A folder whose `SKILL.md` did not parse is a
 /// row too, named by its folder and carrying the reason in `error` — it is
 /// the only place the user learns why a skill never reaches the model.
@@ -43,6 +63,16 @@ pub struct SkillListItem {
     pub description: String,
     pub enabled: bool,
     pub error: Option<String>,
+    pub source: SkillSource,
+    /// What its switch is stored under: the name for the user's own, the
+    /// folder's path for a project's — so turning one repository's `release`
+    /// off leaves every other repository's alone.
+    pub key: String,
+    /// The skill's folder, shown so the user can find the file.
+    pub path: String,
+    /// Valid and on, but another skill of the same name comes first — a
+    /// project's before the user's — and is the one the model gets.
+    pub shadowed: bool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

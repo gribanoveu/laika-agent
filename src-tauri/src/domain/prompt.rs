@@ -22,7 +22,7 @@ use std::path::Path;
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::llm::LlmMessage;
 use crate::domain::project_rules::RuleFile;
-use crate::domain::skills::SkillMeta;
+use crate::domain::skills::Skill;
 use crate::domain::tools::{Task, TodoStatus};
 
 /// The half that never varies.
@@ -162,7 +162,7 @@ pub struct TurnContext<'a> {
     /// follows against a fact that is no longer true.
     pub unattended: bool,
     /// The user's skills, as the `skill` tool can load them.
-    pub skills: &'a [SkillMeta],
+    pub skills: &'a [Skill],
     /// The open folder's `AGENTS.md` and the like, as switched on.
     pub rules: &'a [RuleFile],
     /// The conversation's plan as the user last left it — possibly edited.
@@ -237,16 +237,16 @@ const SKILL_DESCRIPTIONS_BUDGET: usize = 8_000;
 /// Its own message, between the mode and the turn's facts: it changes only
 /// when the user edits their skills folder, so it belongs with the prefix a
 /// cache can hold rather than with the checklist that changes every round.
-pub fn skills_block(skills: &[SkillMeta]) -> Option<String> {
+pub fn skills_block(skills: &[Skill]) -> Option<String> {
     if skills.is_empty() {
         return None;
     }
     let mut text = String::from(
-        "## Skills\n\nThe user keeps these instruction packs for recurring kinds of work. \
+        "## Skills\n\nThe user and this repository keep these instruction packs for recurring kinds of work. \
          When the request matches one, load it with `skill` before you start, and follow it.\n",
     );
     let mut spent = 0;
-    for skill in skills {
+    for skill in skills.iter().map(|s| &s.meta) {
         spent += skill.description.len();
         if spent <= SKILL_DESCRIPTIONS_BUDGET {
             text.push_str(&format!("\n- {}: {}", skill.name, skill.description));
@@ -412,8 +412,11 @@ mod tests {
         assert!(INSTRUCTIONS.contains("The one exception is the project instructions"));
     }
 
-    fn skill(name: &str, description: &str) -> SkillMeta {
-        SkillMeta { name: name.to_string(), description: description.to_string() }
+    fn skill(name: &str, description: &str) -> Skill {
+        Skill {
+            meta: crate::domain::skills::SkillMeta { name: name.to_string(), description: description.to_string() },
+            dir: PathBuf::from("/skills").join(name),
+        }
     }
 
     #[test]

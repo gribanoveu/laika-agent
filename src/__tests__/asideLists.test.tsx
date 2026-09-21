@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
-import type { RuleListItem, SkillsView } from "../lib/chat";
+import type { RuleListItem, SkillListItem, SkillsView } from "../lib/chat";
 
 // The skills folder and a repository's AGENTS.md are edited outside the app,
 // so each tab re-reads them; a switch is shown at once and then settled by
@@ -9,10 +9,12 @@ import type { RuleListItem, SkillsView } from "../lib/chat";
 let disk: SkillsView = { dir: "/home/.laika/skills", skills: [] };
 let calls: string[] = [];
 let failToggle = false;
+// Holds a switch's save until the test lets it go, to see what is shown meanwhile.
+let holdToggle: Promise<void> | null = null;
 let ruleFiles: RuleListItem[] = [];
 
 mock.module("@tauri-apps/api/core", () => ({
-  invoke: (command: string, args?: { name: string; enabled: boolean }) => {
+  invoke: (command: string, args?: { key: string; enabled: boolean }) => {
     calls.push(command);
     if (command === "skills_list") return Promise.resolve(structuredClone(disk));
     if (command === "rules_list") return Promise.resolve(structuredClone(ruleFiles));
@@ -23,7 +25,8 @@ mock.module("@tauri-apps/api/core", () => ({
     }
     if (command === "skills_set_enabled") {
       if (failToggle) return Promise.reject("settings.json is not valid");
-      disk.skills = disk.skills.map((s) => (s.name === args!.name ? { ...s, enabled: args!.enabled } : s));
+      if (holdToggle) return holdToggle;
+      disk.skills = disk.skills.map((s) => (s.key === args!.key ? { ...s, enabled: args!.enabled } : s));
       return Promise.resolve();
     }
     return Promise.resolve(null);
@@ -42,12 +45,25 @@ const { RulesList, SkillsList } = await import("../components/panes");
 const { AsidePanel } = await import("../components/AsidePanel");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
-const skill = (name: string, enabled = true) => ({ name, description: `${name} does a thing`, enabled, error: null });
+const skill = (name: string, enabled = true, extra: Partial<SkillListItem> = {}): SkillListItem => ({
+  name,
+  description: `${name} does a thing`,
+  enabled,
+  error: null,
+  source: "user",
+  key: name,
+  path: `/home/.laika/skills/${name}`,
+  shadowed: false,
+  ...extra,
+});
+const theirs = (name: string, extra: Partial<SkillListItem> = {}) =>
+  skill(name, true, { source: "project", key: `/repo/.claude/skills/${name}`, path: `/repo/.claude/skills/${name}`, ...extra });
 
 beforeEach(() => {
   disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")] };
   calls = [];
   failToggle = false;
+  holdToggle = null;
   ruleFiles = [rule("AGENTS.md")];
 });
 
@@ -56,6 +72,14 @@ function rule(name: string, extra: Partial<RuleListItem> = {}): RuleListItem {
 }
 
 describe("useSkills", () => {
+  test("reads again when another folder is opened", async () => {
+    const { rerender } = renderHook(({ folder }) => useSkills(true, folder), { initialProps: { folder: "/one" } });
+    await settle();
+    rerender({ folder: "/two" });
+    await settle();
+    expect(calls).toEqual(["skills_list", "skills_list"]);
+  });
+
   test("reads the folder each time the tab opens, and not while it is hidden", async () => {
     const { result, rerender } = renderHook(({ visible }) => useSkills(visible), {
       initialProps: { visible: false },
@@ -82,6 +106,22 @@ describe("useSkills", () => {
 
     expect(calls).toEqual(["skills_list", "skills_set_enabled", "skills_list"]);
     expect(result.current.view?.skills[0].enabled).toBe(false);
+  });
+
+  test("a switch flips its own row at once, not every row of that name", async () => {
+    disk = { dir: "/d", skills: [theirs("release"), skill("release")] };
+    let release = () => {};
+    holdToggle = new Promise((resolve) => (release = resolve));
+    const { result } = renderHook(() => useSkills(true));
+    await settle();
+
+    let saving: Promise<void> = Promise.resolve();
+    act(() => {
+      saving = result.current.setEnabled("/repo/.claude/skills/release", false);
+    });
+    expect(result.current.view?.skills.map((s) => s.enabled)).toEqual([false, true]);
+    release();
+    await act(() => saving);
   });
 
   test("a switch that fails says why and shows what is really saved", async () => {
@@ -157,7 +197,7 @@ describe("the skills tab", () => {
   test("a broken skill shows its reason and has no switch", () => {
     panel({
       dir: "/d",
-      skills: [{ name: "broken", description: "", enabled: false, error: "SKILL.md is missing YAML frontmatter" }],
+      skills: [skill("broken", false, { description: "", error: "SKILL.md is missing YAML frontmatter" })],
     });
 
     expect(screen.getByText("invalid")).toBeTruthy();
@@ -165,9 +205,29 @@ describe("the skills tab", () => {
     expect(screen.queryAllByRole("button", { pressed: false })).toHaveLength(0);
   });
 
-  test("an empty folder says where skills go", () => {
+  test("an empty folder says where skills go, the repository's folders too", () => {
     panel({ dir: "/home/.laika/skills", skills: [] });
-    expect(screen.getByText(/SKILL\.md in \/home\/\.laika\/skills/)).toBeTruthy();
+    expect(screen.getByText(/in \/home\/\.laika\/skills for every repository, or in the repository's \.claude\/skills or \.agents\/skills/)).toBeTruthy();
+    expect(screen.queryByText("This repository")).toBeNull();
+  });
+
+  test("the repository's skills come first, and one it hides says so", () => {
+    const toggled: [string, boolean][] = [];
+    panel(
+      { dir: "/home/.laika/skills", skills: [theirs("release"), skill("release", true, { shadowed: true }), skill("review")] },
+      (key, on) => toggled.push([key, on]),
+    );
+
+    const [repo, mine] = screen.getAllByText(/^(This repository|Yours)$/);
+    expect([repo.textContent, mine.textContent]).toEqual(["This repository", "Yours"]);
+    expect(screen.getByText("1/1")).toBeTruthy();
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByText("hidden")).toBeTruthy();
+    expect(screen.getByText("The repository's skill of this name is used")).toBeTruthy();
+
+    // Keyed by folder: switching off the repository's release leaves the user's alone.
+    fireEvent.click(screen.getAllByRole("button", { pressed: true })[0]);
+    expect(toggled).toEqual([["/repo/.claude/skills/release", false]]);
   });
 });
 

@@ -24,7 +24,7 @@ use crate::domain::conversation_mode::{self, ConversationMode};
 use crate::domain::prompt;
 use crate::domain::tool_call_log::{self, CallStatus, ToolCallLogEntry};
 use crate::domain::project_rules::RuleFile;
-use crate::domain::skills::SkillMeta;
+use crate::domain::skills::Skill;
 use crate::domain::mcp::McpTools;
 use crate::domain::hooks::{HookEvent, Hooks, MAX_STOP_BLOCKS};
 use crate::domain::background::{self, BackgroundProcesses};
@@ -175,9 +175,10 @@ pub struct Turn<'a> {
     /// Search of the open folder's index, for `semanticSearch`; `None` when
     /// the folder has none, and the tool says so to the model.
     pub search: Option<CodeSearchFn>,
-    /// The user's skills, listed in the prompt for `skill` to load. Read
-    /// once per turn, so the prompt does not change between its rounds.
-    pub skills: &'a [SkillMeta],
+    /// The open folder's skills and the user's, listed in the prompt for
+    /// `skill` to load. Read once per turn, so the prompt does not change
+    /// between its rounds.
+    pub skills: &'a [Skill],
     /// The open folder's instruction files, read once per turn like the skills.
     pub rules: &'a [RuleFile],
     /// Where each settled call's redacted record goes — the log on disk in
@@ -1226,7 +1227,7 @@ mod tests {
         slept: Arc<Mutex<Vec<Duration>>>,
         steering: Arc<SteeringQueue>,
         search: Option<CodeSearchFn>,
-        skills: Vec<SkillMeta>,
+        skills: Vec<Skill>,
         rules: Vec<RuleFile>,
         logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
         plan: Option<String>,
@@ -3073,7 +3074,10 @@ mod tests {
                 "turn-skills",
                 vec![asks(vec![wants("k1", "skill", r#"{"name":"release"}"#)]), text("done")],
             );
-            h.skills = vec![SkillMeta { name: "release".into(), description: "Cuts a release.".into() }];
+            h.skills = vec![Skill {
+                meta: crate::domain::skills::SkillMeta { name: "release".into(), description: "Cuts a release.".into() },
+                dir: crate::infra::skills_store::dir().unwrap().join("release"),
+            }];
 
             h.run(|turn| stream(turn, vec![LlmMessage::user("ship it")], vec![])).expect("finishes");
 

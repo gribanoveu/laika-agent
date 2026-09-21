@@ -16,7 +16,7 @@ import { PlanPanel } from "./PlanPanel";
 import { useProcesses } from "../hooks/useProcesses";
 import { useRules } from "../hooks/useRules";
 import { useSkills } from "../hooks/useSkills";
-import type { HooksView, McpServerState, McpView, RuleListItem, SkillsView, Task } from "../lib/chat";
+import type { HooksView, McpServerState, McpView, RuleListItem, SkillListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 
 /**
@@ -188,42 +188,63 @@ export function HooksList({ view, error, onAdd, onEditHook, onRemoveHook, onEdit
 type SkillsListProps = {
   view: SkillsView | null;
   error: string | null;
-  onToggle: (name: string, enabled: boolean) => void;
+  /** By the row's key: a name for the user's skill, a folder for a repository's. */
+  onToggle: (key: string, enabled: boolean) => void;
 };
 
 /** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
-function skillItems(view: SkillsView | null): PanelItem[] {
-  return (view?.skills ?? []).map((skill) =>
+function skillItems(skills: SkillListItem[]): PanelItem[] {
+  return skills.map((skill) =>
     skill.error
       ? {
-          id: skill.name,
+          id: skill.key,
           badge: "!",
           kind: "skill",
           title: skill.name,
           status: { label: "invalid", tone: "warn" },
           desc: skill.error,
+          source: skill.path,
         }
       : {
-          id: skill.name,
+          id: skill.key,
           badge: skill.name.slice(0, 2).toUpperCase(),
           kind: "skill",
           title: skill.name,
+          // On, but the model gets the repository's skill of this name instead.
+          ...(skill.shadowed ? { status: { label: "hidden", tone: "off" as const }, meta: "The repository's skill of this name is used" } : {}),
           desc: skill.description,
           enabled: skill.enabled,
           note: skill.description,
+          source: skill.path,
         },
   );
 }
 
+const count = (items: PanelItem[]) => `${items.filter((s) => s.enabled).length}/${items.length}`;
+
+/**
+ * The repository's skills first — they are the ones used when a name is in
+ * both — then the user's own. The repository's section is there only when
+ * the open folder has any.
+ */
 export function SkillsList({ view, error, onToggle }: SkillsListProps) {
-  const items = skillItems(view);
+  const all = view?.skills ?? [];
+  const project = skillItems(all.filter((s) => s.source === "project"));
+  const mine = skillItems(all.filter((s) => s.source === "user"));
   return (
     <>
+      {project.length > 0 && (
+        <ItemList label="This repository" count={count(project)} items={project} emptyLabel="" onToggle={onToggle} />
+      )}
       <ItemList
-        label="Skills"
-        count={`${items.filter((s) => s.enabled).length}/${items.length}`}
-        items={items}
-        emptyLabel={view?.dir ? `No skills yet. A skill is a folder with a SKILL.md in ${view.dir}.` : "No skills yet."}
+        label={project.length > 0 ? "Yours" : "Skills"}
+        count={count(mine)}
+        items={mine}
+        emptyLabel={
+          project.length > 0
+            ? `None of your own. A skill is a folder with a SKILL.md in ${view?.dir || "the app directory"}.`
+            : `No skills yet. A skill is a folder with a SKILL.md — in ${view?.dir || "the app directory"} for every repository, or in the repository's .claude/skills or .agents/skills.`
+        }
         onToggle={onToggle}
       />
       {error && <div className="empty">{error}</div>}
@@ -231,8 +252,8 @@ export function SkillsList({ view, error, onToggle }: SkillsListProps) {
   );
 }
 
-function SkillsPane({ active }: PaneContext) {
-  const skills = useSkills(active);
+function SkillsPane({ active, workspace }: PaneContext) {
+  const skills = useSkills(active, workspace);
   return <SkillsList view={skills.view} error={skills.error} onToggle={skills.setEnabled} />;
 }
 

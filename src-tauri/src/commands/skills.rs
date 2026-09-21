@@ -3,14 +3,16 @@
 
 use crate::services::skills::{self, SkillsView};
 
+/// The open folder's skills and the user's; only the user's while no folder is open.
 #[tauri::command]
-pub fn skills_list() -> Result<SkillsView, String> {
-    skills::list().map_err(|e| e.to_string())
+pub fn skills_list(state: tauri::State<'_, std::sync::Arc<super::chat::AgentState>>) -> Result<SkillsView, String> {
+    skills::list(state.workspace().ok().as_deref()).map_err(|e| e.to_string())
 }
 
+/// `key` is the row's: a name for the user's skill, a folder for a repository's.
 #[tauri::command]
-pub fn skills_set_enabled(name: String, enabled: bool) -> Result<(), String> {
-    skills::set_enabled(&name, enabled).map_err(|e| e.to_string())
+pub fn skills_set_enabled(key: String, enabled: bool) -> Result<(), String> {
+    skills::set_enabled(&key, enabled).map_err(|e| e.to_string())
 }
 
 /// The open folder's instruction files; none while no folder is open.

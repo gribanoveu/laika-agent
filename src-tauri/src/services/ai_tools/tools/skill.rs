@@ -1,5 +1,6 @@
-//! `skill` — the instructions of one of the user's skills, fetched when the
-//! task calls for it rather than sent on every request.
+//! `skill` — the instructions of one of the skills — the open folder's or the
+//! user's own — fetched when the task calls for it rather than sent on every
+//! request.
 //!
 //! The model already has the catalog (names and descriptions, in the system
 //! prompt), so there is nothing to search: it names a skill, gets its
@@ -16,19 +17,21 @@ use crate::infra::skills_store;
 /// Only a skill the turn's prompt listed. The folder may hold more — one the
 /// user switched off, one added mid-turn — and a name the model guessed or
 /// remembered from an earlier chat must not reach past the switch.
+/// Loaded from the folder the catalog found it in: a repository's skill from
+/// the repository, the user's from theirs.
 pub fn skill(args: &SkillArgs, deps: &ToolDeps) -> Result<ToolResult, ToolError> {
-    if !deps.skills.iter().any(|s| s.name == args.name) {
+    let Some(listed) = deps.skills.iter().find(|s| s.meta.name == args.name) else {
         return Err(SkillError::NotFound(args.name.clone()).into());
-    }
+    };
     match &args.path {
         None => {
-            let (parsed, files) = skills_store::load(&args.name)?;
+            let (parsed, files) = skills_store::load(&listed.dir)?;
             Ok(ToolResult::Skill { name: parsed.meta.name, instructions: parsed.body, files })
         }
         Some(path) => Ok(ToolResult::SkillFile {
             name: args.name.clone(),
             path: path.clone(),
-            content: skills_store::read(&args.name, path)?,
+            content: skills_store::read(&listed.dir, path)?,
         }),
     }
 }
@@ -45,7 +48,7 @@ impl From<SkillError> for ToolError {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "skill".to_string(),
-        description: "Load the instructions of one of the user's skills, listed under \"Skills\" in the system prompt. \
+        description: "Load the instructions of one of the skills listed under \"Skills\" in the system prompt. \
 When the task matches a skill's description, load it before starting the work, and follow what it says. \
 Without path, returns the skill's instructions and the files it keeps beside them; with path, returns one of those files — ask for one only when the instructions point to it."
             .to_string(),
@@ -69,14 +72,18 @@ Without path, returns the skill's instructions and the files it keeps beside the
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::skills_store::test_support::write_skill;
-    use crate::domain::skills::SkillMeta;
-    use crate::testing::with_app_dir;
+    use crate::infra::skills_store::test_support::{write_skill, write_skill_in};
+    use crate::domain::skills::{Skill, SkillMeta};
+    use crate::testing::{temp_dir, with_app_dir};
 
-    /// Deps whose catalog lists `names`, as the turn's prompt would.
+    /// Deps whose catalog lists `names` from the user's folder, as the turn's prompt would.
     fn listing(names: &[&str]) -> ToolDeps<'static> {
+        let dir = skills_store::dir().unwrap();
         ToolDeps {
-            skills: names.iter().map(|n| SkillMeta { name: n.to_string(), description: "d".into() }).collect(),
+            skills: names
+                .iter()
+                .map(|n| Skill { meta: SkillMeta { name: n.to_string(), description: "d".into() }, dir: dir.join(n) })
+                .collect(),
             ..ToolDeps::default()
         }
     }
@@ -126,6 +133,31 @@ mod tests {
         });
     }
 
+    /// The catalog says where the skill is: a repository's `release` is read
+    /// from the repository even when the user has one of the same name.
+    #[test]
+    fn a_skill_is_loaded_from_the_folder_the_catalog_found_it_in() {
+        with_app_dir("skill-tool-project", || {
+            write_skill("release", "Mine.", "My steps.\n");
+            let ws = temp_dir("skill-tool-project-ws");
+            let theirs = write_skill_in(&skills_store::project_dirs(&ws)[0], "release", "Theirs.", "Their steps.\n");
+            std::fs::write(theirs.join("notes.md"), "their notes").unwrap();
+            let deps = ToolDeps {
+                skills: vec![Skill { meta: SkillMeta { name: "release".into(), description: "Theirs.".into() }, dir: theirs }],
+                ..ToolDeps::default()
+            };
+
+            assert!(matches!(
+                skill(&args("release", None), &deps).unwrap(),
+                ToolResult::Skill { instructions, .. } if instructions == "Their steps.\n"
+            ));
+            assert!(matches!(
+                skill(&args("release", Some("notes.md")), &deps).unwrap(),
+                ToolResult::SkillFile { content, .. } if content == "their notes"
+            ));
+        });
+    }
+
     /// Switched off in the tab, so absent from the prompt — but still on
     /// disk, and a name is easy to guess.
     #[test]
@@ -133,6 +165,10 @@ mod tests {
         with_app_dir("skill-tool-unlisted", || {
             write_skill("release", "Cuts a release.", "Bump the version.\n");
             std::fs::write(crate::infra::skills_store::dir().unwrap().join("release/notes.md"), "x").unwrap();
+            // The one that is listed is on disk too: asking for another must
+            // not come back with it.
+            let review = write_skill("review", "Reviews a diff.", "Read the diff.\n");
+            std::fs::write(review.join("notes.md"), "review notes").unwrap();
             for path in [None, Some("notes.md")] {
                 let err = skill(&args("release", path), &listing(&["review"])).unwrap_err().to_string();
                 assert!(err.contains("Skills list"), "{path:?}: {err}");

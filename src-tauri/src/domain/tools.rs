@@ -621,8 +621,9 @@ pub struct ToolDeps<'a> {
     pub output: Option<crate::domain::command_exec::CommandSink>,
     /// The open folder's index; `None` when there is none.
     pub search: Option<CodeSearchFn>,
-    /// The skills this turn's prompt listed — the only ones `skill` loads.
-    pub skills: Vec<crate::domain::skills::SkillMeta>,
+    /// The skills this turn's prompt listed — the only ones `skill` loads,
+    /// each from its own folder.
+    pub skills: Vec<crate::domain::skills::Skill>,
     /// The connected servers' tools this turn offers.
     pub mcp: crate::domain::mcp::McpTools,
     /// The turn's stop button, for a tool that waits on someone else — an
