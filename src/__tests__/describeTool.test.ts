@@ -91,7 +91,7 @@ describe("what each call shows", () => {
         result: {
           matches: [
             { path: "a.java", line: 1, text: "getIncome()" },
-            { path: "a.java", line: 9, text: "getIncome()" },
+            { path: "a.java", line: 9, text: "getIncome()", before: ["// why", "// because"], after: ["}"] },
             { path: "b.java", line: 4, text: "getIncome()" },
           ],
           truncated: false,
@@ -100,7 +100,8 @@ describe("what each call shows", () => {
     );
 
     expect(shown.meta).toBe("3 matches · 2 files");
-    expect(shown.detail.split("\n")).toHaveLength(3);
+    // Grouped by file, as grep prints it, with the lines around a hit.
+    expect(shown.detail).toBe("a.java\n1: getIncome()\n7- // why\n8- // because\n9: getIncome()\n10- }\n\nb.java\n4: getIncome()");
   });
 
   /// A capped search that reads as exhaustive is the one thing grep must not
@@ -199,6 +200,48 @@ describe("what each call shows", () => {
       tool({ name: "gitDiff", arguments: '{"path":"logo.png"}', result: { path: "logo.png", label: "x", isBinary: true, diff: {} } }),
     );
     expect(binary.meta).toBe("binary");
+  });
+
+  test("git status names the branch, counts the changes and groups them", () => {
+    const shown = describeTool(
+      tool({
+        name: "gitStatus",
+        arguments: "{}",
+        result: {
+          branch: "main",
+          staged: [{ path: "b.rs", status: "A" }],
+          unstaged: [{ path: "a.rs", status: "M" }],
+          conflicted: [],
+          truncated: false,
+        },
+      }),
+    );
+    expect(shown).toMatchObject({ name: "Status", arg: "main", meta: "2 changed", detail: "Staged:\n  A b.rs\nNot staged:\n  M a.rs" });
+
+    const clean = describeTool(
+      tool({ name: "gitStatus", arguments: "{}", result: { branch: "main", staged: [], unstaged: [], conflicted: [], truncated: false } }),
+    );
+    expect(clean.meta).toBe("clean");
+  });
+
+  test("blame is one line per run of lines, not JSON", () => {
+    const shown = describeTool(
+      tool({
+        name: "gitBlame",
+        arguments: '{"path":"a.rs"}',
+        result: {
+          path: "a.rs",
+          hunks: [{ startLine: 3, lineCount: 2, commit: "abc1234", author: "Ann", date: "2026-09-01", summary: "fix" }],
+          truncated: true,
+        },
+      }),
+    );
+    expect(shown).toMatchObject({ arg: "a.rs", meta: "1+ hunks", detail: "3-4  abc1234  2026-09-01  Ann  fix" });
+  });
+
+  test("a folder made or removed shows its path and nothing to open", () => {
+    const shown = describeTool(tool({ name: "createDirectory", arguments: '{"path":"src/new"}', result: { path: "src/new" } }));
+    expect(shown).toMatchObject({ name: "Mkdir", arg: "src/new", detail: "" });
   });
 
   test("a command shows its exit code", () => {

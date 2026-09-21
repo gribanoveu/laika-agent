@@ -124,7 +124,7 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         meta: matches.length
           ? `${matches.length}${result.truncated ? "+" : ""} matches · ${files.size} files`
           : undefined,
-        detail: matches.map((m) => `${str(m.path)}:${num(m.line)}  ${str(m.text) ?? ""}`).join("\n"),
+        detail: grepDetail(matches),
       };
     }
 
@@ -179,6 +179,45 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         meta: result.isBinary === true ? "binary" : added === undefined ? str(result.label) : `+${added} -${num(diff.linesRemoved) ?? 0}`,
         detail: str(diff.unifiedDiff) ?? "",
         diff: true,
+      };
+    }
+
+    case "createDirectory":
+    case "deleteDirectory":
+      return { name, arg: str(args.path) ?? "", detail: "" };
+
+    case "gitStatus": {
+      const groups: [string, unknown][] = [
+        ["Conflicted", result.conflicted],
+        ["Staged", result.staged],
+        ["Not staged", result.unstaged],
+      ];
+      const lists = groups.map(([title, files]) => [title, Array.isArray(files) ? (files as Json[]) : []] as const);
+      const changed = lists.reduce((n, [, files]) => n + files.length, 0);
+      return {
+        name,
+        arg: str(result.branch) ?? "",
+        meta: block.result === undefined ? undefined : changed ? `${changed}${result.truncated ? "+" : ""} changed` : "clean",
+        detail: lists
+          .filter(([, files]) => files.length)
+          .map(([title, files]) => [`${title}:`, ...files.map((f) => `  ${str(f.status)} ${str(f.path)}`)].join("\n"))
+          .join("\n"),
+      };
+    }
+
+    case "gitBlame": {
+      const hunks = Array.isArray(result.hunks) ? (result.hunks as Json[]) : [];
+      return {
+        name,
+        arg: str(args.path) ?? "",
+        meta: hunks.length ? `${hunks.length}${result.truncated ? "+" : ""} hunks` : undefined,
+        detail: hunks
+          .map((h) => {
+            const start = num(h.startLine) ?? 0;
+            const last = start + Math.max(0, (num(h.lineCount) ?? 1) - 1);
+            return `${start}-${last}  ${str(h.commit)}  ${str(h.date)}  ${str(h.author)}  ${str(h.summary)}`;
+          })
+          .join("\n"),
       };
     }
 
@@ -267,6 +306,27 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         detail: block.result === undefined ? "" : JSON.stringify(block.result, null, 2),
       };
   }
+}
+
+/** A file's name once, then `line:` for a hit and `line-` for the lines around it. */
+function grepDetail(matches: Json[]): string {
+  const lines: string[] = [];
+  let current: string | undefined;
+  for (const m of matches) {
+    const path = str(m.path);
+    if (path !== current) {
+      if (current !== undefined) lines.push("");
+      lines.push(path ?? "");
+      current = path;
+    }
+    const line = num(m.line) ?? 0;
+    const before = Array.isArray(m.before) ? (m.before as string[]) : [];
+    const after = Array.isArray(m.after) ? (m.after as string[]) : [];
+    before.forEach((text, k) => lines.push(`${line - before.length + k}- ${text}`));
+    lines.push(`${line}: ${str(m.text) ?? ""}`);
+    after.forEach((text, k) => lines.push(`${line + 1 + k}- ${text}`));
+  }
+  return lines.join("\n");
 }
 
 function primaryArgument(wireName: string, args: Json): string {
