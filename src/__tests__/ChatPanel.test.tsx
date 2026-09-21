@@ -336,7 +336,7 @@ describe("the header", () => {
         onToggleAside={() => toggled++}
       />,
     );
-    fireEvent.click(screen.getByTitle("Show panel"));
+    fireEvent.click(screen.getByTitle("Show changes"));
     expect(toggled).toBe(1);
 
     rerender(
@@ -350,7 +350,7 @@ describe("the header", () => {
         onToggleAside={() => toggled++}
       />,
     );
-    expect(screen.getByTitle("Hide panel").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTitle("Hide changes").getAttribute("aria-pressed")).toBe("true");
   });
 
   test("the … menu opens a side panel by name", () => {

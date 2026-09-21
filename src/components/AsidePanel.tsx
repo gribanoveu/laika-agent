@@ -1,287 +1,36 @@
-import { ChangesPanel } from "./ChangesPanel";
-import { ItemList } from "./ItemList";
-import { ProcessList } from "./ProcessList";
-import { PlanPanel } from "./PlanPanel";
-import type { HooksView, McpServerState, McpView, ProcessView, RuleListItem, SkillsView, Task } from "../lib/chat";
-import { ASIDE_PANELS } from "./asidePanels";
-import type { AsideTab, PanelItem } from "../types";
+import { X } from "lucide-react";
+import { PANES, type Dock, type PaneContext } from "./panes";
+import type { AsideTab } from "../types";
 import "./AsidePanel.css";
 
-// Each list is filled by its own command wrapper once that command exists.
-const WORKSPACE_FILES: string[] = [];
-
 type Props = {
-  /** Which panel is showing. It is picked from the chat header's "⋮". */
+  /** Which pane is showing. It is picked from the chat header's "⋮". */
   tab: AsideTab;
-  onNotify: (msg: string) => void;
-  mcp: McpView | null;
-  mcpError: string | null;
-  onMcpToggle: (name: string, enabled: boolean) => void;
-  /** Opens the configuration editor. */
-  onMcpEdit: () => void;
-  hooks: HooksView | null;
-  hooksError: string | null;
-  /** Opens the hooks editor. */
-  onHooksEdit: () => void;
-  processes: ProcessView[];
-  processesError: string | null;
-  onProcessStop: (id: number) => void;
-  skills: SkillsView | null;
-  skillsError: string | null;
-  onSkillToggle: (name: string, enabled: boolean) => void;
-  rules: RuleListItem[];
-  rulesError: string | null;
-  onRuleToggle: (path: string, enabled: boolean) => void;
-  plan: string | null;
-  checklist: Task[];
-  onPlanEdit: (plan: string) => void;
-  onImplement?: () => void;
-  planLocked: boolean;
+  dock: Dock;
+  /** What the panes are drawn from; `active` is whether this dock is on screen. */
+  ctx: PaneContext;
+  onClose: () => void;
 };
 
-/** Shown whole on expand: what the model is told is worth reading. The switch is keyed by path. */
-function ruleItems(rules: RuleListItem[]): PanelItem[] {
-  return rules.map((rule) =>
-    rule.error
-      ? {
-          id: rule.path,
-          badge: "!",
-          kind: "rule",
-          title: rule.name,
-          status: { label: "not sent", tone: "warn" },
-          desc: rule.error,
-          source: rule.path,
-        }
-      : {
-          id: rule.path,
-          badge: rule.name.slice(0, 2).toUpperCase(),
-          kind: "rule",
-          title: rule.name,
-          ...(rule.truncated ? { status: { label: "cut", tone: "warn" as const } } : {}),
-          desc: `${rule.content.split("\n").length} lines${rule.truncated ? " sent, the rest cut" : ""}`,
-          enabled: rule.enabled,
-          note: rule.content,
-          source: rule.path,
-        },
-  );
-}
-
-/** A server that cannot start says why and has no switch, like a broken skill. */
-function mcpItems(view: McpView | null): PanelItem[] {
-  return (view?.servers ?? []).map((server) =>
-    server.error
-      ? {
-          id: server.name,
-          badge: "!",
-          kind: "mcp",
-          title: server.name,
-          status: { label: "won't start", tone: "warn" },
-          desc: server.error,
-          source: server.command || undefined,
-        }
-      : {
-          id: server.name,
-          badge: server.name.slice(0, 2).toUpperCase(),
-          kind: "mcp",
-          title: server.name,
-          desc: server.command,
-          enabled: server.enabled,
-          ...(server.enabled ? mcpState(server.state) : {}),
-        },
-  );
-}
-
-const HOOK_BADGES: Record<string, string> = { PreToolUse: "PRE", PostToolUse: "PST", Stop: "STP" };
-
-/** One row per command. What the tool name must match is part of the title, since it decides when it runs at all. */
-function hookItems(view: HooksView | null): PanelItem[] {
-  return (view?.hooks ?? []).map((hook, i) => ({
-    id: `${i}`,
-    badge: HOOK_BADGES[hook.event] ?? "?",
-    kind: "hook",
-    title: hook.event === "Stop" ? "Stop" : `${hook.event} · ${hook.matcher.trim() || "every tool"}`,
-    desc: hook.command,
-    ...(hook.problem
-      ? { status: { label: "won't run", tone: "warn" as const }, meta: hook.problem }
-      : { meta: `Stopped after ${hook.timeoutSecs} s` }),
-  }));
-}
-
-/** What the process is doing, for a server that is switched on. */
-function mcpState(state: McpServerState): Partial<PanelItem> {
-  switch (state.state) {
-    case "notStarted":
-      return { meta: "Starts with the next Agent turn" };
-    case "starting":
-      return { status: { label: "starting", tone: "off" } };
-    case "running":
-      return { status: { label: `${state.tools} ${state.tools === 1 ? "tool" : "tools"}`, tone: "ok" } };
-    case "exited":
-      return { status: { label: "exited", tone: "warn" }, meta: "Restarts with the next call", note: state.error };
-    case "failed":
-      return { status: { label: "failed", tone: "warn" }, meta: "Switch off and on to try again", note: state.error };
-  }
-}
-
-/** A broken skill is shown by its folder with the reason, and has no switch: it never reaches the model. */
-function skillItems(view: SkillsView | null): PanelItem[] {
-  return (view?.skills ?? []).map((skill) =>
-    skill.error
-      ? {
-          id: skill.name,
-          badge: "!",
-          kind: "skill",
-          title: skill.name,
-          status: { label: "invalid", tone: "warn" },
-          desc: skill.error,
-        }
-      : {
-          id: skill.name,
-          badge: skill.name.slice(0, 2).toUpperCase(),
-          kind: "skill",
-          title: skill.name,
-          desc: skill.description,
-          enabled: skill.enabled,
-          note: skill.description,
-        },
-  );
-}
-
-export function AsidePanel({
-  tab,
-  onNotify,
-  mcp,
-  mcpError,
-  onMcpToggle,
-  onMcpEdit,
-  hooks,
-  hooksError,
-  onHooksEdit,
-  processes,
-  processesError,
-  onProcessStop,
-  skills,
-  skillsError,
-  onSkillToggle,
-  rules,
-  rulesError,
-  onRuleToggle,
-  plan,
-  checklist,
-  onPlanEdit,
-  onImplement,
-  planLocked,
-}: Props) {
-  const ruleList = ruleItems(rules);
-  const mcpList = mcpItems(mcp);
-  const hookList = hookItems(hooks);
-  const skillList = skillItems(skills);
-  const panel = ASIDE_PANELS.find((p) => p.id === tab);
+/** One dock of the window: a heading naming its pane, and the pane. */
+export function AsidePanel({ tab, dock, ctx, onClose }: Props) {
+  const pane = PANES.find((p) => p.id === tab);
   return (
-    <aside className="aside">
+    <aside className={`aside aside-${dock}`}>
       <div className="aside-head">
-        {panel && (
+        {pane && (
           <h2 className="aside-title">
-            <panel.icon size={14} />
-            {panel.label}
+            <pane.icon size={14} />
+            {pane.label}
           </h2>
         )}
+        <button type="button" className="iconbtn aside-close" title="Close panel" onClick={onClose}>
+          <X size={14} />
+        </button>
       </div>
 
       <div className="aside-body">
-        <div className="tabpanel">
-          {tab === "changes" && <ChangesPanel onNotify={onNotify} />}
-          {tab === "plan" && (
-            <PlanPanel
-              plan={plan}
-              checklist={checklist}
-              onEdit={onPlanEdit}
-              onImplement={onImplement}
-              locked={planLocked}
-            />
-          )}
-          {tab === "mcp" && (
-            <>
-              <ItemList
-                label="Servers"
-                count={`${mcpList.filter((s) => s.enabled).length}/${mcpList.length}`}
-                items={mcpList}
-                emptyLabel="No MCP servers configured."
-                addLabel={mcpList.length ? "Edit servers" : "Add MCP server"}
-                onAdd={onMcpEdit}
-                onToggle={onMcpToggle}
-              />
-              {mcpError && <div className="empty">{mcpError}</div>}
-            </>
-          )}
-          {tab === "hooks" && (
-            <>
-              <ItemList
-                label="Hooks"
-                count={`${hookList.filter((h) => !h.status).length}/${hookList.length}`}
-                items={hookList}
-                emptyLabel="No hooks. A hook runs a command before a tool call, after one, or when the agent finishes."
-                addLabel={hookList.length ? "Edit hooks" : "Add a hook"}
-                onAdd={onHooksEdit}
-              />
-              {hooksError && <div className="empty">{hooksError}</div>}
-            </>
-          )}
-          {tab === "skills" && (
-            <>
-              <ItemList
-                label="Skills"
-                count={`${skillList.filter((s) => s.enabled).length}/${skillList.length}`}
-                items={skillList}
-                emptyLabel={
-                  skills?.dir
-                    ? `No skills yet. A skill is a folder with a SKILL.md in ${skills.dir}.`
-                    : "No skills yet."
-                }
-                onToggle={onSkillToggle}
-              />
-              {skillsError && <div className="empty">{skillsError}</div>}
-            </>
-          )}
-          {tab === "rules" && (
-            <>
-              <ItemList
-                label="Project instructions"
-                count={`${ruleList.filter((r) => r.enabled).length}/${ruleList.length}`}
-                items={ruleList}
-                emptyLabel="No AGENTS.md or CLAUDE.md at the root of the open folder."
-                onToggle={onRuleToggle}
-              />
-              {rulesError && <div className="empty">{rulesError}</div>}
-            </>
-          )}
-          {tab === "files" && (
-            <div className="panel-section">
-              <div className="section-label">
-                <span>Workspace</span>
-                <span className="count">{WORKSPACE_FILES.length}</span>
-              </div>
-              {WORKSPACE_FILES.length === 0 ? (
-                <div className="empty">No workspace indexed.</div>
-              ) : (
-                WORKSPACE_FILES.map((path) => (
-                  <div className="file" key={path}>
-                    <span>{path}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          {tab === "terminal" && (
-            <div className="panel-section">
-              <div className="section-label">
-                <span>Background processes</span>
-                <span>{processes.filter((p) => p.state.state === "running").length} running</span>
-              </div>
-              <ProcessList processes={processes} error={processesError} onStop={onProcessStop} />
-            </div>
-          )}
-        </div>
+        <div className="tabpanel">{pane && <pane.Component {...ctx} />}</div>
       </div>
     </aside>
   );

@@ -62,6 +62,18 @@ describe("panel widths", () => {
     expect(collapsed).toBe(1);
   });
 
+  test("the bottom panel closes when dragged past its minimum", () => {
+    let closed = 0;
+    const { result } = renderHook(() =>
+      usePanelSizes({ bottom: { collapsed: false, collapse: () => closed++, expand: () => {} } }),
+    );
+    act(() => result.current.resizeBottomBy(60));
+    expect(result.current.widths.bottom).toBe(PANEL_LIMITS.bottom.initial + 60);
+    act(() => result.current.resizeBottomBy(-2000));
+    expect(result.current.widths.bottom).toBe(PANEL_LIMITS.bottom.min);
+    expect(closed).toBe(1);
+  });
+
   test("outside today's limits are not trusted", () => {
     localStorage.setItem("atlas-panel-widths", JSON.stringify({ sidebar: 9999, aside: 300 }));
     const { result } = renderHook(() => usePanelSizes(controls));

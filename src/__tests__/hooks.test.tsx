@@ -34,7 +34,7 @@ afterAll(() => {
 });
 
 const { useHooks } = await import("../hooks/useHooks");
-const { AsidePanel } = await import("../components/AsidePanel");
+const { HooksList } = await import("../components/panes");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
 beforeEach(() => {
@@ -82,27 +82,7 @@ describe("the Hooks tab", () => {
   test("lists what each hook runs on, and one that will not run says why", () => {
     let edits = 0;
     render(
-      <AsidePanel
-        tab="hooks"
-        onNotify={() => {}}
-        mcp={null}
-        mcpError={null}
-        onMcpToggle={() => {}}
-        onMcpEdit={() => {}}
-        hooks={disk}
-        hooksError={null}
-        onHooksEdit={() => edits++}
-        skills={null}
-        skillsError={null}
-        onSkillToggle={() => {}}
-        rules={[]}
-        rulesError={null}
-        onRuleToggle={() => {}}
-        plan={null}
-        checklist={[]}
-        onPlanEdit={() => {}}
-        planLocked={false}
-      />,
+      <HooksList view={disk} error={null} onEdit={() => edits++} />,
     );
     expect(screen.getByText("PreToolUse · runCommand")).toBeTruthy();
     expect(screen.getByText("PostToolUse · every tool")).toBeTruthy();

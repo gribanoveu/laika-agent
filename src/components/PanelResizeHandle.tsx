@@ -5,8 +5,10 @@ type Props = {
   /** Positive delta grows the panel this handle belongs to (see invert). */
   onResize: (delta: number) => void;
   onResizeEnd: () => void;
-  /** True when the panel being sized sits to the right of the handle. */
+  /** True when the panel being sized sits to the right of (or below) the handle. */
   invert?: boolean;
+  /** "y" for a handle between panels stacked one above the other. */
+  axis?: "x" | "y";
   ariaLabel: string;
 };
 
@@ -24,10 +26,12 @@ export function PanelResizeHandle({
   onResize,
   onResizeEnd,
   invert = false,
+  axis = "x",
   ariaLabel,
 }: Props) {
   const [active, setActive] = useState(false);
-  const lastX = useRef(0);
+  const last = useRef(0);
+  const axisRef = useRef(axis);
   const activeRef = useRef(false);
   const onResizeRef = useRef(onResize);
   const onResizeEndRef = useRef(onResizeEnd);
@@ -36,6 +40,7 @@ export function PanelResizeHandle({
   onResizeRef.current = onResize;
   onResizeEndRef.current = onResizeEnd;
   invertRef.current = invert;
+  axisRef.current = axis;
   activeRef.current = active;
 
   const finishDrag = useCallback(() => {
@@ -50,8 +55,9 @@ export function PanelResizeHandle({
     if (!active) return;
 
     const onPointerMove = (event: PointerEvent) => {
-      const raw = event.clientX - lastX.current;
-      lastX.current = event.clientX;
+      const at = axisRef.current === "y" ? event.clientY : event.clientX;
+      const raw = at - last.current;
+      last.current = at;
       if (raw === 0) return;
       onResizeRef.current(invertRef.current ? -raw : raw);
     };
@@ -72,19 +78,19 @@ export function PanelResizeHandle({
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
-    lastX.current = event.clientX;
+    last.current = axisRef.current === "y" ? event.clientY : event.clientX;
     activeRef.current = true;
     setActive(true);
     document.body.classList.add("is-resizing");
     document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = axisRef.current === "y" ? "row-resize" : "col-resize";
   }, []);
 
   return (
     <div
-      className={`panel-resize-handle${active ? " is-active" : ""}`}
+      className={`panel-resize-handle${axis === "y" ? " axis-y" : ""}${active ? " is-active" : ""}`}
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={axis === "y" ? "horizontal" : "vertical"}
       aria-label={ariaLabel}
       onPointerDown={onPointerDown}
     />

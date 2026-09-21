@@ -1,18 +1,48 @@
-.aside {
+/* Right of the chat, as wide as it was dragged: the right dock on top, the
+   bottom dock under it. */
+.dock-column {
   width: var(--aside-width, 300px);
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  transition: width 0.22s ease;
+}
+.window.aside-hidden.bottom-closed .dock-column {
+  display: none;
+}
+
+.aside {
   position: relative;
   background: var(--bg-panel);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  transition: width 0.22s ease;
   overflow: hidden;
 }
+.aside-right {
+  flex: 1;
+  min-height: 0;
+  animation: aside-in 0.18s ease-out;
+}
+/* As tall as it was dragged — but never the whole column: the pane above
+   stays readable. */
+.aside-bottom {
+  flex: none;
+  height: var(--bottom-height, 240px);
+  max-height: 70%;
+  animation: aside-up 0.18s ease-out;
+}
 /* Hidden until asked for, from the chat header — hidden rather than
-   unmounted, so a half-written commit message survives. */
-.window.aside-hidden .aside {
+   unmounted, so a half-written commit message survives. Alone in the
+   column, the bottom dock takes all of it. */
+.window.aside-hidden .aside-right {
   display: none;
+}
+.window.aside-hidden .aside-bottom {
+  flex: 1;
+  max-height: none;
 }
 
 /* Leaving `display: none` restarts the animation, so showing the panel
@@ -25,8 +55,11 @@
     transform: translateX(12px);
   }
 }
-.aside {
-  animation: aside-in 0.18s ease-out;
+@keyframes aside-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .aside {
@@ -44,6 +77,10 @@
 
 /* The panel says which one it is, since nothing else does any more: it is
    chosen in the chat header and opens over here. */
+.aside-close {
+  margin-left: auto;
+}
+
 .aside-title {
   display: flex;
   align-items: center;

@@ -5,7 +5,7 @@ import {
   ChevronRight,
   FileText,
   Folder,
-  PanelRight,
+  GitCompareArrows,
   FolderTree,
   GitBranch,
   ListTodo,
@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { ChatMenu, type ChatMenuItem } from "./ChatMenu";
-import { ASIDE_PANELS } from "./asidePanels";
+import { PANES } from "./panes";
 import type { AsideTab } from "../types";
 import { IndexBadge } from "./IndexBadge";
 import { Markdown } from "./Markdown";
@@ -355,7 +355,7 @@ function ToolRun({ run, live }: { run: Run; live: boolean }) {
 }
 
 type Props = {
-  /** Whether the side panel is showing; the header's button shows and hides it. */
+  /** Whether Changes is showing; the header's button shows and hides it, and only it. */
   asideOpen?: boolean;
   /** Writes the conversation out as a file. One entry of the header's "…" menu. */
   onExport?: () => void;
@@ -412,7 +412,7 @@ export function ChatPanel({
   // can be done to the conversation itself.
   const menu: ChatMenuItem[] = [
     ...(onOpenPanel
-      ? ASIDE_PANELS.map(({ id, label, icon: Icon }) => ({
+      ? PANES.map(({ id, label, icon: Icon }) => ({
           id,
           label,
           icon: <Icon size={14} />,
@@ -462,11 +462,11 @@ export function ChatPanel({
             <button
               type="button"
               className={`iconbtn aside-button${asideOpen ? " on" : ""}`}
-              title={asideOpen ? "Hide panel" : "Show panel"}
+              title={asideOpen ? "Hide changes" : "Show changes"}
               aria-pressed={asideOpen}
               onClick={onToggleAside}
             >
-              <PanelRight size={15} />
+              <GitCompareArrows size={15} />
             </button>
           )}
         </div>

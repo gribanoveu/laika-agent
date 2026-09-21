@@ -38,6 +38,7 @@ afterAll(() => {
 
 const { useSkills } = await import("../hooks/useSkills");
 const { useRules } = await import("../hooks/useRules");
+const { RulesList, SkillsList } = await import("../components/panes");
 const { AsidePanel } = await import("../components/AsidePanel");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
@@ -95,19 +96,41 @@ describe("useSkills", () => {
   });
 });
 
+describe("the side panel", () => {
+  const ctx = (active: boolean) => ({
+    active,
+    workspace: "/repo",
+    onNotify: () => {},
+    mcp: { view: null, error: null, onToggle: () => {}, onEdit: () => {} },
+    hooks: { view: null, error: null, onEdit: () => {} },
+    plan: { plan: null, checklist: [], onEdit: () => {}, locked: false },
+  });
+
+  test("a pane reads its own data, and only while the panel is on screen", async () => {
+    const { rerender } = render(<AsidePanel tab="skills" dock="right" ctx={ctx(false)} onClose={() => {}} />);
+    await settle();
+    expect(calls).toEqual([]);
+
+    rerender(<AsidePanel tab="skills" dock="right" ctx={ctx(true)} onClose={() => {}} />);
+    await settle();
+    expect(calls).toEqual(["skills_list"]);
+    expect(screen.getByText("release")).toBeTruthy();
+  });
+
+  test("either dock closes from its own heading", () => {
+    let closed = 0;
+    const { rerender } = render(<AsidePanel tab="files" dock="right" ctx={ctx(true)} onClose={() => closed++} />);
+    fireEvent.click(screen.getByTitle("Close panel"));
+    rerender(<AsidePanel tab="files" dock="bottom" ctx={ctx(true)} onClose={() => closed++} />);
+    fireEvent.click(screen.getByTitle("Close panel"));
+    expect(closed).toBe(2);
+  });
+});
+
 describe("the skills tab", () => {
   const panel = (view: SkillsView | null, onSkillToggle = (_: string, __: boolean) => {}) =>
     render(
-      <AsidePanel
-        rules={[]}
-        rulesError={null}
-        onRuleToggle={() => {}}
-        tab="skills"
-        onNotify={() => {}}
-        skills={view}
-        skillsError={null}
-        onSkillToggle={onSkillToggle}
-      />,
+      <SkillsList view={view} error={null} onToggle={onSkillToggle} />,
     );
 
   test("lists the skills with their switches and counts the ones on", () => {
@@ -170,16 +193,7 @@ describe("useRules", () => {
 describe("the rules tab", () => {
   const panel = (rules: RuleListItem[], onRuleToggle = (_: string, __: boolean) => {}) =>
     render(
-      <AsidePanel
-        tab="rules"
-        onNotify={() => {}}
-        skills={null}
-        skillsError={null}
-        onSkillToggle={() => {}}
-        rules={rules}
-        rulesError={null}
-        onRuleToggle={onRuleToggle}
-      />,
+      <RulesList rules={rules} error={null} onToggle={onRuleToggle} />,
     );
 
   test("a file shows its size, its text on expand, and a switch keyed by path", () => {

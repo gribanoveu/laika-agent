@@ -28,8 +28,20 @@
   background: var(--text-dim);
 }
 
+/* Between panels stacked vertically: the same gap and grip, turned. */
+.panel-resize-handle.axis-y {
+  width: auto;
+  height: 10px;
+  margin: -10px 0;
+  cursor: row-resize;
+}
+.panel-resize-handle.axis-y::after {
+  width: 28px;
+  height: 3px;
+}
+
 /* Width animates when a panel collapses, never while the pointer drives it. */
 body.is-resizing .sidebar,
-body.is-resizing .aside {
+body.is-resizing .dock-column {
   transition: none;
 }

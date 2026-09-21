@@ -38,7 +38,7 @@ afterAll(() => {
 });
 
 const { useMcp } = await import("../hooks/useMcp");
-const { AsidePanel } = await import("../components/AsidePanel");
+const { McpList } = await import("../components/panes");
 const { ConfigFileEditor } = await import("../components/ConfigFileEditor");
 const McpConfig = (props: { view: McpView; error: string | null; onSave: (text: string) => Promise<boolean>; onClose: () => void }) => (
   <ConfigFileEditor label="MCP configuration" text={props.view.text} note="" error={props.error} onSave={props.onSave} onClose={props.onClose} />
@@ -100,24 +100,7 @@ describe("useMcp", () => {
 describe("the MCP tab", () => {
   const panel = (view: McpView, onEdit = () => {}, onToggle = (_: string, __: boolean) => {}) =>
     render(
-      <AsidePanel
-        tab="mcp"
-        onNotify={() => {}}
-        mcp={view}
-        mcpError={null}
-        onMcpToggle={onToggle}
-        onMcpEdit={onEdit}
-        skills={null}
-        skillsError={null}
-        onSkillToggle={() => {}}
-        rules={[]}
-        rulesError={null}
-        onRuleToggle={() => {}}
-        plan={null}
-        checklist={[]}
-        onPlanEdit={() => {}}
-        planLocked={false}
-      />,
+      <McpList view={view} error={null} onToggle={onToggle} onEdit={onEdit} />,
     );
 
   test("lists the servers, and one that cannot start says why and has no switch", () => {

@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
 import { AsidePanel } from "./components/AsidePanel";
+import { PANES, type Dock, type PaneContext } from "./components/panes";
 import { Modal } from "./components/Modal";
 import { Settings } from "./components/Settings";
 import { ToolLog } from "./components/ToolLog";
@@ -16,11 +17,8 @@ import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
-import { useSkills } from "./hooks/useSkills";
 import { useMcp } from "./hooks/useMcp";
 import { useHooks } from "./hooks/useHooks";
-import { useProcesses } from "./hooks/useProcesses";
-import { useRules } from "./hooks/useRules";
 import { useToolLog } from "./hooks/useToolLog";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
@@ -47,6 +45,13 @@ const dragOrMaximize = (e: React.MouseEvent) => {
   else startWindowDrag();
 };
 
+/** A stored pane id, if it still opens in `dock` — a pane may have moved docks since it was stored. */
+const isPaneIn =
+  (dock: Dock) =>
+  (value: unknown): value is AsideTab =>
+    isAsideTab(value) && PANES.find((p) => p.id === value)?.dock === dock;
+const isBottomTab = (value: unknown): value is AsideTab | null => value === null || isPaneIn("bottom")(value);
+
 /** What "Implement in Agent mode" says on the user's behalf. Shown in the transcript like anything they type. */
 const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in order.";
 
@@ -55,7 +60,11 @@ export default function App() {
   const [collapsed, setCollapsed] = useStoredState("atlas-sidebar-collapsed", false, isBoolean);
   // Hidden until the chat header's button asks for it.
   const [asideHidden, setAsideHidden] = useStoredState("atlas-aside-hidden", true, isBoolean);
-  const [tab, setTab] = useStoredState<AsideTab>("atlas-aside-tab", "changes", isAsideTab);
+  const [tab, setTab] = useStoredState<AsideTab>("atlas-aside-tab", "changes", isPaneIn("right"));
+  // The strip under the chat: closed when null.
+  const [bottomTab, setBottomTab] = useStoredState<AsideTab | null>("atlas-bottom-tab", null, isBottomTab);
+  // On screen in either dock: what decides whether a pane's data is read.
+  const shown = (pane: AsideTab) => (tab === pane && !asideHidden) || bottomTab === pane;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [mcpEditing, setMcpEditing] = useState(false);
@@ -68,8 +77,6 @@ export default function App() {
   const toast = useToast();
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
-  const skills = useSkills(tab === "skills" && !asideHidden);
-  const rules = useRules(tab === "rules" && !asideHidden, workspace.path);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -79,9 +86,8 @@ export default function App() {
   useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
-  const mcp = useMcp((tab === "mcp" && !asideHidden) || mcpEditing || settingsOpen, agent.turn.status);
-  const hooks = useHooks((tab === "hooks" && !asideHidden) || hooksEditing || settingsOpen);
-  const processes = useProcesses(tab === "terminal" && !asideHidden);
+  const mcp = useMcp(shown("mcp") || mcpEditing || settingsOpen, agent.turn.status);
+  const hooks = useHooks(shown("hooks") || hooksEditing || settingsOpen);
   const llm = useLlmSettings();
   const theme = useTheme();
   const fontSize = useChatFontSize();
@@ -91,19 +97,32 @@ export default function App() {
       collapse: () => setCollapsed(true),
       expand: () => setCollapsed(false),
     },
+    // Dragged shut, it is closed; it reopens only from the menu.
+    bottom: { collapsed: false, collapse: () => setBottomTab(null), expand: () => {} },
   });
 
   // Narrow window: the sidebar falls back to its rail and the side panel
   // hides, rather than both squeezing the chat. Widening again does not bring
   // the side panel back — it opens only when asked for.
   useNarrowCollapse("(max-width: 760px)", setCollapsed);
-  const hideAsideWhenNarrow = useCallback((narrow: boolean) => narrow && setAsideHidden(true), [setAsideHidden]);
+  const hideAsideWhenNarrow = useCallback(
+    (narrow: boolean) => {
+      if (!narrow) return;
+      setAsideHidden(true);
+      setBottomTab(null);
+    },
+    [setAsideHidden, setBottomTab],
+  );
   useNarrowCollapse("(max-width: 900px)", hideAsideWhenNarrow);
 
-  // Every panel opens the same way: pick it in the header's "⋮", and the side
-  // panel shows it. Which one that was is remembered, so the button beside the
-  // menu shows and hides what is already open — Changes until asked otherwise.
+  // The header's button is Changes' own: it opens Changes over whatever the
+  // "⋮" put there, and hides only Changes. Every other pane opens from the menu.
+  const changesShown = tab === "changes" && !asideHidden;
+
+  // Every panel opens the same way: pick it in the header's "⋮", and the dock
+  // it belongs to shows it.
   const openTab = (next: AsideTab) => {
+    if (PANES.find((p) => p.id === next)?.dock === "bottom") return setBottomTab(next);
     setTab(next);
     setAsideHidden(false);
   };
@@ -186,13 +205,38 @@ export default function App() {
     agent.send(IMPLEMENT_PLAN);
   };
 
+  // What every pane is drawn from, whichever dock it sits in.
+  const panes: Omit<PaneContext, "active"> = {
+    workspace: workspace.path,
+    onNotify: toast.show,
+    mcp: {
+      view: mcp.view,
+      error: mcpEditing ? null : mcp.error,
+      onToggle: mcp.setEnabled,
+      onEdit: () => setMcpEditing(true),
+    },
+    hooks: {
+      view: hooks.view,
+      error: hooksEditing ? null : hooks.error,
+      onEdit: () => setHooksEditing(true),
+    },
+    plan: {
+      plan: agent.plan,
+      checklist: agent.checklist,
+      onEdit: agent.editPlan,
+      onImplement: conversation.value === "plan" ? implement : undefined,
+      locked: agent.turn.status === "running",
+    },
+  };
+
   return (
     <div
-      className={`window${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}`}
+      className={`window${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}${bottomTab ? "" : " bottom-closed"}`}
       style={
         {
           "--sidebar-width": `${panels.widths.sidebar}px`,
           "--aside-width": `${panels.widths.aside}px`,
+          "--bottom-height": `${panels.widths.bottom}px`,
         } as React.CSSProperties
       }
     >
@@ -234,8 +278,8 @@ export default function App() {
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
             onNewChat={newChat}
-            asideOpen={!asideHidden}
-            onToggleAside={() => setAsideHidden((v) => !v)}
+            asideOpen={changesShown}
+            onToggleAside={() => (changesShown ? setAsideHidden(true) : openTab("changes"))}
             onOpenPanel={openTab}
             onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}
@@ -261,7 +305,7 @@ export default function App() {
           />
         </main>
 
-        {!asideHidden && (
+        {(!asideHidden || bottomTab) && (
           <PanelResizeHandle
             invert
             ariaLabel="Resize the side panel"
@@ -270,31 +314,36 @@ export default function App() {
           />
         )}
 
-        <AsidePanel
-          tab={tab}
-          onNotify={toast.show}
-          mcp={mcp.view}
-          mcpError={mcpEditing ? null : mcp.error}
-          onMcpToggle={mcp.setEnabled}
-          onMcpEdit={() => setMcpEditing(true)}
-          hooks={hooks.view}
-          hooksError={hooksEditing ? null : hooks.error}
-          onHooksEdit={() => setHooksEditing(true)}
-          processes={processes.processes}
-          processesError={processes.error}
-          onProcessStop={processes.stop}
-          skills={skills.view}
-          skillsError={skills.error}
-          onSkillToggle={skills.setEnabled}
-          rules={rules.rules}
-          rulesError={rules.error}
-          onRuleToggle={rules.setEnabled}
-          plan={agent.plan}
-          checklist={agent.checklist}
-          onPlanEdit={agent.editPlan}
-          onImplement={conversation.value === "plan" ? implement : undefined}
-          planLocked={agent.turn.status === "running"}
-        />
+        {/* The column right of the chat: the pane from the header's button on
+            top, the bottom dock under it. Either may be closed; the column
+            goes when both are. */}
+        <div className="dock-column">
+          <AsidePanel
+            tab={tab}
+            dock="right"
+            ctx={{ ...panes, active: !asideHidden }}
+            onClose={() => setAsideHidden(true)}
+          />
+          {bottomTab && (
+            <>
+              {!asideHidden && (
+                <PanelResizeHandle
+                  axis="y"
+                  invert
+                  ariaLabel="Resize the bottom panel"
+                  onResize={panels.resizeBottomBy}
+                  onResizeEnd={panels.endResize}
+                />
+              )}
+              <AsidePanel
+                tab={bottomTab}
+                dock="bottom"
+                ctx={{ ...panes, active: true }}
+                onClose={() => setBottomTab(null)}
+              />
+            </>
+          )}
+        </div>
       </div>
 
       <Modal title="Settings" wide open={settingsOpen} onClose={() => setSettingsOpen(false)}>
