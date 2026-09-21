@@ -113,7 +113,7 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-bottom">
-        <GettingStarted onAction={onOnboardingAction} />
+        <GettingStarted onAction={onOnboardingAction} onOpenSettings={onOpenSettings} />
         <div className="user-wrap" ref={userWrap}>
           <button
             type="button"

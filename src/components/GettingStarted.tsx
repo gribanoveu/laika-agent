@@ -5,28 +5,35 @@ import "./GettingStarted.css";
 const KEY = "atlas-cli-getting-started-skipped";
 
 // Onboarding copy is UI text, not backend data — it lives with the component.
-const CARDS: { title: string; text: string; action: string; tab: AsideTab | null }[] = [
+// `target` is a pane to open, or the settings dialog — it opens on Models.
+const CARDS: { title: string; text: string; action: string; target: AsideTab | "settings" }[] = [
   {
-    title: "Configure git",
-    text: "Set up git so changes made in the chat can be committed.",
-    action: "Configure git →",
-    tab: null,
+    title: "Add a provider",
+    text: "Connect an LLM provider and pick a model: the agent has nothing to answer with until then.",
+    action: "Add a provider →",
+    target: "settings",
   },
   {
     title: "Connect MCP",
     text: "Connect MCP servers for docs, git and whatever else the agent should reach.",
     action: "Open MCP settings →",
-    tab: "mcp",
+    target: "mcp",
   },
   {
     title: "Stage and commit",
     text: "Stage what the agent changed and commit it from the panel on the right.",
     action: "Open Changes panel →",
-    tab: "changes",
+    target: "changes",
   },
 ];
 
-export function GettingStarted({ onAction }: { onAction: (tab: AsideTab) => void }) {
+export function GettingStarted({
+  onAction,
+  onOpenSettings,
+}: {
+  onAction: (tab: AsideTab) => void;
+  onOpenSettings: () => void;
+}) {
   const [index, setIndex] = useState(0);
   const [skipped, setSkipped] = useState(() => localStorage.getItem(KEY) === "1");
 
@@ -54,7 +61,7 @@ export function GettingStarted({ onAction }: { onAction: (tab: AsideTab) => void
         <button
           className="gs-card-action"
           type="button"
-          onClick={() => card.tab && onAction(card.tab)}
+          onClick={() => (card.target === "settings" ? onOpenSettings() : onAction(card.target))}
         >
           {card.action}
         </button>
