@@ -274,6 +274,28 @@ mod tests {
     use super::*;
     use crate::testing::temp_dir;
 
+    /// The reads ride in the approval checkpoint through the webview, where
+    /// every JSON number is a double. What comes back must still vouch for
+    /// the file it was taken from, or an approved edit is refused as stale.
+    #[test]
+    fn reads_survive_the_trip_through_javascript() {
+        fn as_js(value: serde_json::Value) -> serde_json::Value {
+            use serde_json::Value;
+            match value {
+                Value::Number(n) => n.as_f64().map(Value::from).unwrap_or(Value::Null),
+                Value::Array(items) => Value::Array(items.into_iter().map(as_js).collect()),
+                Value::Object(map) => Value::Object(map.into_iter().map(|(k, v)| (k, as_js(v))).collect()),
+                other => other,
+            }
+        }
+        let mut reads = ReadFiles::default();
+        reads.record("AGENTS.md", "| Skill | Когда |", true);
+
+        let back: ReadFiles =
+            serde_json::from_value(as_js(serde_json::to_value(&reads).unwrap())).unwrap();
+        assert_eq!(back.check("AGENTS.md", "| Skill | Когда |", true), Ok(()));
+    }
+
     /// Adding a variant without listing it in `ALL` would silently shrink every
     /// other test in this file to a subset of the enum.
     #[test]
@@ -1138,11 +1160,14 @@ pub struct ReadFiles {
     seen: std::collections::HashMap<String, FileRead>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileRead {
     /// Of the whole file as it was on disk, not of the slice returned.
-    hash: u64,
+    /// A string, not a `u64`: the checkpoint crosses the webview during an
+    /// approval, and a JSON number there is a JS double — it comes back rounded
+    /// and every approved write reads as "changed on disk".
+    hash: String,
     /// Whether the agent has seen all of it. A partial read is enough to place
     /// an anchored edit — the anchor's uniqueness and this hash cover the rest
     /// — but not to replace the file wholesale: overwriting 500 lines having
@@ -1203,11 +1228,11 @@ impl ReadFiles {
 /// Not persisted anywhere, so a non-cryptographic hash with no stability
 /// guarantee across releases is enough. It detects an edit made behind the
 /// agent's back, not a forgery.
-fn hash(content: &str) -> u64 {
+fn hash(content: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     content.hash(&mut hasher);
-    hasher.finish()
+    format!("{:016x}", hasher.finish())
 }
 
 /// One anchored replacement. `old` must occur exactly once in the file's
