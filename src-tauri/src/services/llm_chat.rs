@@ -354,6 +354,37 @@ pub fn resume(
     run(turn, state, checkpoint.event_seq, Some((calls, decisions)))
 }
 
+/// How a turn hands back: its last round's result, and the history the next
+/// message is sent with.
+///
+/// A turn stopped with calls requested but not all run would leave requests
+/// with no results after them, which the provider refuses on the next
+/// message. Each gets a result saying it did not run — which is also what the
+/// model should know about it.
+///
+/// The last round's text closes the history. A round is added to the history
+/// only once its calls are about to run, and no exit here is past that point
+/// — a turn stopped right after a round keeps what the round said, not the
+/// calls it never ran.
+fn ended(mut state: State, result: ChatStreamResult) -> ChatDone {
+    if let Some(asked) = state.history.iter().rposition(|m| m.role == LlmRole::Assistant && !m.tool_calls.is_empty()) {
+        let answered: Vec<&str> = state.history[asked + 1..].iter().filter_map(|m| m.tool_call_id.as_deref()).collect();
+        let unrun: Vec<String> = state.history[asked]
+            .tool_calls
+            .iter()
+            .filter(|call| !answered.contains(&call.id.as_str()))
+            .map(|call| call.id.clone())
+            .collect();
+        for id in unrun {
+            state.history.push(tool_message(&id, "Not run: the user stopped the turn before this call.".to_string()));
+        }
+    }
+    if !result.text.is_empty() {
+        state.history.push(LlmMessage::assistant(result.text.clone()));
+    }
+    ChatDone { result, todos: state.todos, history: state.history }
+}
+
 /// The loop both entry points run.
 ///
 /// `resume` carries a round whose calls are already known and already decided;
@@ -378,10 +409,7 @@ fn run(
         // Checkpoint one. Before the ceiling check as well, so a turn the user
         // stopped reports as cancelled rather than as having run out of rounds.
         if (turn.cancelled)() {
-            return Ok(ChatStreamOutcome::Cancelled(ChatDone {
-                result: ChatStreamResult::default(),
-                todos: state.todos,
-            }));
+            return Ok(ChatStreamOutcome::Cancelled(ended(state, ChatStreamResult::default())));
         }
         if state.round >= MAX_TOOL_ITERATIONS as u32 || state.budget_used >= MAX_TOOL_BUDGET {
             return Err(TurnError::Exhausted {
@@ -419,10 +447,7 @@ fn run(
                 Some(result) => result,
                 // Cancelled during a retry wait.
                 None => {
-                    return Ok(ChatStreamOutcome::Cancelled(ChatDone {
-                        result: ChatStreamResult::default(),
-                        todos: state.todos,
-                    }));
+                    return Ok(ChatStreamOutcome::Cancelled(ended(state, ChatStreamResult::default())));
                 }
             };
 
@@ -451,10 +476,7 @@ fn run(
             // so a stop that landed as the round finished pre-empts the write
             // that round asked for — not merely the model's next sentence.
             if (turn.cancelled)() {
-                return Ok(ChatStreamOutcome::Cancelled(ChatDone {
-                    result,
-                    todos: state.todos,
-                }));
+                return Ok(ChatStreamOutcome::Cancelled(ended(state, result)));
             }
 
             if result.tool_calls.is_empty() {
@@ -481,10 +503,7 @@ fn run(
                     None
                 };
                 if waiting.is_empty() && refused.is_none() {
-                    return Ok(ChatStreamOutcome::Done(ChatDone {
-                        result,
-                        todos: state.todos,
-                    }));
+                    return Ok(ChatStreamOutcome::Done(ended(state, result)));
                 }
                 state.history.push(LlmMessage {
                     role: LlmRole::Assistant,
@@ -2276,11 +2295,11 @@ mod tests {
     fn a_stop_as_the_round_finishes_pre_empts_its_tool_calls() {
         let h = harness(
             "loop-cancel-mid",
-            vec![asks(vec![wants(
-                "w1",
-                "createDirectory",
-                r#"{"path":"never"}"#,
-            )])],
+            vec![Step::Reply(ChatStreamResult {
+                text: "making it".to_string(),
+                tool_calls: vec![wants("w1", "createDirectory", r#"{"path":"never"}"#)],
+                ..Default::default()
+            })],
         );
         // Poll 1 is the top of the round; poll 2 is the provider's own
         // cancellation callback; poll 3 is the checkpoint after it returns.
@@ -2288,8 +2307,17 @@ mod tests {
 
         let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
 
-        assert!(matches!(outcome.expect("stops"), ChatStreamOutcome::Cancelled(_)));
+        let ChatStreamOutcome::Cancelled(done) = outcome.expect("stops") else {
+            panic!("not cancelled")
+        };
         assert!(!h.root.join("never").exists(), "the call was pre-empted");
+        // A request for tools with no results after it is refused by the
+        // provider on the next message: the unrun call gets one saying so.
+        let shape: Vec<(LlmRole, Option<&str>)> =
+            done.history.iter().map(|m| (m.role, m.tool_call_id.as_deref())).collect();
+        assert_eq!(shape, [(LlmRole::User, None), (LlmRole::Assistant, None), (LlmRole::Tool, Some("w1"))]);
+        assert!(done.history[2].content.as_deref().is_some_and(|c| c.starts_with("Not run")));
+        assert_eq!(done.history[1].content.as_deref(), Some("making it"), "what the round said is kept, once");
         assert!(
             !payloads(&h.events()).iter().any(|p| p.starts_with("toolCall:")),
             "and was never even announced"
@@ -3017,7 +3045,25 @@ mod tests {
 
         let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("rename one to two")], vec![]));
 
-        assert!(matches!(outcome.expect("finishes"), ChatStreamOutcome::Done(_)));
+        let ChatStreamOutcome::Done(done) = outcome.expect("finishes") else {
+            panic!("not done")
+        };
+        // What the next message is sent with: the calls and what they
+        // returned, not only the answer.
+        let shape: Vec<(LlmRole, usize)> = done.history.iter().map(|m| (m.role, m.tool_calls.len())).collect();
+        assert_eq!(
+            shape,
+            [
+                (LlmRole::User, 0),
+                (LlmRole::Assistant, 1),
+                (LlmRole::Tool, 0),
+                (LlmRole::Assistant, 1),
+                (LlmRole::Tool, 0),
+                (LlmRole::Assistant, 0),
+            ]
+        );
+        assert_eq!(done.history[2].content.as_deref().map(|c| c.starts_with("All 1 lines:")), Some(true));
+        assert_eq!(done.history.last().and_then(|m| m.content.as_deref()), Some("renamed it"));
         assert_eq!(
             std::fs::read_to_string(h.root.join("lib.rs")).unwrap(),
             "fn two() {}\n"

@@ -38,6 +38,14 @@ pub struct ChatDone {
     #[serde(flatten)]
     pub result: ChatStreamResult,
     pub todos: Vec<Task>,
+    /// The conversation as the turn left it — every call and result, the
+    /// answer last — for the window to send with the next message. Without
+    /// it the next turn sees only the answers, and anything the model read but
+    /// did not repeat in one is gone.
+    ///
+    /// Always valid to send on: a turn stopped between a round and its calls
+    /// keeps what that round said, not the calls it never ran.
+    pub history: Vec<LlmMessage>,
 }
 
 /// A whole round paused, unexecuted — and the entire state needed to continue.

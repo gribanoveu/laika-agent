@@ -52,6 +52,21 @@ describe("branching", () => {
     expect([...branchPoints(three, history).keys()]).toEqual(["u2"]);
   });
 
+  /// A turn keeps its own user messages in the history — a Stop hook's reply,
+  /// a note typed mid-turn — which have no bubble. They are passed over, not
+  /// taken for where a summary begins.
+  test("messages a turn added itself do not hide the bubbles before them", () => {
+    const history = [
+      said("user", "first"),
+      said("assistant", "one"),
+      said("user", "second"),
+      said("user", "[A Stop hook did not let the turn end yet. It said:]\nrun the tests"),
+      said("assistant", "two"),
+    ];
+
+    expect(branchPoints(blocks, history)).toEqual(new Map([["u1", 2], ["u0", 0]]));
+  });
+
   /// Only a bubble can start one.
   test("an id that is not a user message is refused", () => {
     const history = [said("user", "first"), said("assistant", "one"), said("user", "second")];

@@ -63,6 +63,8 @@ export type TurnResult = {
   toolCalls?: LlmToolCall[];
   truncated: boolean;
   todos: Task[];
+  /** The conversation as the turn left it, calls and results included — what the next message is sent with. */
+  history: LlmMessage[];
 };
 
 export type Outcome =

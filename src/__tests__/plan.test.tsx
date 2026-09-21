@@ -20,7 +20,7 @@ mock.module("@tauri-apps/api/core", () => ({
     calls.push({ command, args });
     if (command === "chat_start") {
       for (const event of during) emit({ ...event, turnId: args.turnId as string });
-      return Promise.resolve({ status: "done", value: { text: "", truncated: false, todos: [] } });
+      return Promise.resolve({ status: "done", value: { text: "", truncated: false, todos: [], history: args.messages } });
     }
     if (command === "chat_load") return Promise.resolve(record);
     return Promise.resolve(null);

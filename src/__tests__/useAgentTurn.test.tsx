@@ -12,7 +12,9 @@ const results: Record<string, unknown> = {};
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
-    const result = results[command];
+    const answer = results[command];
+    // A function answers from what was sent, as the backend does.
+    const result = typeof answer === "function" ? answer(args) : answer;
     // Tauri rejects with the command's error string.
     return result instanceof Error ? Promise.reject(result.message) : Promise.resolve(result ?? null);
   },
@@ -29,9 +31,10 @@ afterAll(() => {
 
 const { useAgentTurn } = await import("../hooks/useAgentTurn");
 
-const done = (text: string) => ({
+/** A turn that answers `text`: its history is what was sent, then the answer. */
+const done = (text: string) => (args: Record<string, unknown>) => ({
   status: "done",
-  value: { text, truncated: false, todos: [] },
+  value: { text, truncated: false, todos: [], history: [...(args.messages as unknown[]), { role: "assistant", content: text }] },
 });
 
 afterEach(() => {
@@ -340,7 +343,10 @@ describe("branching", () => {
   /// The checklist kept is the latest one, and part of it may be work done
   /// after the branch point.
   test("the branch starts without the checklist", async () => {
-    results.chat_start = { status: "done", value: { text: "ok", truncated: false, todos: [{ id: "1", title: "later", status: "completed" }] } };
+    results.chat_start = (args: Record<string, unknown>) => ({
+      status: "done",
+      value: { text: "ok", truncated: false, todos: [{ id: "1", title: "later", status: "completed" }], history: args.messages },
+    });
     const { result } = renderHook(() => useAgentTurn());
     await act(async () => {
       await result.current.send("first");
@@ -476,5 +482,35 @@ describe("a turn that fails to start", () => {
     expect(result.current.turn.status).toBe("done");
     const notice = result.current.turn.blocks.find((b) => b.kind === "notice");
     expect(notice && "text" in notice && notice.text).toBe("The turn failed: provider said 401");
+  });
+});
+
+describe("what the next message is sent with", () => {
+  /// The model answers a follow-up from what it read, not from what it
+  /// happened to repeat in its answer.
+  test("the turn's calls and results, not only its answer", async () => {
+    const read = [
+      { role: "assistant", content: null, toolCalls: [{ id: "r1", name: "readFile", arguments: '{"path":"a.rs"}' }] },
+      { role: "tool", content: "All 1 lines:\nfn one() {}", toolCallId: "r1" },
+    ];
+    results.chat_start = (args: Record<string, unknown>) => ({
+      status: "done",
+      value: { text: "read it", truncated: false, todos: [], history: [...(args.messages as unknown[]), ...read, { role: "assistant", content: "read it" }] },
+    });
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.send("read a.rs");
+    });
+    await act(async () => {
+      await result.current.send("and now?");
+    });
+
+    const second = calls.filter((call) => call.command === "chat_start")[1];
+    expect(second?.args.messages).toEqual([
+      { role: "user", content: "read a.rs" },
+      ...read,
+      { role: "assistant", content: "read it" },
+      { role: "user", content: "and now?" },
+    ]);
   });
 });

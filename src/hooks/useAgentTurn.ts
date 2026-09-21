@@ -93,13 +93,9 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     setTurn((state) => acceptOutcome(state, outcome));
     if (outcome.status !== "pendingApproval") {
       keepTodos(outcome.value.todos);
-      // The assistant's answer joins the history, so the next turn sees it.
-      if (outcome.value.text) {
-        history.current = [
-          ...history.current,
-          { role: "assistant", content: outcome.value.text },
-        ];
-      }
+      // The turn's own history, calls and results included: the next
+      // message is sent with what the model read, not only what it answered.
+      history.current = outcome.value.history;
       subscribed.current?.();
       subscribed.current = null;
     }
