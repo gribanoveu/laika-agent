@@ -4,7 +4,7 @@ import { diffWords, parsePatch } from "diff";
 export type DiffPart = { text: string; changed: boolean };
 
 export type DiffRow =
-  | { kind: "hunk"; text: string }
+  | { kind: "file" | "hunk"; text: string }
   | { kind: "context" | "add" | "del"; oldNo: number | null; newNo: number | null; parts: DiffPart[] };
 
 /**
@@ -17,39 +17,43 @@ export type DiffRow =
  */
 export function diffRows(unified: string): DiffRow[] {
   const rows: DiffRow[] = [];
-  for (const hunk of hunks(unified)) {
-    rows.push({ kind: "hunk", text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@` });
-    let oldNo = hunk.oldStart;
-    let newNo = hunk.newStart;
-    const lines = hunk.lines.filter((line) => !line.startsWith("\\"));
-    for (let i = 0; i < lines.length; ) {
-      if (lines[i][0] === " ") {
-        rows.push({ kind: "context", oldNo: oldNo++, newNo: newNo++, parts: whole(lines[i++]) });
-        continue;
+  for (const patch of patches(unified)) {
+    // A diff of several files names each; a single file's has no header.
+    if (patch.newFileName) rows.push({ kind: "file", text: patch.newFileName.replace(/^b\//, "") });
+    for (const hunk of patch.hunks) {
+      rows.push({ kind: "hunk", text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@` });
+      let oldNo = hunk.oldStart;
+      let newNo = hunk.newStart;
+      const lines = hunk.lines.filter((line) => !line.startsWith("\\"));
+      for (let i = 0; i < lines.length; ) {
+        if (lines[i][0] === " ") {
+          rows.push({ kind: "context", oldNo: oldNo++, newNo: newNo++, parts: whole(lines[i++]) });
+          continue;
+        }
+        const dels: string[] = [];
+        const adds: string[] = [];
+        while (i < lines.length && lines[i][0] === "-") dels.push(lines[i++].slice(1));
+        while (i < lines.length && lines[i][0] === "+") adds.push(lines[i++].slice(1));
+        const pairs = dels.map((del, k) => (k < adds.length ? diffWords(del, adds[k]) : null));
+        dels.forEach((del, k) => {
+          const words = pairs[k];
+          rows.push({
+            kind: "del",
+            oldNo: oldNo++,
+            newNo: null,
+            parts: words ? words.filter((w) => !w.added).map((w) => ({ text: w.value, changed: !!w.removed })) : [{ text: del, changed: false }],
+          });
+        });
+        adds.forEach((add, k) => {
+          const words = pairs[k];
+          rows.push({
+            kind: "add",
+            oldNo: null,
+            newNo: newNo++,
+            parts: words ? words.filter((w) => !w.removed).map((w) => ({ text: w.value, changed: !!w.added })) : [{ text: add, changed: false }],
+          });
+        });
       }
-      const dels: string[] = [];
-      const adds: string[] = [];
-      while (i < lines.length && lines[i][0] === "-") dels.push(lines[i++].slice(1));
-      while (i < lines.length && lines[i][0] === "+") adds.push(lines[i++].slice(1));
-      const pairs = dels.map((del, k) => (k < adds.length ? diffWords(del, adds[k]) : null));
-      dels.forEach((del, k) => {
-        const words = pairs[k];
-        rows.push({
-          kind: "del",
-          oldNo: oldNo++,
-          newNo: null,
-          parts: words ? words.filter((w) => !w.added).map((w) => ({ text: w.value, changed: !!w.removed })) : [{ text: del, changed: false }],
-        });
-      });
-      adds.forEach((add, k) => {
-        const words = pairs[k];
-        rows.push({
-          kind: "add",
-          oldNo: null,
-          newNo: newNo++,
-          parts: words ? words.filter((w) => !w.removed).map((w) => ({ text: w.value, changed: !!w.added })) : [{ text: add, changed: false }],
-        });
-      });
     }
   }
   return rows;
@@ -58,14 +62,15 @@ export function diffRows(unified: string): DiffRow[] {
 const whole = (line: string): DiffPart[] => [{ text: line.slice(1), changed: false }];
 
 /**
- * The diff's hunks. A diff cut short for size ends in a hunk shorter than its
- * header says, which the parser refuses — that hunk is dropped rather than the
- * whole diff, and the caller already says the rest is not shown.
+ * The diff's files, each with its hunks. A diff cut short for size ends in a
+ * hunk shorter than its header says, which the parser refuses — that hunk is
+ * dropped rather than the whole diff, and the caller already says the rest is
+ * not shown.
  */
-function hunks(unified: string) {
+function patches(unified: string) {
   for (let text = unified; text; text = text.slice(0, Math.max(0, text.lastIndexOf("\n@@")))) {
     try {
-      return parsePatch(text)[0]?.hunks ?? [];
+      return parsePatch(text);
     } catch {
       // Try again without the last hunk.
     }

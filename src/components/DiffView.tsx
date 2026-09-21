@@ -18,8 +18,8 @@ export function DiffView({ unified }: { unified: string }) {
   return (
     <div className="diff-view">
       {rows.map((row, i) =>
-        row.kind === "hunk" ? (
-          <div key={i} className="diff-row diff-hunk">
+        !("parts" in row) ? (
+          <div key={i} className={`diff-row diff-${row.kind}`}>
             {row.text}
           </div>
         ) : (

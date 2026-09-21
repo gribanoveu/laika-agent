@@ -262,6 +262,35 @@ describe("what each call shows", () => {
     expect(shown).toMatchObject({ name: "Mkdir", arg: "src/new", detail: "" });
   });
 
+  test("a directory diff counts its files and draws each under a header", () => {
+    const shown = describeTool(
+      tool({
+        name: "gitDiff",
+        arguments: '{"path":"src"}',
+        result: {
+          path: "src",
+          label: "index → working tree",
+          truncated: false,
+          files: [
+            { path: "src/a.rs", isBinary: false, diff: { linesAdded: 1, linesRemoved: 1, unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" } },
+            { path: "src/logo.png", isBinary: true, diff: { linesAdded: 0, linesRemoved: 0, unifiedDiff: "" } },
+            { path: "src/c.rs", isBinary: false, diff: { linesAdded: 2, linesRemoved: 0, unifiedDiff: "@@ -0,0 +1,2 @@\n+x\n+y\n" } },
+          ],
+        },
+      }),
+    );
+    expect(shown).toMatchObject({ name: "Diff", arg: "src", meta: "3 files +3 -1", diff: true });
+    expect(shown.detail).toBe("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n--- a/src/c.rs\n+++ b/src/c.rs\n@@ -0,0 +1,2 @@\n+x\n+y\n");
+  });
+
+  test("a command says how long it took next to how it ended", () => {
+    const ran = (durationMs: number) =>
+      describeTool(tool({ name: "runCommand", arguments: '{"command":"make"}', result: { stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs } })).meta;
+    expect(ran(2345)).toBe("exit 0 · 2.3 s");
+    expect(ran(40)).toBe("exit 0 · 40 ms");
+    expect(ran(0)).toBe("exit 0");
+  });
+
   test("a command shows its exit code", () => {
     const shown = describeTool(
       tool({

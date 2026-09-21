@@ -6,8 +6,8 @@ import { diffRows, type DiffRow } from "../lib/diffRows";
 
 const lines = (rows: DiffRow[]) =>
   rows.map((row) =>
-    row.kind === "hunk"
-      ? row.text
+    !("parts" in row)
+      ? `${row.kind === "file" ? "## " : ""}${row.text}`
       : `${row.oldNo ?? "."} ${row.newNo ?? "."} ${row.kind} ${row.parts.map((p) => (p.changed ? `[${p.text}]` : p.text)).join("")}`,
   );
 
@@ -35,6 +35,13 @@ describe("rows of a diff", () => {
   test("a diff cut short keeps the hunks that are whole", () => {
     const rows = diffRows("@@ -1 +1 @@\n-a\n+b\n@@ -20,3 +20,3 @@\n x\n-y\n");
     expect(lines(rows)).toEqual(["@@ -1,1 +1,1 @@", "1 . del [a]", ". 1 add [b]"]);
+  });
+
+  /// A directory's diff: each file under its own name, numbered from its own
+  /// hunks.
+  test("several files each start with their name", () => {
+    const rows = diffRows("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-one\n+two\n--- a/b.rs\n+++ b/b.rs\n@@ -3,0 +4 @@\n+new\n");
+    expect(lines(rows)).toEqual(["## a.rs", "@@ -1,1 +1,1 @@", "1 . del [one]", ". 1 add [two]", "## b.rs", "@@ -4,0 +4,1 @@", ". 4 add new"]);
   });
 
   test("text that is not a diff gives no rows", () => {

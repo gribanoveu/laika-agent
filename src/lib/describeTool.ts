@@ -171,6 +171,23 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
     }
 
     case "gitDiff": {
+      // A directory: every changed file, each under its own header.
+      if (Array.isArray(result.files)) {
+        const files = result.files as Json[];
+        const added = files.reduce((n, f) => n + (num(asObject(f.diff).linesAdded) ?? 0), 0);
+        const removed = files.reduce((n, f) => n + (num(asObject(f.diff).linesRemoved) ?? 0), 0);
+        return {
+          name,
+          arg: str(args.path) ?? str(result.path) ?? "",
+          meta: `${files.length}${result.truncated ? "+" : ""} ${files.length === 1 ? "file" : "files"} +${added} -${removed}`,
+          detail: files
+            .map((f) => [str(f.path) ?? "", str(asObject(f.diff).unifiedDiff) ?? ""] as const)
+            .filter(([, unified]) => unified)
+            .map(([path, unified]) => `--- a/${path}\n+++ b/${path}\n${unified}`)
+            .join(""),
+          diff: true,
+        };
+      }
       const diff = asObject(result.diff);
       const added = num(diff.linesAdded);
       return {
@@ -243,7 +260,9 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         // Two different facts, and a reader needs to tell them apart: a killed
         // command has no exit code at all, and calling that "exit 0" would read
         // as success.
-        meta: result.timedOut ? "timed out" : code === undefined ? undefined : `exit ${code}`,
+        meta: [result.timedOut ? "timed out" : code === undefined ? undefined : `exit ${code}`, took(num(result.durationMs))]
+          .filter(Boolean)
+          .join(" · ") || undefined,
         // While it runs there is only what has streamed in; once it settles the
         // captured output is authoritative — and shorter, being truncated in
         // the middle rather than cut off wherever the turn ended.
@@ -344,6 +363,12 @@ function grepDetail(matches: Json[]): string {
       return out.join("\n");
     })
     .join("\n\n");
+}
+
+/** `2.3 s`, `40 ms`; nothing when the time is not known. */
+function took(ms: number | undefined): string | undefined {
+  if (!ms) return undefined;
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 function primaryArgument(wireName: string, args: Json): string {
