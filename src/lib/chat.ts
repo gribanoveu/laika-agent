@@ -475,11 +475,14 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
 
 // ---------------------------------------------------------------- MCP servers
 
+/** Mirrors `domain::mcp::McpToolInfo`: one tool a running server offers. */
+export type McpToolInfo = { name: string; description: string };
+
 /** Mirrors `domain::mcp::McpServerState`: what the server's process is doing. */
 export type McpServerState =
   | { state: "notStarted" }
   | { state: "starting" }
-  | { state: "running"; tools: number }
+  | { state: "running"; tools: McpToolInfo[] }
   | { state: "exited"; error: string }
   | { state: "failed"; error: string };
 
@@ -503,6 +506,12 @@ export async function mcpConfig(): Promise<McpView> {
 export async function saveMcpConfig(text: string): Promise<McpView> {
   requireBackend();
   return invoke<McpView>("mcp_config_save", { text });
+}
+
+/** Starts the server if it is not running, so the tab can show its tools without an Agent turn. */
+export async function connectMcpServer(name: string): Promise<McpView> {
+  requireBackend();
+  return invoke<McpView>("mcp_server_connect", { name });
 }
 
 export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<McpView> {

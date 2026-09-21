@@ -213,6 +213,7 @@ export default function App() {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
       onToggle: mcp.setEnabled,
+      onOpen: mcp.connect,
       onEdit: () => setMcpEditing(true),
     },
     hooks: {

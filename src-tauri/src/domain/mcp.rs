@@ -88,13 +88,21 @@ pub enum McpServerState {
     #[default]
     NotStarted,
     Starting,
-    Running { tools: usize },
+    Running { tools: Vec<McpToolInfo> },
     /// It was running and stopped; the next call to it starts it again.
     Exited { error: String },
     /// It never started. Not retried turn after turn — a server that hangs
     /// on start would cost every turn its timeout — until its entry changes
     /// or it is switched off and on.
     Failed { error: String },
+}
+
+/// One tool a running server offers, as the tab lists it. The schema is
+/// the model's business, not the tab's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Error)]

@@ -58,6 +58,8 @@ export type McpListProps = {
   view: McpView | null;
   error: string | null;
   onToggle: (name: string, enabled: boolean) => void;
+  /** Opening a server's row starts it, so the row can list its tools. */
+  onOpen: (name: string) => void;
   /** Opens the configuration editor. */
   onEdit: () => void;
 };
@@ -91,11 +93,14 @@ function mcpItems(view: McpView | null): PanelItem[] {
 function mcpState(state: McpServerState): Partial<PanelItem> {
   switch (state.state) {
     case "notStarted":
-      return { meta: "Starts with the next Agent turn" };
+      return { meta: "Open this row to start it and see its tools" };
     case "starting":
-      return { status: { label: "starting", tone: "off" } };
+      return { status: { label: "starting", tone: "off" }, meta: "Asking it for its tools" };
     case "running":
-      return { status: { label: `${state.tools} ${state.tools === 1 ? "tool" : "tools"}`, tone: "ok" } };
+      return {
+        status: { label: `${state.tools.length} ${state.tools.length === 1 ? "tool" : "tools"}`, tone: "ok" },
+        rows: state.tools.map((tool) => ({ name: tool.name, desc: tool.description })),
+      };
     case "exited":
       return { status: { label: "exited", tone: "warn" }, meta: "Restarts with the next call", note: state.error };
     case "failed":
@@ -103,7 +108,7 @@ function mcpState(state: McpServerState): Partial<PanelItem> {
   }
 }
 
-export function McpList({ view, error, onToggle, onEdit }: McpListProps) {
+export function McpList({ view, error, onToggle, onOpen, onEdit }: McpListProps) {
   const items = mcpItems(view);
   return (
     <>
@@ -115,6 +120,7 @@ export function McpList({ view, error, onToggle, onEdit }: McpListProps) {
         addLabel={items.length ? "Edit servers" : "Add MCP server"}
         onAdd={onEdit}
         onToggle={onToggle}
+        onOpen={onOpen}
       />
       {error && <div className="empty">{error}</div>}
     </>

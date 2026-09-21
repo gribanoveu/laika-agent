@@ -3,13 +3,19 @@ import { ChevronRight, Plus } from "lucide-react";
 import type { PanelItem } from "../types";
 import "./ItemList.css";
 
-function Item({ item, onToggle }: { item: PanelItem; onToggle?: (id: string, enabled: boolean) => void }) {
+function Item({ item, onToggle, onOpen }: { item: PanelItem; onToggle?: (id: string, enabled: boolean) => void; onOpen?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const enabled = item.enabled ?? false;
 
   return (
     <div className={`item${open ? " open" : ""}`}>
-      <div className="item-head" onClick={() => setOpen((v) => !v)}>
+      <div
+        className="item-head"
+        onClick={() => {
+          if (!open) onOpen?.(item.id);
+          setOpen((v) => !v);
+        }}
+      >
         <span className={`item-ico ${item.kind}`}>{item.badge}</span>
         <div className="item-body">
           <div className="item-title">
@@ -76,9 +82,11 @@ type Props = {
   onAdd?: () => void;
   /** Without it the items have no switch: the list cannot change what it shows. */
   onToggle?: (id: string, enabled: boolean) => void;
+  /** Called when a row is expanded, for details that are fetched rather than held. */
+  onOpen?: (id: string) => void;
 };
 
-export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd, onToggle }: Props) {
+export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd, onToggle, onOpen }: Props) {
   return (
     <div className="panel-section">
       <div className="section-label">
@@ -87,7 +95,7 @@ export function ItemList({ label, count, items, emptyLabel, addLabel, onAdd, onT
       </div>
       {items.length === 0 && <div className="empty">{emptyLabel}</div>}
       {items.map((item) => (
-        <Item key={item.id} item={item} onToggle={onToggle} />
+        <Item key={item.id} item={item} onToggle={onToggle} onOpen={onOpen} />
       ))}
       {addLabel && (
         <button className="add-btn" type="button" onClick={onAdd}>

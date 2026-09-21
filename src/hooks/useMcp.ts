@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { mcpConfig, saveMcpConfig, setMcpServerEnabled, type McpView } from "../lib/chat";
+import { connectMcpServer, mcpConfig, saveMcpConfig, setMcpServerEnabled, type McpView } from "../lib/chat";
 
 /**
  * The MCP configuration, re-read whenever the tab or the editor opens: the
@@ -47,5 +47,20 @@ export function useMcp(visible: boolean, refreshKey?: unknown) {
     }
   }, [reload]);
 
-  return { view, error, save, setEnabled };
+  /**
+   * Starts one server to list its tools, for a row the user just opened.
+   * The row says "starting" meanwhile: a first `npx` run takes seconds.
+   */
+  const connect = useCallback(async (name: string) => {
+    setView((v) => v && { ...v, servers: v.servers.map((s) => (s.name === name && s.state.state === "notStarted" ? { ...s, state: { state: "starting" } } : s)) });
+    try {
+      setView(await connectMcpServer(name));
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+      await reload();
+    }
+  }, [reload]);
+
+  return { view, error, save, setEnabled, connect };
 }

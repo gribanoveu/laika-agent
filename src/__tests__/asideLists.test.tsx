@@ -101,7 +101,7 @@ describe("the side panel", () => {
     active,
     workspace: "/repo",
     onNotify: () => {},
-    mcp: { view: null, error: null, onToggle: () => {}, onEdit: () => {} },
+    mcp: { view: null, error: null, onToggle: () => {}, onOpen: () => {}, onEdit: () => {} },
     hooks: { view: null, error: null, onEdit: () => {} },
     plan: { plan: null, checklist: [], onEdit: () => {}, locked: false },
   });

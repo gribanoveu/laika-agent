@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 
 use crate::domain::mcp::{
-    items, ConnectedServer, McpCallResult, McpClient, McpConfig, McpError, McpServerConfig, McpServerState,
-    McpTool, McpTools,
+    items, ConnectedServer, McpCallResult, McpClient, McpConfig, McpError, McpServerConfig, McpServerState, McpTool,
+    McpToolInfo, McpTools,
 };
 
 /// Starts one server in a folder and completes its handshake — the stdio
@@ -123,6 +123,48 @@ impl McpServers {
         McpTools::new(servers)
     }
 
+    /// Starts one server now, on its own, and says what came of it — the
+    /// tab asks when the user opens a server's row, to see its tools
+    /// without spending an Agent turn on it. One already in the pool is
+    /// left alone and simply reported.
+    ///
+    /// A server the file does not let run (switched off, or with something
+    /// wrong in its entry) is not started: its row already says why.
+    pub fn connect(&self, name: &str, config: &McpConfig, cwd: &Path) -> McpServerState {
+        let Some(entry) = runnable(config).remove(name) else {
+            return McpServerState::NotStarted;
+        };
+        let start_now = {
+            let mut pool = lock(&self.pool);
+            if pool.cwd.as_deref() != Some(cwd) {
+                pool.slots.clear();
+                pool.cwd = Some(cwd.to_path_buf());
+            }
+            let known = pool.slots.get(name).is_some_and(|slot| slot.config == entry);
+            if !known {
+                pool.slots.insert(name.to_string(), Slot { config: entry.clone(), state: SlotState::Starting });
+            }
+            !known
+        };
+        if start_now {
+            // Nothing to stop it: the tab has no Stop for a server it asked
+            // to start, and the start bounded by the server's own timeout.
+            let started = self.start_one(&entry, cwd, &|| false);
+            let mut pool = lock(&self.pool);
+            match started {
+                Some(state) => {
+                    if let Some(slot) = pool.slots.get_mut(name) {
+                        slot.state = state;
+                    }
+                }
+                None => {
+                    pool.slots.remove(name);
+                }
+            }
+        }
+        self.state(name, &entry)
+    }
+
     /// `None` when the user's Stop cut the start short: that says nothing
     /// about the server, so it is not recorded as a failure.
     fn start_one(&self, config: &McpServerConfig, cwd: &Path, cancelled: &dyn Fn() -> bool) -> Option<SlotState> {
@@ -162,7 +204,12 @@ impl McpServers {
         };
         match &slot.state {
             SlotState::Starting => McpServerState::Starting,
-            SlotState::Running { server, tools } if server.is_alive() => McpServerState::Running { tools: tools.len() },
+            SlotState::Running { server, tools } if server.is_alive() => McpServerState::Running {
+                tools: tools
+                    .iter()
+                    .map(|t| McpToolInfo { name: t.name.clone(), description: t.description.clone() })
+                    .collect(),
+            },
             SlotState::Running { server, .. } => McpServerState::Exited {
                 error: lock(&server.last_error).clone().unwrap_or_else(|| "the MCP server exited".into()),
             },
@@ -254,7 +301,10 @@ mod tests {
 
     impl McpClient for Process {
         fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
-            Ok(vec![McpTool { name: "echo".into(), description: String::new(), input_schema: json!({"type": "object"}) }])
+            Ok(vec![
+                McpTool { name: "echo".into(), description: "Says it back".into(), input_schema: json!({"type": "object"}) },
+                McpTool { name: "crash".into(), description: "Dies".into(), input_schema: json!({"type": "object"}) },
+            ])
         }
         fn call_tool(&self, name: &str, _: Value, _: &dyn Fn() -> bool) -> Result<McpCallResult, McpError> {
             if name == "crash" {
@@ -315,7 +365,15 @@ mod tests {
         assert_eq!(call(&tools, "echo").unwrap(), "run 1");
         servers.for_turn(&config, &cwd(), NO);
         assert_eq!(starts.load(Ordering::SeqCst), 1);
-        assert_eq!(servers.state("a", &config.mcp_servers["a"]), McpServerState::Running { tools: 1 });
+        assert_eq!(
+            servers.state("a", &config.mcp_servers["a"]),
+            McpServerState::Running {
+                tools: vec![
+                    McpToolInfo { name: "echo".into(), description: "Says it back".into() },
+                    McpToolInfo { name: "crash".into(), description: "Dies".into() },
+                ]
+            },
+            "the tab lists every tool the server offers, not just how many");
     }
 
     /// The done-when of F-7.4d: the model gets the error, the call is not
@@ -378,13 +436,49 @@ mod tests {
         assert_eq!(starts.load(Ordering::SeqCst), 2, "tried again");
     }
 
+    /// The tab's own start: opening a server's row shows its tools, and
+    /// asking twice does not start it twice.
+    #[test]
+    fn connecting_starts_one_server_and_reports_what_it_offers() {
+        let (servers, starts) = servers();
+        let mut config = config(&[("a", "ok"), ("b", "ok")]);
+        config.mcp_servers.get_mut("b").unwrap().disabled = true;
+
+        let state = servers.connect("a", &config, &cwd());
+        assert_eq!(
+            state,
+            McpServerState::Running {
+                tools: vec![
+                    McpToolInfo { name: "echo".into(), description: "Says it back".into() },
+                    McpToolInfo { name: "crash".into(), description: "Dies".into() },
+                ]
+            }
+        );
+        assert_eq!(servers.connect("a", &config, &cwd()), state, "the same server, not a new one");
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        assert_eq!(servers.connect("b", &config, &cwd()), McpServerState::NotStarted, "switched off");
+        assert_eq!(starts.load(Ordering::SeqCst), 1, "and not started");
+    }
+
+    /// A server started from the tab is the one the next turn uses.
+    #[test]
+    fn a_turn_keeps_the_server_the_tab_started() {
+        let (servers, starts) = servers();
+        let config = config(&[("a", "ok")]);
+        servers.connect("a", &config, &cwd());
+        let tools = servers.for_turn(&config, &cwd(), NO);
+        assert_eq!(call(&tools, "echo").unwrap(), "run 1");
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn switched_off_broken_and_changed_entries_do_not_run() {
         let (servers, starts) = servers();
         let mut config = config(&[("a", "ok"), ("b", "ok"), ("c", "")]);
         config.mcp_servers.get_mut("b").unwrap().disabled = true;
         let tools = servers.for_turn(&config, &cwd(), NO);
-        assert_eq!(tools.definitions().len(), 1);
+        assert_eq!(tools.definitions().len(), 2, "a's two tools, and nothing from b or c");
         assert_eq!(starts.load(Ordering::SeqCst), 1, "only a");
 
         config.mcp_servers.get_mut("a").unwrap().args = vec!["--new".into()];
@@ -400,7 +494,7 @@ mod tests {
         config.mcp_servers.get_mut("a").unwrap().disabled = true;
         servers.prune(&config);
         let entry = &tools.get("mcp__a__echo").unwrap().client;
-        assert_eq!(Arc::strong_count(entry), 1, "held by this turn's tools alone");
+        assert_eq!(Arc::strong_count(entry), 2, "held by this turn's two tool entries alone, not by the pool");
         assert_eq!(servers.state("a", &config.mcp_servers["a"]), McpServerState::NotStarted);
     }
 

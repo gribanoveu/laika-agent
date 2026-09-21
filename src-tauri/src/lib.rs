@@ -95,6 +95,7 @@ pub fn run() {
             commands::mcp::mcp_config_get,
             commands::mcp::mcp_config_save,
             commands::mcp::mcp_server_set_enabled,
+            commands::mcp::mcp_server_connect,
             commands::hooks::hooks_config_get,
             commands::hooks::hooks_config_save,
             commands::processes::processes_list,

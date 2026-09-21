@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
+use crate::commands::chat::AgentState;
 use crate::domain::mcp::{self, McpConfig, McpServerItem};
 use crate::infra::mcp_config;
 use crate::services::mcp_servers::McpServers;
@@ -57,6 +58,29 @@ pub fn mcp_server_set_enabled(
     changed(mcp_config::set_enabled(&name, enabled).map_err(|e| e.to_string())?, &servers)
 }
 
+/// Starts one server now, without an Agent turn, so that opening its row in
+/// the tab shows what it offers — the user checking a server they just
+/// configured should not have to send a message first.
+///
+/// Off the event loop: a first `npx` run can take the server's whole
+/// timeout, and the tab stays answerable meanwhile.
+#[tauri::command]
+pub async fn mcp_server_connect(
+    name: String,
+    state: State<'_, Arc<AgentState>>,
+    servers: State<'_, Arc<McpServers>>,
+) -> Result<McpView, String> {
+    let workspace = state.workspace()?;
+    let servers = Arc::clone(&servers);
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = mcp_config::load().map_err(|e| e.to_string())?;
+        servers.connect(&name, &config, &workspace);
+        view(config, &servers)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,7 +104,7 @@ mod tests {
             let config = mcp_config::save_text(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap();
             let servers = McpServers::new(Arc::new(|_, _, _| Ok(Arc::new(Idle) as Arc<dyn McpClient>)));
             servers.for_turn(&config, &crate::testing::temp_dir("cmd-mcp-changed-root"), &|| false);
-            assert_eq!(view(config.clone(), &servers).unwrap().servers[0].state, McpServerState::Running { tools: 0 });
+            assert_eq!(view(config.clone(), &servers).unwrap().servers[0].state, McpServerState::Running { tools: vec![] });
 
             let off = mcp_config::set_enabled("a", false).unwrap();
             let shown = changed(off, &servers).unwrap();

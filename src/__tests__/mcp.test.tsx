@@ -23,6 +23,14 @@ mock.module("@tauri-apps/api/core", () => ({
       disk = { ...disk, text, servers: [{ name: "pasted", command: "npx x", enabled: true, error: null, state: { state: "notStarted" } }] };
       return Promise.resolve(structuredClone(disk));
     }
+    if (command === "mcp_server_connect") {
+      disk.servers = disk.servers.map((s) =>
+        s.name === args!.name
+          ? { ...s, state: { state: "running", tools: [{ name: "echo", description: "Says it back" }] } }
+          : s,
+      );
+      return Promise.resolve(structuredClone(disk));
+    }
     if (command === "mcp_server_set_enabled") {
       disk.servers = disk.servers.map((s) => (s.name === args!.name ? { ...s, enabled: args!.enabled as boolean } : s));
       return Promise.resolve(structuredClone(disk));
@@ -50,7 +58,12 @@ beforeEach(() => {
     path: "/home/.laika/mcp.json",
     text: '{\n  "mcpServers": {}\n}\n',
     servers: [
-      { name: "github", command: "npx -y server-github", enabled: true, error: null, state: { state: "running", tools: 3 } },
+      { name: "github", command: "npx -y server-github", enabled: true, error: null, state: { state: "running", tools: [
+        { name: "create_issue", description: "Opens an issue" },
+        { name: "search_code", description: "Searches code" },
+        { name: "get_file", description: "Reads a file" },
+      ] } },
+      { name: "idle", command: "npx -y server-idle", enabled: true, error: null, state: { state: "notStarted" } },
       { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet", state: { state: "notStarted" } },
     ],
   };
@@ -64,7 +77,7 @@ describe("useMcp", () => {
     expect(calls).toEqual([]);
     rerender({ visible: true });
     await settle();
-    expect(result.current.view?.servers.map((s) => s.name)).toEqual(["github", "remote"]);
+    expect(result.current.view?.servers.map((s) => s.name)).toEqual(["github", "idle", "remote"]);
   });
 
   test("a switch is what the backend saved", async () => {
@@ -73,6 +86,29 @@ describe("useMcp", () => {
     await act(() => result.current.setEnabled("github", false));
     expect(result.current.view?.servers[0].enabled).toBe(false);
     expect(calls).toContain("mcp_server_set_enabled");
+  });
+
+  test("opening a server's row starts it and its tools arrive", async () => {
+    const { result } = renderHook(() => useMcp(true));
+    await settle();
+    await act(() => result.current.connect("idle"));
+    expect(calls).toContain("mcp_server_connect");
+    expect(result.current.view?.servers[1].state).toEqual({
+      state: "running",
+      tools: [{ name: "echo", description: "Says it back" }],
+    });
+  });
+
+  test("a row that is already running keeps its tools while it answers", async () => {
+    const { result } = renderHook(() => useMcp(true));
+    await settle();
+    const before = structuredClone(disk.servers[0].state);
+    let answered: Promise<void> = Promise.resolve();
+    act(() => {
+      answered = result.current.connect("github");
+    });
+    expect(result.current.view?.servers[0].state).toEqual(before, "not blanked to \"starting\"");
+    await act(() => answered);
   });
 
   test("a turn starting or ending re-reads what the servers are doing", async () => {
@@ -98,9 +134,14 @@ describe("useMcp", () => {
 });
 
 describe("the MCP tab", () => {
-  const panel = (view: McpView, onEdit = () => {}, onToggle = (_: string, __: boolean) => {}) =>
+  const panel = (
+    view: McpView,
+    onEdit = () => {},
+    onToggle = (_: string, __: boolean) => {},
+    onOpen = (_: string) => {},
+  ) =>
     render(
-      <McpList view={view} error={null} onToggle={onToggle} onEdit={onEdit} />,
+      <McpList view={view} error={null} onToggle={onToggle} onOpen={onOpen} onEdit={onEdit} />,
     );
 
   test("lists the servers, and one that cannot start says why and has no switch", () => {
@@ -111,7 +152,7 @@ describe("the MCP tab", () => {
     expect(screen.getByText("won't start")).toBeTruthy();
     expect(screen.getByText("HTTP servers are not supported yet")).toBeTruthy();
     const switches = screen.getAllByRole("button", { pressed: true });
-    expect(switches).toHaveLength(1);
+    expect(switches).toHaveLength(2, "the two runnable servers; the HTTP one has no switch");
     fireEvent.click(switches[0]);
     expect(toggled).toEqual([["github", false]]);
   });
@@ -122,7 +163,7 @@ describe("the MCP tab", () => {
       ...disk,
       servers: [
         server,
-        { ...server, name: "one", state: { state: "running", tools: 1 } },
+        { ...server, name: "one", state: { state: "running", tools: [{ name: "echo", description: "Says it back" }] } },
         { ...server, name: "idle", state: { state: "notStarted" } },
         { ...server, name: "boot", state: { state: "starting" } },
         { ...server, name: "gone", state: { state: "exited", error: "exited with code 1" } },
@@ -132,13 +173,31 @@ describe("the MCP tab", () => {
     });
     expect(screen.getByText("3 tools")).toBeTruthy();
     expect(screen.getByText("1 tool")).toBeTruthy();
-    expect(screen.getByText("Starts with the next Agent turn")).toBeTruthy();
+    expect(screen.getByText("Open this row to start it and see its tools")).toBeTruthy();
     expect(screen.getByText("starting")).toBeTruthy();
     expect(screen.getByText("exited")).toBeTruthy();
     expect(screen.getByText("Restarts with the next call")).toBeTruthy();
     expect(screen.getByText("failed")).toBeTruthy();
     expect(screen.getByText("Switch off and on to try again")).toBeTruthy();
     expect(screen.queryByText("stale")).toBeNull();
+  });
+
+  test("opening a server that has not started asks for it, and only on the way open", () => {
+    const opened: string[] = [];
+    panel(disk, () => {}, () => {}, (name) => opened.push(name));
+    const row = screen.getByText("npx -y server-idle");
+    fireEvent.click(row);
+    expect(opened).toEqual(["idle"]);
+    fireEvent.click(row);
+    expect(opened).toEqual(["idle"], "closing it asks for nothing");
+  });
+
+  test("expanding a running server lists the tools it offers", () => {
+    panel(disk);
+    expect(screen.queryByText("create_issue")).toBeNull();
+    fireEvent.click(screen.getByText("npx -y server-github"));
+    expect(screen.getByText("create_issue").className).toBe("tname");
+    expect(screen.getByText("Searches code").className).toBe("tdesc");
   });
 
   test("the button opens the editor, and says add when there is nothing yet", () => {
