@@ -33,6 +33,7 @@ import {
   type ToolCallDecision,
   type ToolPreview,
 } from "../lib/chat";
+import { useStickToBottom } from "use-stick-to-bottom";
 import "./ChatPanel.css";
 
 const TOOL_ICON: Record<string, typeof FileText> = {
@@ -423,6 +424,15 @@ export function ChatPanel({
   // Under a finished answer only: mid-turn the plan is not written yet, and
   // after a stop or a failure it may be half of one.
   const planReady = onImplement && turn.status === "done" && groups[groups.length - 1]?.role === "agent";
+  // The thread follows the answer as it grows, until the user scrolls up to
+  // read; scrolling back to the end picks it up again.
+  const { scrollRef, contentRef, scrollToBottom } = useStickToBottom({ initial: "instant" });
+  // A new message, or another chat, is where the user is looking now —
+  // follow it even if they had scrolled away.
+  const lastUserId = turn.blocks.filter((block) => block.kind === "user").pop()?.id;
+  useEffect(() => {
+    void scrollToBottom("instant");
+  }, [lastUserId, scrollToBottom]);
   const name = workspace?.split("/").filter(Boolean).pop() ?? null;
 
   // The side panels first — they are what the menu is opened for — then what
@@ -489,50 +499,52 @@ export function ChatPanel({
         </div>
       </header>
 
-      <div className={`thread chat-text${groups.length === 0 ? " thread-empty" : ""}`}>
+      <div ref={scrollRef} className={`thread chat-text${groups.length === 0 ? " thread-empty" : ""}`}>
         {groups.length === 0 ? (
           <ChatEmptyState workspace={workspace} onOpenRepo={onOpenRepo} onNewChat={onNewChat} />
         ) : (
-          groups.map((turnGroup, index) => (
-            <div className="turn" key={index}>
-              {turnGroup.role !== "notice" && (
-                <div className={`role${turnGroup.role === "agent" ? " agent" : ""}`}>
-                  {turnGroup.role === "agent" ? "Agent" : "You"}
-                </div>
-              )}
-              {fold(turnGroup.blocks).map((block, at, items) =>
-                block.kind === "run" ? (
-                  <ToolRun
-                    key={block.id}
-                    run={block}
-                    // Only the work at the very end is under way; a run the
-                    // agent has already written past is finished.
-                    live={turn.status === "running" && index === groups.length - 1 && at === items.length - 1}
-                  />
-                ) : block.kind === "user" ? (
-                  <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
-                ) : (
-                  renderBlock(block, onDecide, block.id === streamingId)
-                ),
-              )}
-              {workedFooter(groups, index, turn)}
-            </div>
-          ))
-        )}
-        {turn.status === "running" && turn.runningSince !== null && (
-          <WorkingClock since={turn.runningSince} before={turnMessage(groups, groups.length - 1)?.workedMs ?? 0} />
-        )}
-        {planReady && (
-          <div className="plan-handoff">
-            <button type="button" className="btn btn-primary" onClick={onImplement}>
-              Implement in Agent mode
-            </button>
-            {onOpenPlan && (
-              <button type="button" className="btn btn-ghost" onClick={onOpenPlan}>
-                Review the plan
-              </button>
+          <div ref={contentRef}>
+            {groups.map((turnGroup, index) => (
+              <div className="turn" key={index}>
+                {turnGroup.role !== "notice" && (
+                  <div className={`role${turnGroup.role === "agent" ? " agent" : ""}`}>
+                    {turnGroup.role === "agent" ? "Agent" : "You"}
+                  </div>
+                )}
+                {fold(turnGroup.blocks).map((block, at, items) =>
+                  block.kind === "run" ? (
+                    <ToolRun
+                      key={block.id}
+                      run={block}
+                      // Only the work at the very end is under way; a run the
+                      // agent has already written past is finished.
+                      live={turn.status === "running" && index === groups.length - 1 && at === items.length - 1}
+                    />
+                  ) : block.kind === "user" ? (
+                    <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
+                  ) : (
+                    renderBlock(block, onDecide, block.id === streamingId)
+                  ),
+                )}
+                {workedFooter(groups, index, turn)}
+              </div>
+            ))}
+            {turn.status === "running" && turn.runningSince !== null && (
+              <WorkingClock since={turn.runningSince} before={turnMessage(groups, groups.length - 1)?.workedMs ?? 0} />
             )}
-            <span>Switches to Agent with the plan and the checklist.</span>
+            {planReady && (
+              <div className="plan-handoff">
+                <button type="button" className="btn btn-primary" onClick={onImplement}>
+                  Implement in Agent mode
+                </button>
+                {onOpenPlan && (
+                  <button type="button" className="btn btn-ghost" onClick={onOpenPlan}>
+                    Review the plan
+                  </button>
+                )}
+                <span>Switches to Agent with the plan and the checklist.</span>
+              </div>
+            )}
           </div>
         )}
       </div>
