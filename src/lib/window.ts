@@ -6,6 +6,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // of throwing, so the UI stays previewable in a browser.
 const inTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+// On macOS the window keeps its native frame with the title bar hidden
+// (tauri.macos.conf.json): the OS draws the traffic lights, the corners and the
+// edges a resize grabs — an undecorated window there leaves a pixel-thin edge.
+export const nativeFrame = inTauri() && navigator.userAgent.includes("Mac");
+
 export const minimizeWindow = () => inTauri() && getCurrentWindow().minimize();
 export const toggleMaximizeWindow = () => inTauri() && getCurrentWindow().toggleMaximize();
 export const closeWindow = () => inTauri() && getCurrentWindow().close();

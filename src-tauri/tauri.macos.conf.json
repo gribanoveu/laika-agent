@@ -1,0 +1,16 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Laika Agent",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 14, "y": 12 },
+        "width": 1180,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 520
+      }
+    ]
+  }
+}

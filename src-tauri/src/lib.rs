@@ -25,7 +25,15 @@ pub fn run() {
     // Saved on exit, applied when the window is created — so the window opens
     // where it was, not at the config's size and then jumping.
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    // Not the frame: that is the config's (tauri.macos.conf.json swaps it), and a
+    // restored one would outlive every change to it.
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::DECORATIONS,
+            )
+            .build(),
+    );
     builder
         .plugin(tauri_plugin_opener::init())
         // The folder picker. A file chooser is the platform's dialog, not one

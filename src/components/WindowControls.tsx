@@ -1,9 +1,10 @@
-import { closeWindow, minimizeWindow, toggleMaximizeWindow } from "../lib/window";
+import { closeWindow, minimizeWindow, nativeFrame, toggleMaximizeWindow } from "../lib/window";
 import "./WindowControls.css";
 
 export function WindowControls() {
   return (
-    <div className="window-controls">
+    // Under the native traffic lights the buttons only hold their place.
+    <div className={`window-controls${nativeFrame ? " native" : ""}`}>
       <button className="dot r" type="button" title="Close" aria-label="Close" onClick={closeWindow}>
         <svg viewBox="0 0 10 10" aria-hidden="true">
           <path d="M3 3l4 4M7 3l-4 4" />

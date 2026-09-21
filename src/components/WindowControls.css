@@ -39,3 +39,7 @@
 .window-controls:hover .dot svg {
   opacity: 1;
 }
+
+.window-controls.native {
+  visibility: hidden;
+}

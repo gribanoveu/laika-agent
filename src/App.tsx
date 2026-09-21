@@ -26,7 +26,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useChatFontSize } from "./hooks/useChatFontSize";
 import { useGitBranch } from "./hooks/useGitBranch";
 import { useToast } from "./hooks/useToast";
-import { startWindowDrag, toggleMaximizeWindow } from "./lib/window";
+import { nativeFrame, startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
@@ -262,7 +262,7 @@ export default function App() {
 
   return (
     <div
-      className={`window${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}${bottomTab ? "" : " bottom-closed"}`}
+      className={`window${nativeFrame ? " native-frame" : ""}${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}${bottomTab ? "" : " bottom-closed"}`}
       style={
         {
           "--sidebar-width": `${panels.widths.sidebar}px`,

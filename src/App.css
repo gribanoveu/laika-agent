@@ -9,6 +9,11 @@
   flex-direction: column;
   overflow: hidden;
 }
+/* The native frame draws its own corners and edge. */
+.window.native-frame {
+  border: 0;
+  border-radius: 0;
+}
 
 /* The window is undecorated — this bar is the only drag handle. */
 .titlebar {
@@ -24,6 +29,11 @@
   margin-left: 4px;
   font-size: var(--fs-sm);
   color: var(--text-faint);
+}
+/* Level with the native traffic lights, which sit above the bar's middle. */
+.window.native-frame .titlebar-title {
+  position: relative;
+  top: -5px;
 }
 .titlebar-title span {
   color: var(--text-dim);
