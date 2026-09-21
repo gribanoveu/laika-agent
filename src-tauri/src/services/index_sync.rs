@@ -32,6 +32,7 @@
 //!   reported in the finish event and the status; the keyword pass already
 //!   landed.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -64,7 +65,22 @@ pub struct RepoIndexer {
     options: ChunkBuildOptions,
     run: Mutex<RunState>,
     status: Mutex<IndexStatus>,
+    history: Mutex<Option<CommitHistory>>,
 }
+
+/// Recent commits with their messages embedded, as of one HEAD.
+struct CommitHistory {
+    head: String,
+    commits: Vec<(Vec<f32>, Vec<String>)>,
+}
+
+/// How far back history is read, and how many files a commit may touch
+/// and still say something about each of them.
+const HISTORY_COMMITS: usize = 300;
+const HISTORY_MAX_FILES: usize = 20;
+/// How many of the commits nearest a query count, and how near is near.
+const HISTORY_MATCHES: usize = 3;
+const HISTORY_MIN_SIMILARITY: f32 = 0.5;
 
 #[derive(Default)]
 struct RunState {
@@ -92,6 +108,7 @@ impl RepoIndexer {
             options,
             run: Mutex::new(RunState::default()),
             status: Mutex::new(status),
+            history: Mutex::new(None),
         })
     }
 
@@ -139,6 +156,50 @@ impl RepoIndexer {
         }
         let vector = self.provider.embed(&[query])?.into_iter().next().map(|e| e.0).unwrap_or_default();
         Ok(self.embeddings.search(&vector, top_k))
+    }
+
+    /// Files touched by the commits whose messages are nearest `query` in
+    /// meaning — at most a few commits, and only near ones. Empty outside a
+    /// repository, with nothing embedded, or when the model cannot be asked.
+    ///
+    /// The commits are read and embedded on the first search after HEAD
+    /// moves, not at sync.
+    // ponytail: rebuilt in the search that notices a new HEAD (a few hundred
+    // diffs); move it into `sync` if the first search after a commit shows it.
+    pub fn files_by_history(&self, query: &str) -> HashSet<String> {
+        if self.embeddings.is_empty() {
+            return HashSet::new();
+        }
+        let Some(head) = crate::infra::git_history::head(&self.root) else {
+            return HashSet::new();
+        };
+        let mut history = self.history.lock().unwrap_or_else(PoisonError::into_inner);
+        if history.as_ref().is_none_or(|h| h.head != head) {
+            let notes = crate::infra::git_history::recent_commits(&self.root, HISTORY_COMMITS, HISTORY_MAX_FILES);
+            let messages: Vec<&str> = notes.iter().map(|n| n.message.as_str()).collect();
+            let Ok(vectors) = self.provider.embed(&messages) else {
+                return HashSet::new();
+            };
+            let commits = vectors.into_iter().zip(notes).map(|(v, n)| (v.0, n.files)).collect();
+            *history = Some(CommitHistory { head, commits });
+        }
+        let Some(history) = history.as_ref() else {
+            return HashSet::new();
+        };
+        let Ok(query) = self.provider.embed(&[query]) else {
+            return HashSet::new();
+        };
+        let Some(query) = query.into_iter().next().map(|e| e.0) else {
+            return HashSet::new();
+        };
+        let mut near: Vec<(f32, &Vec<String>)> = history
+            .commits
+            .iter()
+            .map(|(vector, files)| (cosine(vector, &query), files))
+            .filter(|(similarity, _)| *similarity >= HISTORY_MIN_SIMILARITY)
+            .collect();
+        near.sort_by(|a, b| b.0.total_cmp(&a.0));
+        near.into_iter().take(HISTORY_MATCHES).flat_map(|(_, files)| files.iter().cloned()).collect()
     }
 
     fn run_once(&self, sink: &IndexEventSink) -> Result<(), RepoSyncError> {
@@ -220,6 +281,12 @@ impl Drop for Release<'_> {
             run.again = false;
         }
     }
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);
+    dot / (norm(a) * norm(b))
 }
 
 #[cfg(test)]

@@ -97,8 +97,8 @@ impl WorkspaceIndex {
     /// indexer: a turn keeps searching the folder it started in.
     pub fn searcher(&self) -> Option<CodeSearchFn> {
         let indexer = self.current()?;
-        Some(Arc::new(move |query, fts, top_k| {
-            code_search::search(&indexer, query, fts, top_k).map_err(|error| error.to_string())
+        Some(Arc::new(move |query, fts, top_k, include_docs| {
+            code_search::search(&indexer, query, fts, top_k, include_docs).map_err(|error| error.to_string())
         }))
     }
 
@@ -186,7 +186,7 @@ mod tests {
         index.open(&root, sink).unwrap();
         next_finish(&events);
 
-        let found = index.searcher().unwrap()("find_me_here", None, 5).unwrap();
+        let found = index.searcher().unwrap()("find_me_here", None, 5, false).unwrap();
 
         assert_eq!(found.matches[0].path, "a.rs");
     }

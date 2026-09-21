@@ -3108,7 +3108,7 @@ mod tests {
             "turn-search",
             vec![asks(vec![wants("s1", "semanticSearch", r#"{"query":"where sync lives"}"#)]), text("found it")],
         );
-        h.search = Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize| {
+        h.search = Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize, _: bool| {
             Ok(CodeSearchResult {
                 matches: vec![CodeMatch {
                     path: "src/sync.rs".into(),

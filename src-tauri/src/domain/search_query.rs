@@ -213,6 +213,24 @@ pub fn path_segment_matches(relative_path: &str, token: &str) -> bool {
     })
 }
 
+/// Folders whose files are documentation whatever they are written in —
+/// `src/docs/asciidoc/…/x.puml` is a diagram of the docs, not code.
+const DOC_DIRS: &[&str] = &["docs", "doc", "documentation", "wiki"];
+/// Prose by extension, wherever it lies: a README, a skill, a design note.
+const DOC_EXTENSIONS: &[&str] = &["md", "markdown", "mdx", "adoc", "asciidoc", "rst", "txt"];
+
+/// Whether a file is documentation rather than code, for leaving it out of a
+/// code search. By path, not by language: files without a parser of their
+/// own (`build.gradle`, `pom.xml`) are plain text to the indexer and code to
+/// everyone else.
+pub fn is_documentation(relative_path: &str) -> bool {
+    let lower = relative_path.to_ascii_lowercase();
+    let mut segments: Vec<&str> = lower.split('/').collect();
+    let file = segments.pop().unwrap_or_default();
+    let extension = file.rsplit_once('.').map(|(_, ext)| ext).unwrap_or_default();
+    DOC_EXTENSIONS.contains(&extension) || segments.iter().any(|dir| DOC_DIRS.contains(dir))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SearchMetaInput<'a> {
     pub match_count: usize,
@@ -304,6 +322,24 @@ pub fn looks_like_identifier(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documentation_is_a_docs_folder_or_prose_anywhere() {
+        for docs in [
+            "docs/01-vision.md",
+            "src/docs/asciidoc/sendToKalugaJob/sendToKalugaJob.puml",
+            "doc/releasing.md",
+            "README.md",
+            ".agents/skills/controller-tests/SKILL.md",
+            "notes/design.adoc",
+        ] {
+            assert!(is_documentation(docs), "{docs}");
+        }
+        // `scripts/docs` is a script called docs, not a folder of them.
+        for code in ["src/main/java/A.java", "build.gradle", "src/docs.rs", "docker/Dockerfile", "src/doc_parser/mod.rs", "scripts/docs"] {
+            assert!(!is_documentation(code), "{code}");
+        }
+    }
 
     // ---------------------------------------------------------- fts5_query
 

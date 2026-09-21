@@ -20,8 +20,8 @@ use crate::domain::chunk_index::{ChunkId, ChunkMetadata};
 use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchMeta};
 use crate::domain::repo_index::Language;
 use crate::domain::search_query::{
-    SearchMetaInput, extract_search_tokens, fts5_query, looks_like_identifier, path_segment_matches,
-    weak_search_hint,
+    SearchMetaInput, extract_search_tokens, fts5_query, is_documentation, looks_like_identifier,
+    path_segment_matches, weak_search_hint,
 };
 use crate::infra::index_store::IndexStoreError;
 use crate::services::chunk_text::resolve_chunk;
@@ -56,14 +56,35 @@ const PROSE_FACTOR: f32 = 0.75;
 /// says what the file is about better than any one passage of it.
 const PATH_BOOST: f32 = 1.5;
 
+/// A file changed by a commit whose message is near the query in meaning.
+/// Small on purpose: history is a hint about where to look, it says nothing
+/// about which passage answers — and in a repository with a few vague
+/// commits it says nothing at all, so it must not outvote the text.
+///
+/// Bench, 2026-09-21 (with `includeDocs` already in): MRR 0.564 at 1.0 and at
+/// 1.2, 0.560 at 1.5. History fired on 15 of 39 questions here and named the
+/// answer's file in 8; on docflow 10 of 20 and 3; on a 9-commit service 1 and
+/// 0. Neutral at this weight — kept for repositories whose commits describe
+/// the work; raise it only on a bench that shows a gain.
+const HISTORY_BOOST: f32 = 1.2;
+
+/// With documentation left out, how many more candidates each ranking brings
+/// in. In a repository whose docs outnumber its code the plain pool can be
+/// mostly prose, and dropping it would leave fewer matches than asked for.
+const WITHOUT_DOCS_SLACK: usize = 2;
+
 /// `fts`, when given, is what the word ranking searches instead of `query` —
 /// unless it has no searchable word in it, in which case `query` is: a model
 /// that asked for more precision must not lose the ranking for it.
+///
+/// `include_docs` false leaves documentation out (`is_documentation`); the
+/// hint then says how many matches that cost, so the model can ask again.
 pub fn search(
     indexer: &RepoIndexer,
     query: &str,
     fts: Option<&[String]>,
     top_k: usize,
+    include_docs: bool,
 ) -> Result<CodeSearchResult, IndexStoreError> {
     let top_k = top_k.clamp(1, MAX_TOP_K);
     let store = indexer.store();
@@ -76,7 +97,7 @@ pub fn search(
         }
     }
 
-    let candidates = top_k * CANDIDATES_PER_MATCH;
+    let candidates = top_k * CANDIDATES_PER_MATCH * if include_docs { 1 } else { WITHOUT_DOCS_SLACK };
     let lexical = match fts.and_then(|terms| fts5_query(&terms.join(" "))).or_else(|| fts5_query(query)) {
         Some(fts) => store.search_bm25(&fts, candidates)?.into_iter().map(|(id, _)| id).collect(),
         None => Vec::new(),
@@ -97,13 +118,14 @@ pub fn search(
         // load the model. Worth the same warning as a failed search.
         unavailable = indexer.status().embedding_error;
     }
+    let by_history = indexer.files_by_history(query);
     // Semantic first: a chunk both found is labelled by the more telling one.
     let mut fused = Vec::new();
     for (id, score, source) in
         fuse_rrf([(semantic, MatchSource::Semantic, 1.0), (lexical, MatchSource::Lexical, LEXICAL_WEIGHT)])
     {
         if let Some(chunk) = store.load_chunk(&id)? {
-            let score = score * weight(&chunk, &tokens);
+            let score = score * weight(&chunk, &tokens, &by_history);
             fused.push((chunk, score, source));
         }
     }
@@ -113,11 +135,16 @@ pub fn search(
 
     let mut seen = HashSet::new();
     let mut matches = Vec::with_capacity(top_k);
+    let mut docs_left_out = 0;
     for (chunk, source) in ranked {
         if matches.len() == top_k {
             break;
         }
         if !seen.insert(chunk.id.clone()) {
+            continue;
+        }
+        if !include_docs && is_documentation(&chunk.file_id.0) {
+            docs_left_out += 1;
             continue;
         }
         // Changed on disk since it was indexed: the watcher is on its way.
@@ -147,6 +174,19 @@ pub fn search(
         )),
         None => hint.map(str::to_string),
     };
+    // Said even beside another hint: it is the one thing a second search can
+    // change without rewording anything.
+    let hint = match (docs_left_out, hint) {
+        (0, hint) => hint,
+        (n, hint) => {
+            let docs = format!(
+                "{n} documentation {} {} left out; search again with includeDocs if the answer may be in the docs.",
+                if n == 1 { "match" } else { "matches" },
+                if n == 1 { "was" } else { "were" },
+            );
+            Some(hint.map_or(docs.clone(), |hint| format!("{hint} {docs}")))
+        }
+    };
     Ok(CodeSearchResult { matches, meta: SearchMeta { tiers_used, weak, hint } })
 }
 
@@ -166,10 +206,13 @@ fn names_in(query: &str, tokens: &[String]) -> Vec<String> {
 
 /// What a chunk's fused score is multiplied by, for what it is rather than
 /// what it says.
-fn weight(chunk: &ChunkMetadata, tokens: &[String]) -> f32 {
+fn weight(chunk: &ChunkMetadata, tokens: &[String], by_history: &HashSet<String>) -> f32 {
     let prose = matches!(chunk.language, Language::Markdown | Language::PlainText);
     let named = tokens.iter().any(|token| path_segment_matches(&chunk.file_id.0, token));
-    (if prose { PROSE_FACTOR } else { 1.0 }) * (if named { PATH_BOOST } else { 1.0 })
+    let changed = by_history.contains(&chunk.file_id.0);
+    (if prose { PROSE_FACTOR } else { 1.0 })
+        * (if named { PATH_BOOST } else { 1.0 })
+        * (if changed { HISTORY_BOOST } else { 1.0 })
 }
 
 /// Merges rankings by `Σ weight / (K + rank)` over the lists that hold a
@@ -266,7 +309,7 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "where is parse_config", None, 5).unwrap();
+        let result = search(&indexer, "where is parse_config", None, 5, true).unwrap();
 
         let first = &result.matches[0];
         assert_eq!((first.path.as_str(), first.source), ("config.rs", MatchSource::Symbol));
@@ -274,23 +317,126 @@ mod tests {
         assert_eq!(result.matches.iter().filter(|m| m.path == "config.rs").count(), 1, "listed twice");
     }
 
+    /// Documentation is out unless asked for, and the hint says what that
+    /// cost — the model's way to know a second search with it is worth making.
+    #[test]
+    fn documentation_is_left_out_unless_asked_for_and_the_hint_says_so() {
+        let indexer = indexed(
+            "search-docs",
+            &[
+                ("notes.md", "# Notes\n\nparse_config parse_config parse_config is called on start.\n"),
+                ("config.rs", "use std::fs;\n\nfn parse_config() {\n    todo!()\n}\n"),
+            ],
+            Arc::default(),
+        );
+
+        let code = search(&indexer, "where is parse_config called", None, 5, false).unwrap();
+        assert!(code.matches.iter().all(|m| m.path == "config.rs"), "{:?}", summary(&code));
+        let hint = code.meta.hint.unwrap_or_default();
+        assert!(hint.contains("1 documentation match was left out") && hint.contains("includeDocs"), "{hint}");
+
+        let all = search(&indexer, "where is parse_config called", None, 5, true).unwrap();
+        assert!(all.matches.iter().any(|m| m.path == "notes.md"), "{:?}", summary(&all));
+        assert!(!all.meta.hint.unwrap_or_default().contains("includeDocs"));
+    }
+
+    /// Prose that outranks the code on every measure fills the plain candidate
+    /// pool; left out, it must not leave the search empty-handed.
+    #[test]
+    fn documentation_crowding_the_candidates_does_not_crowd_out_the_code() {
+        let indexer = indexed(
+            "search-docs-crowd",
+            &[
+                ("a.md", "gizmo gizmo gizmo stuff\n"),
+                ("b.md", "gizmo gizmo gizmo stuff\n"),
+                ("c.md", "gizmo gizmo gizmo stuff\n"),
+                ("run.rs", "fn run() { gizmo }\n"),
+            ],
+            Arc::default(),
+        );
+
+        let result = search(&indexer, "gizmo stuff", None, 1, false).unwrap();
+
+        assert_eq!(summary(&result).first().map(|(name, _)| name.as_str()), Some("run"), "{:?}", summary(&result));
+    }
+
+    /// The nearest commits count, and no more than a few of them: a query
+    /// near everything is evidence about nothing.
+    #[test]
+    fn only_the_nearest_few_commits_count() {
+        let files = [("f1.rs", "gear"), ("f2.rs", "gear gear alpha"), ("f3.rs", "gear alpha"), ("f4.rs", "gear alpha beta")];
+        let indexer = indexed("search-history-near", &files.map(|(path, _)| (path, "fn x() {}\n")), Arc::default());
+        let repo = git2::Repository::init(indexer.root()).unwrap();
+        // Oldest first, so the newest commit is the least near.
+        for (path, message) in files {
+            commit_file(&repo, path, message);
+        }
+
+        let near = indexer.files_by_history("gear");
+
+        assert_eq!(near, HashSet::from(["f1.rs".to_string(), "f2.rs".to_string(), "f3.rs".to_string()]));
+    }
+
+    /// Commits one file at a time, so each commit touches exactly `path`.
+    fn commit_file(repo: &git2::Repository, path: &str, message: &str) {
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(path)).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("Test", "test@example.com").unwrap();
+        let parent: Vec<git2::Commit> = repo.head().ok().and_then(|h| h.peel_to_commit().ok()).into_iter().collect();
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents).unwrap();
+    }
+
+    /// A commit whose message is near the query points at the files it
+    /// touched, and those weigh a little more — only those, and only when
+    /// some commit is near.
+    #[test]
+    fn a_file_a_near_commit_touched_weighs_a_little_more() {
+        let indexer = indexed(
+            "search-history",
+            &[("a.rs", "fn a() { gear }\n"), ("b.rs", "fn b() { gear }\n")],
+            Arc::default(),
+        );
+        let repo = git2::Repository::init(indexer.root()).unwrap();
+        commit_file(&repo, "a.rs", "initial setup");
+        commit_file(&repo, "b.rs", "gear handling");
+
+        let near = indexer.files_by_history("gear");
+        assert_eq!(near, HashSet::from(["b.rs".to_string()]));
+        assert!(indexer.files_by_history("nothing like it").is_empty());
+
+        let ids = indexer.store().search_bm25(&fts5_query("gear").unwrap(), 5).unwrap();
+        let chunk_of = |path: &str| {
+            ids.iter().find_map(|(id, _)| indexer.store().load_chunk(id).unwrap().filter(|c| c.file_id.0 == path)).unwrap()
+        };
+        assert_eq!(weight(&chunk_of("b.rs"), &[], &near), HISTORY_BOOST);
+        assert_eq!(weight(&chunk_of("a.rs"), &[], &near), 1.0);
+
+        // A new commit is seen by the next search: history is read per HEAD.
+        fs::write(indexer.root().join("c.rs"), "fn c() {}\n").unwrap();
+        commit_file(&repo, "c.rs", "gear");
+        assert!(indexer.files_by_history("gear").contains("c.rs"));
+    }
+
     #[test]
     fn a_plain_word_is_not_taken_for_a_name() {
         let indexer = indexed("search-plain", &[("a.rs", "fn sync() {}\n")], Arc::default());
-        let result = search(&indexer, "how does sync work", None, 5).unwrap();
+        let result = search(&indexer, "how does sync work", None, 5, true).unwrap();
         assert!(result.matches.iter().all(|m| m.source != MatchSource::Symbol), "{:?}", summary(&result));
     }
 
     #[test]
     fn a_one_word_query_is_taken_for_a_name() {
         let indexer = indexed("search-one-word", &[("a.rs", "fn first() {}\n\nfn tokenize() {}\n")], Arc::default());
-        let result = search(&indexer, "tokenize", None, 5).unwrap();
+        let result = search(&indexer, "tokenize", None, 5, true).unwrap();
         // The chunk the declaration is in, not the file's first.
         let symbols: Vec<_> = summary(&result).into_iter().filter(|(_, s)| *s == MatchSource::Symbol).collect();
         assert_eq!(symbols, [("tokenize".to_string(), MatchSource::Symbol)]);
         assert_eq!((result.matches[0].start_line, result.matches[0].end_line), (3, 3));
         // In whatever case it was typed.
-        assert_eq!(search(&indexer, "TOKENIZE", None, 5).unwrap().matches[0].source, MatchSource::Symbol);
+        assert_eq!(search(&indexer, "TOKENIZE", None, 5, true).unwrap().matches[0].source, MatchSource::Symbol);
     }
 
     // --------------------------------------------------- words and meaning
@@ -303,12 +449,12 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "automobile", None, 1).unwrap();
+        let result = search(&indexer, "automobile", None, 1, true).unwrap();
 
         assert_eq!(summary(&result), [("start_car".to_string(), MatchSource::Semantic)]);
         assert!(result.meta.tiers_used.contains(&MatchSource::Semantic));
         // Found by words as well, it is still labelled by meaning.
-        let both = search(&indexer, "turn the key", None, 1).unwrap();
+        let both = search(&indexer, "turn the key", None, 1, true).unwrap();
         assert_eq!(summary(&both), [("start_car".to_string(), MatchSource::Semantic)]);
     }
 
@@ -364,7 +510,7 @@ mod tests {
         let meaning = indexer.search_meaning("automobile wheel", 2).unwrap();
         assert_eq!(indexer.store().load_chunk(&meaning[0].0).unwrap().unwrap().file_id.0, "y.rs", "set-up");
 
-        let result = search(&indexer, "automobile wheel", None, 2).unwrap();
+        let result = search(&indexer, "automobile wheel", None, 2, true).unwrap();
 
         assert_eq!(result.matches[0].path, "x.rs", "{:?}", summary(&result));
     }
@@ -379,7 +525,7 @@ mod tests {
                 &[(notes, "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    widget(gear);\n}\n")],
                 Arc::default(),
             );
-            let result = search(&indexer, "widget gear", None, 2).unwrap();
+            let result = search(&indexer, "widget gear", None, 2, true).unwrap();
             assert_eq!(result.matches[0].path, "turn.rs", "{notes}: {:?}", summary(&result));
         }
     }
@@ -393,7 +539,7 @@ mod tests {
             &[("notes.md", "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    spin();\n}\n")],
             Arc::default(),
         );
-        let result = search(&indexer, "widget gear", None, 2).unwrap();
+        let result = search(&indexer, "widget gear", None, 2, true).unwrap();
         assert_eq!(result.matches[0].path, "notes.md", "{:?}", summary(&result));
     }
 
@@ -405,7 +551,7 @@ mod tests {
             &[("other.rs", "fn run() {\n    gear(gear);\n}\n"), ("widget.rs", "fn run() {\n    gear();\n}\n")],
             Arc::default(),
         );
-        let result = search(&indexer, "widget gear", None, 2).unwrap();
+        let result = search(&indexer, "widget gear", None, 2, true).unwrap();
         assert_eq!(result.matches[0].path, "widget.rs", "{:?}", summary(&result));
     }
 
@@ -420,7 +566,7 @@ mod tests {
         );
         fs::write(indexer.root().join("a.rs"), "fn widget_ONE() {}\n").unwrap();
 
-        let result = search(&indexer, "widget", None, 5).unwrap();
+        let result = search(&indexer, "widget", None, 5, true).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -439,7 +585,7 @@ mod tests {
         fs::write(indexer.root().join("a.rs"), "fn changed() {}
 ").unwrap();
 
-        let result = search(&indexer, "calls to widget", None, 1).unwrap();
+        let result = search(&indexer, "calls to widget", None, 1, true).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -448,8 +594,8 @@ mod tests {
     fn the_number_asked_for_is_held_between_one_and_the_maximum() {
         let body: String = (0..60).map(|i| format!("fn gadget_{i}() {{ gadget }}\n")).collect();
         let indexer = indexed("search-limits", &[("a.rs", &body)], Arc::default());
-        assert_eq!(search(&indexer, "gadget", None, 0).unwrap().matches.len(), 1);
-        assert_eq!(search(&indexer, "gadget", None, 500).unwrap().matches.len(), MAX_TOP_K);
+        assert_eq!(search(&indexer, "gadget", None, 0, true).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "gadget", None, 500, true).unwrap().matches.len(), MAX_TOP_K);
     }
 
     // ------------------------------------------------ meaning unavailable
@@ -463,7 +609,7 @@ mod tests {
         model.fail.store(true, Ordering::SeqCst);
 
         // A plain word, so no name lookup: only words can find it.
-        let result = search(&indexer, "what does gizmo do", None, 5).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5, true).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(!result.meta.tiers_used.contains(&MatchSource::Semantic));
@@ -479,10 +625,10 @@ mod tests {
         model.fail.store(true, Ordering::SeqCst);
 
         let terms = ["gizmo".to_string()];
-        assert_eq!(search(&indexer, "the thing that starts up", Some(&terms), 5).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "the thing that starts up", Some(&terms), 5, true).unwrap().matches.len(), 1);
         // Nothing searchable in `fts`: the query's own words are used.
         let noise = ["!!".to_string()];
-        assert_eq!(search(&indexer, "what does gizmo do", Some(&noise), 5).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "what does gizmo do", Some(&noise), 5, true).unwrap().matches.len(), 1);
     }
 
     /// Never embedded because the model would not load: nothing to search by
@@ -492,7 +638,7 @@ mod tests {
         let model = Arc::new(FakeModel { fail: AtomicBool::new(true) });
         let indexer = indexed("search-no-model", &[("a.rs", "fn gizmo() {}\n")], model);
 
-        let result = search(&indexer, "what does gizmo do", None, 5).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5, true).unwrap();
 
         let hint = result.meta.hint.unwrap();
         assert!(hint.contains("unavailable") && !hint.contains("finished building"), "{hint}");

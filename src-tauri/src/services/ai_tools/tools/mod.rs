@@ -276,6 +276,7 @@ mod definition_tests {
                     fts: Some(vec!["sync".to_string()]),
                     top_k: Some(5),
                     preview: Some(true),
+                    include_docs: Some(true),
                 })],
             ),
             ToolName::WritePlan => (

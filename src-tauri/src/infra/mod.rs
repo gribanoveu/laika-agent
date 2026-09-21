@@ -23,4 +23,5 @@ pub mod hooks;
 pub mod background;
 pub mod git_aliases;
 pub mod git_head;
+pub mod git_history;
 pub mod recent_workspaces;

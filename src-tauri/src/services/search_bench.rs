@@ -149,9 +149,12 @@ fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, 
     // Timed as the tool calls it; ranked from a longer list, so that the
     // bench's own files, dropped below, do not take a place.
     let started = Instant::now();
-    code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K).unwrap();
+    // Documentation is searched when the answer is documentation — what a
+    // model asking that question sets `includeDocs` for.
+    let include_docs = query.answer == "docs";
+    code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K, include_docs).unwrap();
     let spent = started.elapsed();
-    let mut result = code_search::search(indexer, &query.q, None, 20).unwrap();
+    let mut result = code_search::search(indexer, &query.q, None, 20, include_docs).unwrap();
     result.matches.retain(|m| !is_bench(&m.path));
     result.matches.truncate(10);
     if std::env::var_os("SEARCH_BENCH_VERBOSE").is_some() {
@@ -205,7 +208,15 @@ fn search_bench() {
             );
             let mut tally = Tally::default();
             let mut spent = Duration::ZERO;
+            // How often history said anything, and how often it named the
+            // answer's file — what `HISTORY_*` in `index_sync` are tuned by.
+            let (mut history_fired, mut history_right) = (0, 0);
             for query in &repo.queries {
+                let near = indexer.files_by_history(&query.q);
+                if !near.is_empty() {
+                    history_fired += 1;
+                    history_right += usize::from(query.expect.iter().any(|e| near.iter().any(|path| e.file(path))));
+                }
                 let (file, decl, meaning, took) = ask(&indexer, query);
                 spent += took;
                 tally.add(file, decl);
@@ -225,6 +236,10 @@ fn search_bench() {
                 println!("  file#{:<2} decl#{:<2}{meaning:<26} [{}] {}", show(file), show(decl), query.lang, query.q);
             }
             println!("{}", tally.row(&repo.name));
+            println!(
+                "  history: {history_fired} of {} questions, the answer's file in {history_right}",
+                repo.queries.len()
+            );
             println!("  {:.1} ms a query", spent.as_secs_f64() * 1000.0 / repo.queries.len().max(1) as f64);
         }
         for (lang, tally) in &by_lang {

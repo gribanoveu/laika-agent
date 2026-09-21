@@ -20,7 +20,12 @@ pub fn semantic_search(args: &SemanticSearchArgs, deps: &ToolDeps) -> Result<Too
         .search
         .as_ref()
         .ok_or_else(|| ToolError::SearchUnavailable("this folder has no index".to_string()))?;
-    let result = search(&args.query, args.fts.as_deref(), args.top_k.unwrap_or(DEFAULT_TOP_K))
+    let result = search(
+        &args.query,
+        args.fts.as_deref(),
+        args.top_k.unwrap_or(DEFAULT_TOP_K),
+        args.include_docs == Some(true),
+    )
         .map_err(ToolError::SearchUnavailable)?;
     let limit = if args.preview == Some(true) { PREVIEW_CHARS } else { TEXT_CHARS };
     let matches = result
@@ -51,6 +56,7 @@ Each match gives the path, the line range readFile takes, the enclosing declarat
 Write the query as a sentence about the behaviour, and include any function, type or file names you know or can justify from the user's words. \
 Put the exact words that must appear in the code in fts. \
 Read the most promising one or two matches before searching again; a second search should use a name the first one taught you. \
+Documentation is left out unless you set includeDocs. \
 If meta.hint is present, follow it. Use grep instead when you need every occurrence of an exact string. \
 Returns at most {MAX_TOP_K} matches."
         ),
@@ -74,6 +80,10 @@ Returns at most {MAX_TOP_K} matches."
                 "preview": {
                     "type": ["boolean", "null"],
                     "description": "Longer text for every match. Leave unset unless you must compare several candidates verbatim; readFile reads one precisely."
+                },
+                "includeDocs": {
+                    "type": ["boolean", "null"],
+                    "description": "Search documentation too — docs folders, README, Markdown, AsciiDoc. Off by default, so code is not buried under prose that shares its words. Set it when the question is about documentation, design or how-to, or when meta.hint says documentation matches were left out."
                 }
             },
             "required": ["query"]
@@ -87,7 +97,7 @@ mod tests {
     use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchMeta};
     use std::sync::{Arc, Mutex};
 
-    type Asked = Arc<Mutex<Vec<(String, Option<Vec<String>>, usize)>>>;
+    type Asked = Arc<Mutex<Vec<(String, Option<Vec<String>>, usize, bool)>>>;
 
     /// Answers every search with one match carrying `text`, and records what
     /// it was asked.
@@ -96,8 +106,8 @@ mod tests {
         let record = Arc::clone(&asked);
         let text = text.to_string();
         let deps = ToolDeps {
-            search: Some(Arc::new(move |query: &str, fts: Option<&[String]>, top_k: usize| {
-                record.lock().unwrap().push((query.to_string(), fts.map(<[String]>::to_vec), top_k));
+            search: Some(Arc::new(move |query: &str, fts: Option<&[String]>, top_k: usize, include_docs: bool| {
+                record.lock().unwrap().push((query.to_string(), fts.map(<[String]>::to_vec), top_k, include_docs));
                 Ok(CodeSearchResult {
                     matches: vec![CodeMatch {
                         path: "a.rs".into(),
@@ -133,20 +143,23 @@ mod tests {
 
     #[test]
     fn a_failed_search_is_reported_as_unavailable() {
-        let deps = ToolDeps { search: Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize| Err("disk".into()))), ..ToolDeps::default() };
+        let deps = ToolDeps { search: Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize, _: bool| Err("disk".into()))), ..ToolDeps::default() };
         let error = semantic_search(&args("x"), &deps).unwrap_err();
         assert!(matches!(&error, ToolError::SearchUnavailable(reason) if reason == "disk"), "{error}");
     }
 
     #[test]
-    fn the_query_fts_and_default_size_reach_the_search() {
+    fn the_query_fts_size_and_docs_reach_the_search() {
         let (deps, asked) = deps_answering("fn a() {}");
         let call = SemanticSearchArgs { fts: Some(vec!["a".into()]), ..args("find a") };
         semantic_search(&call, &deps).unwrap();
-        semantic_search(&SemanticSearchArgs { top_k: Some(3), ..args("b") }, &deps).unwrap();
+        semantic_search(&SemanticSearchArgs { top_k: Some(3), include_docs: Some(true), ..args("b") }, &deps).unwrap();
         assert_eq!(
             *asked.lock().unwrap(),
-            [("find a".to_string(), Some(vec!["a".to_string()]), DEFAULT_TOP_K), ("b".to_string(), None, 3)]
+            [
+                ("find a".to_string(), Some(vec!["a".to_string()]), DEFAULT_TOP_K, false),
+                ("b".to_string(), None, 3, true),
+            ]
         );
     }
 

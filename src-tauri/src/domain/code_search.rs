@@ -42,6 +42,14 @@ pub struct SearchMeta {
     pub hint: Option<String>,
 }
 
+/// One commit as search weighs it: what it said, and the files it touched,
+/// relative to the searched folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitNote {
+    pub message: String,
+    pub files: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeSearchResult {
