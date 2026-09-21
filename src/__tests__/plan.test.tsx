@@ -148,9 +148,18 @@ describe("the Plan tab", () => {
   const tab = (props: Partial<Parameters<typeof PlanPanel>[0]> = {}) =>
     render(<PlanPanel plan="# Fix" checklist={[]} onEdit={() => {}} locked={false} {...props} />);
 
+  test("the plan is read as Markdown until the user asks to edit it", () => {
+    tab({ plan: "# Fix the parser\n\n- read the grammar" });
+    expect(screen.getByRole("heading", { name: "Fix the parser" })).toBeTruthy();
+    expect(screen.queryByLabelText("Plan")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Edit plan"));
+    expect((screen.getByLabelText("Plan") as HTMLTextAreaElement).value).toBe("# Fix the parser\n\n- read the grammar");
+  });
+
   test("an edit is handed over when the user leaves the text, not per keystroke", () => {
     const edits: string[] = [];
     const { rerender } = tab({ onEdit: (p) => edits.push(p) });
+    fireEvent.click(screen.getByLabelText("Edit plan"));
     const text = screen.getByLabelText("Plan");
 
     fireEvent.change(text, { target: { value: "# Fix\n\n1. first" } });
@@ -164,9 +173,32 @@ describe("the Plan tab", () => {
     expect(edits).toHaveLength(1);
   });
 
+  test("Done and Escape hand the edit over and go back to reading", () => {
+    const edits: string[] = [];
+    tab({ onEdit: (p) => edits.push(p) });
+    fireEvent.click(screen.getByLabelText("Edit plan"));
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "# One" } });
+    fireEvent.click(screen.getByText("Done"));
+    expect(edits).toEqual(["# One"]);
+    expect(screen.queryByLabelText("Plan")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Edit plan"));
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "# Two" } });
+    fireEvent.keyDown(screen.getByLabelText("Plan"), { key: "Escape" });
+    expect(edits).toEqual(["# One", "# Two"]);
+    expect(screen.queryByLabelText("Plan")).toBeNull();
+  });
+
+  test("with no plan yet, one can be written from the empty panel", () => {
+    tab({ plan: null });
+    expect(screen.queryByText("Checklist")).toBeNull();
+    fireEvent.click(screen.getByText("write your own"));
+    expect(screen.getByLabelText("Plan")).toBeTruthy();
+  });
+
   test("while a turn runs the plan cannot be edited", () => {
     tab({ locked: true });
-    expect((screen.getByLabelText("Plan") as HTMLTextAreaElement).readOnly).toBe(true);
+    expect((screen.getByLabelText("Edit plan") as HTMLButtonElement).disabled).toBe(true);
   });
 
   test("the handover is offered only with a plan to hand over", () => {
@@ -188,7 +220,9 @@ describe("the Plan tab", () => {
       ],
     });
     expect(screen.getByText("1/3")).toBeTruthy();
-    expect(screen.getByText(/not needed/)).toBeTruthy();
+    expect(screen.getByText("not needed")).toBeTruthy();
+    expect(screen.getByText("fix").closest("li")?.className).toContain("inProgress");
+    expect(screen.getByLabelText("Done")).toBeTruthy();
   });
 });
 

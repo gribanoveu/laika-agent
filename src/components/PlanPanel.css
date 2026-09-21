@@ -1,49 +1,125 @@
+/* The plan fills the panel: the checklist on top at its own height, the
+   document taking the rest, the handover button at the foot. */
 .plan-panel {
+  min-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
+.plan-section.panel-section {
+  margin-bottom: 14px;
+}
+.plan-doc-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.plan-edit {
+  width: 22px;
+  height: 22px;
+}
+.plan-edit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Read, not edited: the same Markdown as the chat, sized for the panel. */
+.plan-doc {
+  padding: 0 8px;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
 .plan-text {
-  min-height: 18em;
-  resize: vertical;
+  flex: 1;
+  min-height: 16em;
+  resize: none;
   background: var(--bg-panel-soft);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 0.88em;
-  line-height: 1.5;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
   padding: 8px 10px;
+}
+.plan-text:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .plan-text[readonly] {
   color: var(--text-dim);
 }
+
+.plan-implement {
+  flex: none;
+  align-self: stretch;
+}
+
+/* ─── Checklist ─── */
+
+.plan-progress {
+  height: 3px;
+  margin: 0 8px 8px;
+  border-radius: 2px;
+  background: var(--bg-panel-soft);
+  overflow: hidden;
+}
+.plan-progress > div {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.3s ease;
+}
+
 .plan-checklist {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 0.92em;
+  gap: 2px;
+}
+.plan-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: var(--fs-md);
   color: var(--text-dim);
 }
-.plan-checklist li {
-  display: flex;
-  gap: 8px;
-}
-.plan-checklist li.completed,
-.plan-checklist li.cancelled {
+.plan-mark {
+  flex: none;
+  margin-top: 0.15em;
   color: var(--text-faint);
 }
-.plan-checklist li.inProgress {
+.plan-task-body {
+  min-width: 0;
+}
+.plan-task-title {
+  line-height: 1.4;
+}
+.plan-task-note {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.plan-task.inProgress {
+  background: var(--bg-panel-soft);
   color: var(--text);
 }
-.plan-mark {
-  font-family: var(--font-mono);
-  width: 1em;
-  flex: none;
+.plan-task.inProgress .plan-mark {
+  color: var(--accent);
 }
-.plan-note {
+.plan-task.completed .plan-mark {
+  color: var(--green);
+}
+.plan-task.completed .plan-task-title,
+.plan-task.cancelled .plan-task-title {
   color: var(--text-faint);
+  text-decoration: line-through;
 }
