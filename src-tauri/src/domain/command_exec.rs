@@ -140,6 +140,10 @@ pub struct CommandOutput {
     /// Either stream had its middle dropped. Stated separately from the
     /// markers inside the text so a reader does not have to search for them.
     pub truncated: bool,
+    /// From start to exit or kill. A slow build is worth knowing about before
+    /// running it again, and the model has no clock of its own.
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 impl CommandOutput {

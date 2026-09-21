@@ -2549,7 +2549,7 @@ mod tests {
         h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
 
         let said = tool_contents(&h.provider.requests()[1]);
-        assert!(said[0].starts_with("Started #1 `sleep 30` is running"), "{said:?}");
+        assert!(said[0].starts_with("Started background process #1 in "), "{said:?}");
         assert!(processes.list()[0].running());
     }
 
@@ -2603,6 +2603,7 @@ mod tests {
                     exit_code: Some(code),
                     timed_out: false,
                     truncated: false,
+                    duration_ms: 0,
                 })
             }),
         );
@@ -3294,11 +3295,11 @@ mod tests {
         // What the model was told after the first run: the failure, in full.
         let first_run = tool_contents(&rounds[1]).pop().expect("the run was reported");
         assert!(first_run.contains("expected 42, got 41"), "{first_run}");
-        assert!(first_run.starts_with("Exit code 1\n"), "{first_run}");
+        assert!(first_run.starts_with("Exit code 1 after "), "{first_run}");
         // And after the second: the pass.
         let second_run = tool_contents(rounds.last().unwrap()).pop().expect("reported");
         assert!(second_run.contains("PASS"), "{second_run}");
-        assert!(second_run.starts_with("Exit code 0\n"), "{second_run}");
+        assert!(second_run.starts_with("Exit code 0 after "), "{second_run}");
     }
 
     /// Output reaches the UI while the command is still running, tagged with

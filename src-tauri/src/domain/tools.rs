@@ -951,6 +951,16 @@ pub enum ToolResult {
         diff: FileDiffStats,
         is_binary: bool,
     },
+    /// `gitDiff` on a directory: every changed file under it, each as its own
+    /// diff. `truncated` means files were left out; a file whose diff did not
+    /// fit the budget is listed with its counts and an empty, truncated diff.
+    #[serde(rename_all = "camelCase")]
+    GitDiffFiles {
+        path: String,
+        label: String,
+        files: Vec<GitFileDiff>,
+        truncated: bool,
+    },
     #[serde(rename_all = "camelCase")]
     GitBlame {
         path: String,
@@ -1065,8 +1075,14 @@ pub struct GrepArgs {
     /// A file or subdirectory to search under, relative to the scope root.
     /// `None`, `""` or `"."` searches everything.
     pub path: Option<String>,
-    /// Glob over the file *name* only, not the path.
+    /// Which files to search: a glob over the file *name* (`*.java`), or over
+    /// the path when it has a `/` in it (`src/main/**`).
     pub glob: Option<String>,
+    /// Which files to leave out, as a glob over the path (`src/docs/**`).
+    /// A project's documentation or generated code can bury the code the
+    /// model is after, and one include glob cannot also exclude.
+    #[serde(default)]
+    pub exclude: Option<String>,
     /// Default false — an exact, case-sensitive match unless asked otherwise.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
     pub case_insensitive: Option<bool>,
@@ -1228,6 +1244,20 @@ impl ReadFiles {
     pub fn record_write(&mut self, path: &str, content: &str, whole: bool) {
         let whole = whole || self.seen.get(path).is_some_and(|s| s.whole);
         self.record(path, content, whole);
+    }
+
+    /// A move changes where a file is, not what is in it, so what was read
+    /// follows it — a file, or everything read under a directory. Otherwise
+    /// the file has to be read again at its new path before it can be
+    /// changed, which checks nothing.
+    pub fn moved(&mut self, from: &str, to: &str) {
+        let under = format!("{from}/");
+        let paths: Vec<String> = self.seen.keys().filter(|p| *p == from || p.starts_with(&under)).cloned().collect();
+        for path in paths {
+            if let Some(read) = self.seen.remove(&path) {
+                self.seen.insert(format!("{to}{}", &path[from.len()..]), read);
+            }
+        }
     }
 }
 
@@ -1415,6 +1445,15 @@ pub struct GitFileStatus {
     pub path: String,
     /// One letter: `M`, `A`, `D`, `R`, `U`, `?`.
     pub status: String,
+}
+
+/// One file of a directory's diff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileDiff {
+    pub path: String,
+    pub diff: FileDiffStats,
+    pub is_binary: bool,
 }
 
 /// A run of consecutive lines that arrived in one commit.

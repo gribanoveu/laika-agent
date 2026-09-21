@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use crate::domain::background::ProcessOutput;
 use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
-use crate::domain::tools::{BlameHunk, GitFileStatus, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
+use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::text_diff::render_for_model;
 
@@ -39,11 +39,15 @@ pub fn for_model(result: &ToolResult) -> String {
         }
         ToolResult::GitDiff { path, label, is_binary: true, .. } => format!("{path} is a binary file — no text diff ({label})"),
         ToolResult::GitDiff { path, label, diff, .. } => render_for_model(&format!("Diff ({label}):"), path, diff, true),
+        ToolResult::GitDiffFiles { path, label, files, truncated } => diff_files(path, label, files, *truncated),
         ToolResult::GitBlame { path, hunks, truncated } => blame(path, hunks, *truncated),
         ToolResult::CommandRan(output) => command(output),
-        ToolResult::ProcessStarted(process) => {
-            format!("Started {} in {}. Read what it writes with readOutput.", process.describe(), process.cwd)
-        }
+        // The folder before the command: last, a `.` folder ran into the
+        // sentence's own full stop.
+        ToolResult::ProcessStarted(process) => format!(
+            "Started background process #{} in `{}`: `{}`. Read what it writes with readOutput.",
+            process.id, process.cwd, process.command
+        ),
         ToolResult::ProcessOutput(output) => process_output(output),
         ToolResult::ProcessStopped(process) => process.describe(),
         ToolResult::SearchResults { matches, meta } => search(matches, meta),
@@ -116,7 +120,15 @@ fn grep(matches: &[GrepMatch], truncated: bool) -> String {
         }
         blocks.push(out);
     }
-    let mut out = blocks.join("\n\n");
+    let hits = matches.len();
+    let files_count = blocks.len();
+    let head = format!(
+        "{}{hits} {} in {files_count} {}:",
+        if truncated { "At least " } else { "" },
+        if hits == 1 { "match" } else { "matches" },
+        if files_count == 1 { "file" } else { "files" },
+    );
+    let mut out = format!("{head}\n{}", blocks.join("\n\n"));
     if truncated {
         out.push_str("\n\n[more matches not shown — narrow the pattern or the glob]");
     }
@@ -172,6 +184,35 @@ fn git_status(
     out
 }
 
+/// A directory's change: the totals, then each file the way a single-file
+/// diff reads. A file left without its text says how to get it.
+fn diff_files(path: &str, label: &str, files: &[GitFileDiff], truncated: bool) -> String {
+    if files.is_empty() {
+        return format!("No changes under {path} ({label}).");
+    }
+    let (added, removed) = files.iter().fold((0, 0), |(a, r), f| (a + f.diff.lines_added, r + f.diff.lines_removed));
+    let count = files.len();
+    let mut out = format!(
+        "Diff ({label}) under {path}: {count} {} changed (+{added} -{removed} lines)",
+        if count == 1 { "file" } else { "files" }
+    );
+    for file in files {
+        out.push_str("\n\n");
+        if file.is_binary {
+            out.push_str(&format!("{} is a binary file — no text diff", file.path));
+        } else if file.diff.truncated && file.diff.unified_diff.is_empty() {
+            out.push_str(&render_for_model("File", &file.path, &file.diff, false));
+            out.push_str(" — diff not shown here, ask gitDiff for this file");
+        } else {
+            out.push_str(&render_for_model("File", &file.path, &file.diff, true));
+        }
+    }
+    if truncated {
+        out.push_str("\n\n[more changed files not shown — ask for a narrower path]");
+    }
+    out
+}
+
 fn blame(path: &str, hunks: &[BlameHunk], truncated: bool) -> String {
     let rows: Vec<String> = hunks
         .iter()
@@ -186,10 +227,11 @@ fn blame(path: &str, hunks: &[BlameHunk], truncated: bool) -> String {
 
 /// The exit comes first: it is the answer, and the output is the evidence.
 fn command(output: &CommandOutput) -> String {
+    let took = took(output.duration_ms);
     let head = match (output.timed_out, output.exit_code) {
-        (true, _) => "Timed out and was killed, with everything it started.".to_string(),
-        (false, Some(code)) => format!("Exit code {code}"),
-        (false, None) => "Ended by a signal, with no exit code.".to_string(),
+        (true, _) => format!("Timed out{took} and was killed, with everything it started."),
+        (false, Some(code)) => format!("Exit code {code}{took}"),
+        (false, None) => format!("Ended by a signal{took}, with no exit code."),
     };
     let mut out = head;
     for (name, text) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
@@ -201,6 +243,15 @@ fn command(output: &CommandOutput) -> String {
         out.push_str("\n(no output)");
     }
     out
+}
+
+/// ` after 2.3 s`; nothing when the time is not known.
+fn took(ms: u64) -> String {
+    match ms {
+        0 => String::new(),
+        1..=999 => format!(" after {ms} ms"),
+        _ => format!(" after {:.1} s", ms as f64 / 1000.0),
+    }
 }
 
 fn process_output(output: &ProcessOutput) -> String {
@@ -252,6 +303,7 @@ fn skill(name: &str, instructions: &str, files: &[String]) -> String {
 mod tests {
     use super::*;
     use crate::domain::background::{ProcessInfo, ProcessState};
+    use crate::domain::tools::FileDiffStats;
 
     fn hit(path: &str, line: u32, text: &str, before: &[&str], after: &[&str]) -> GrepMatch {
         GrepMatch {
@@ -292,7 +344,7 @@ mod tests {
         });
         assert_eq!(
             shown,
-            "a.rs\n2-// one\n3:fn one()\n4-}\n5:fn two()\n--\n20:fn far()\n\nb.rs\n1:use a;\n\n[more matches not shown — narrow the pattern or the glob]"
+            "At least 4 matches in 2 files:\na.rs\n2-// one\n3:fn one()\n4-}\n5:fn two()\n--\n20:fn far()\n\nb.rs\n1:use a;\n\n[more matches not shown — narrow the pattern or the glob]"
         );
         let none = for_model(&ToolResult::GrepResults { matches: vec![], truncated: false });
         assert!(none.starts_with("No matches. Git-ignored paths"), "{none}");
@@ -309,7 +361,7 @@ mod tests {
             ],
             truncated: false,
         });
-        assert_eq!(shown, "t.java\n116-a\n117-b\n118:retry()\n119-c\n120:retry()\n121-d\n122-e");
+        assert_eq!(shown, "2 matches in 1 file:\nt.java\n116-a\n117-b\n118:retry()\n119-c\n120:retry()\n121-d\n122-e");
     }
 
     #[test]
@@ -321,12 +373,65 @@ mod tests {
                 exit_code,
                 timed_out,
                 truncated: false,
+                duration_ms: 0,
             }))
         };
         assert_eq!(out("ok\n", "", Some(0), false), "Exit code 0\nstdout:\nok");
         assert_eq!(out("", "boom\n", Some(1), false), "Exit code 1\nstderr:\nboom");
         assert_eq!(out("", "", None, true), "Timed out and was killed, with everything it started.\n(no output)");
         assert_eq!(out("", "", None, false), "Ended by a signal, with no exit code.\n(no output)");
+    }
+
+    /// The model has no clock: how long a run took is worth a few words.
+    #[test]
+    fn a_command_says_how_long_it_took() {
+        let ran = |duration_ms, timed_out, exit_code| {
+            for_model(&ToolResult::CommandRan(CommandOutput { duration_ms, timed_out, exit_code, ..CommandOutput::default() }))
+        };
+        assert!(ran(2345, false, Some(0)).starts_with("Exit code 0 after 2.3 s\n"));
+        assert!(ran(40, false, Some(1)).starts_with("Exit code 1 after 40 ms\n"));
+        assert!(ran(600_000, true, None).starts_with("Timed out after 600.0 s and was killed"));
+    }
+
+    /// `is running in ..` read as a typo: the folder is not last any more.
+    #[test]
+    fn a_background_start_reads_as_a_sentence() {
+        let process = ProcessInfo { id: 1, command: "npm run dev".into(), cwd: ".".into(), state: ProcessState::Running };
+        assert_eq!(
+            for_model(&ToolResult::ProcessStarted(process)),
+            "Started background process #1 in `.`: `npm run dev`. Read what it writes with readOutput."
+        );
+    }
+
+    /// Totals first, then each file as a single-file diff reads; a file whose
+    /// text did not fit says how to get it, and a binary one says what it is.
+    #[test]
+    fn a_directory_diff_reads_file_by_file() {
+        use crate::services::text_diff::diff_stats;
+        let file = |path: &str, diff, is_binary| GitFileDiff { path: path.into(), diff, is_binary };
+        let mut cut = diff_stats("", "x\n");
+        cut.unified_diff.clear();
+        cut.truncated = true;
+        let shown = for_model(&ToolResult::GitDiffFiles {
+            path: "src".into(),
+            label: "index → working tree".into(),
+            files: vec![
+                file("src/a.rs", diff_stats("one\n", "two\n"), false),
+                file("src/big.rs", cut, false),
+                file("src/logo.png", FileDiffStats::default(), true),
+            ],
+            truncated: true,
+        });
+        assert_eq!(
+            shown,
+            "Diff (index → working tree) under src: 3 files changed (+2 -1 lines)\n\n\
+             File src/a.rs (+1 -1 lines)\n```diff\n@@ -1 +1 @@\n-one\n+two\n```\n\n\
+             File src/big.rs (+1 -0 lines) — diff not shown here, ask gitDiff for this file\n\n\
+             src/logo.png is a binary file — no text diff\n\n\
+             [more changed files not shown — ask for a narrower path]"
+        );
+        let none = for_model(&ToolResult::GitDiffFiles { path: "src".into(), label: "x".into(), files: vec![], truncated: false });
+        assert_eq!(none, "No changes under src (x).");
     }
 
     #[test]

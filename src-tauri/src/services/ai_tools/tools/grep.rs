@@ -45,18 +45,16 @@ pub fn grep(scope: &ToolScope, args: &GrepArgs) -> Result<ToolResult, ToolError>
         .build()
         .map_err(|e| ToolError::InvalidPattern(e.to_string()))?;
 
-    let glob = match args.glob.as_deref() {
-        Some(g) if !g.is_empty() => Some(
-            globset::Glob::new(g)
-                .map(|g| g.compile_matcher())
-                .map_err(|e| ToolError::InvalidPattern(e.to_string()))?,
-        ),
-        _ => None,
-    };
+    let glob = compile(args.glob.as_deref())?;
+    let exclude = compile(args.exclude.as_deref())?;
+    // A glob with a `/` names a place, so it is matched against the path.
+    let glob_on_path = args.glob.as_deref().is_some_and(|g| g.contains('/'));
 
     let mut search = Search {
         pattern,
         glob,
+        glob_on_path,
+        exclude,
         max_results,
         context_lines,
         matches: Vec::new(),
@@ -108,9 +106,20 @@ fn target(scope: &ToolScope, path: Option<&str>) -> Result<Target, ToolError> {
 struct Search {
     pattern: regex::Regex,
     glob: Option<GlobMatcher>,
+    glob_on_path: bool,
+    exclude: Option<GlobMatcher>,
     max_results: usize,
     context_lines: usize,
     matches: Vec<GrepMatch>,
+}
+
+fn compile(glob: Option<&str>) -> Result<Option<GlobMatcher>, ToolError> {
+    match glob {
+        Some(g) if !g.is_empty() => globset::Glob::new(g)
+            .map(|g| Some(g.compile_matcher()))
+            .map_err(|e| ToolError::InvalidPattern(e.to_string())),
+        _ => Ok(None),
+    }
 }
 
 impl Search {
@@ -118,9 +127,13 @@ impl Search {
     /// matching still to do — which is what `truncated` reports.
     fn file(&mut self, absolute: &Path, relative: &str) -> bool {
         if let Some(glob) = &self.glob {
-            if !glob.is_match(basename(relative)) {
+            let subject = if self.glob_on_path { relative } else { basename(relative) };
+            if !glob.is_match(subject) {
                 return false;
             }
+        }
+        if self.exclude.as_ref().is_some_and(|exclude| exclude.is_match(relative)) {
+            return false;
         }
         let Ok(meta) = fs::metadata(absolute) else {
             return false;
@@ -213,7 +226,14 @@ pub(super) fn definition() -> LlmToolDefinition {
                         "string",
                         "null"
                     ],
-                    "description": "Glob over the file *name* only, never the path — \\\"*.rs\\\" matches at any depth."
+                    "description": "Which files to search. Without a `/` it matches the file *name* at any depth — \\\"*.rs\\\"; with one it matches the path from the workspace root — \\\"src/main/**/*.java\\\"."
+                },
+                "exclude": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "description": "Files to leave out, as a glob over the path from the workspace root — \\\"src/docs/**\\\" drops documentation from a code search."
                 },
                 "caseInsensitive": {
                     "type": [
@@ -336,6 +356,26 @@ mod tests {
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].path, "src/main.rs");
+    }
+
+    /// A glob with a `/` names a place; `exclude` takes one away. Together
+    /// they say "the Java under main, not the docs".
+    #[test]
+    fn a_glob_with_a_slash_and_an_exclude_work_on_the_path() {
+        let (scope, root) = fixture("grep-glob-path");
+        write(&root, "src/main/A.java", "needle\n");
+        write(&root, "src/test/B.java", "needle\n");
+        write(&root, "src/docs/c.adoc", "needle\n");
+
+        let paths = |args: GrepArgs| -> Vec<String> { run(&scope, &args).0.into_iter().map(|m| m.path).collect() };
+
+        let under_main = GrepArgs { glob: Some("src/main/**".to_string()), ..args("needle") };
+        assert_eq!(paths(under_main), ["src/main/A.java"]);
+
+        let not_docs = GrepArgs { exclude: Some("src/docs/**".to_string()), ..args("needle") };
+        let mut kept = paths(not_docs);
+        kept.sort();
+        assert_eq!(kept, ["src/main/A.java", "src/test/B.java"]);
     }
 
     #[test]

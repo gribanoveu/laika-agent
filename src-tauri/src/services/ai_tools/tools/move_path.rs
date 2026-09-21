@@ -12,11 +12,11 @@
 use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
-use crate::domain::tools::{MoveArgs, ToolError, ToolResult, ToolScope};
+use crate::domain::tools::{MoveArgs, ReadFiles, ToolError, ToolResult, ToolScope};
 
 use super::super::resolve::{relative_to_root, resolve_existing, resolve_writable};
 
-pub fn move_path(scope: &ToolScope, args: &MoveArgs) -> Result<ToolResult, ToolError> {
+pub fn move_path(scope: &ToolScope, args: &MoveArgs, reads: &mut ReadFiles) -> Result<ToolResult, ToolError> {
     let from = resolve_existing(scope, &args.path)?;
     let to = resolve_writable(scope, &args.new_path)?;
 
@@ -28,12 +28,12 @@ pub fn move_path(scope: &ToolScope, args: &MoveArgs) -> Result<ToolResult, ToolE
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(ToolError::Io)?;
     }
+    let from_relative = relative_to_root(scope, &from)?;
     fs::rename(&from, &to).map_err(ToolError::Io)?;
+    let to_relative = relative_to_root(scope, &to)?;
+    reads.moved(&from_relative, &to_relative);
 
-    Ok(ToolResult::Moved {
-        from: relative_to_root(scope, &from)?,
-        to: relative_to_root(scope, &to)?,
-    })
+    Ok(ToolResult::Moved { from: from_relative, to: to_relative })
 }
 
 /// What the model is told `move` is for.
@@ -102,7 +102,7 @@ mod tests {
         let (scope, root, _) = fixture("mv-file");
         write(&root, "a.txt", "body\n");
 
-        let result = move_path(&scope, &args("a.txt", "b.txt")).expect("moves");
+        let result = move_path(&scope, &args("a.txt", "b.txt"), &mut ReadFiles::default()).expect("moves");
 
         assert!(!root.join("a.txt").exists());
         assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "body\n");
@@ -117,7 +117,7 @@ mod tests {
         let (scope, root, _) = fixture("mv-dir");
         write(&root, "old/deep/a.txt", "body\n");
 
-        move_path(&scope, &args("old", "new")).expect("moves");
+        move_path(&scope, &args("old", "new"), &mut ReadFiles::default()).expect("moves");
 
         assert!(!root.join("old").exists());
         assert_eq!(
@@ -131,7 +131,7 @@ mod tests {
         let (scope, root, _) = fixture("mv-parents");
         write(&root, "a.txt", "body\n");
 
-        move_path(&scope, &args("a.txt", "x/y/z.txt")).expect("moves");
+        move_path(&scope, &args("a.txt", "x/y/z.txt"), &mut ReadFiles::default()).expect("moves");
 
         assert!(root.join("x/y/z.txt").exists());
     }
@@ -144,7 +144,7 @@ mod tests {
         write(&root, "a.txt", "source\n");
         write(&root, "b.txt", "precious\n");
 
-        let err = move_path(&scope, &args("a.txt", "b.txt")).expect_err("occupied");
+        let err = move_path(&scope, &args("a.txt", "b.txt"), &mut ReadFiles::default()).expect_err("occupied");
 
         assert!(matches!(err, ToolError::AlreadyExists(_)));
         assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "precious\n");
@@ -155,7 +155,7 @@ mod tests {
     fn moving_something_that_is_not_there_is_refused() {
         let (scope, _, _) = fixture("mv-absent");
         assert!(matches!(
-            move_path(&scope, &args("nope.txt", "b.txt")),
+            move_path(&scope, &args("nope.txt", "b.txt"), &mut ReadFiles::default()),
             Err(ToolError::NotFound(_))
         ));
     }
@@ -166,11 +166,11 @@ mod tests {
         write(&root, "a.txt", "body\n");
 
         assert!(matches!(
-            move_path(&scope, &args("a.txt", "../b.txt")),
+            move_path(&scope, &args("a.txt", "../b.txt"), &mut ReadFiles::default()),
             Err(ToolError::PathEscape(_))
         ));
         assert!(matches!(
-            move_path(&scope, &args("../a.txt", "b.txt")),
+            move_path(&scope, &args("../a.txt", "b.txt"), &mut ReadFiles::default()),
             Err(ToolError::PathEscape(_))
         ));
         assert!(root.join("a.txt").exists());
@@ -183,9 +183,28 @@ mod tests {
         let (scope, root, _) = fixture("mv-unread");
         write(&root, "a.txt", "never read\n");
 
-        move_path(&scope, &args("a.txt", "b.txt")).expect("a move loses nothing");
+        move_path(&scope, &args("a.txt", "b.txt"), &mut ReadFiles::default()).expect("a move loses nothing");
 
         assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "never read\n");
+    }
+
+    /// The content did not change, so what was read follows the file: after a
+    /// move it can be changed without being read again — a file, or anything
+    /// read under a moved directory.
+    #[test]
+    fn what_was_read_follows_the_move() {
+        let (scope, root, mut reads) = fixture("mv-reads");
+        write(&root, "a.txt", "body\n");
+        write(&root, "dir/b.txt", "inner\n");
+        agent_reads(&scope, &mut reads, "a.txt", None);
+        agent_reads(&scope, &mut reads, "dir/b.txt", None);
+
+        move_path(&scope, &args("a.txt", "moved/a.txt"), &mut reads).expect("moves");
+        move_path(&scope, &args("dir", "other"), &mut reads).expect("moves");
+
+        assert_eq!(reads.check("moved/a.txt", "body\n", true), Ok(()));
+        assert_eq!(reads.check("other/b.txt", "inner\n", true), Ok(()));
+        assert!(reads.check("a.txt", "body\n", true).is_err(), "the old path is no longer vouched for");
     }
 
     #[test]

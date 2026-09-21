@@ -101,7 +101,8 @@ pub fn run_with(
     let stdout = collect(child.stdout.take(), OutputStream::Stdout, events.cloned());
     let stderr = collect(child.stderr.take(), OutputStream::Stderr, events.cloned());
 
-    let deadline = Instant::now() + request.timeout();
+    let started = Instant::now();
+    let deadline = started + request.timeout();
     let mut timed_out = false;
     let status = loop {
         match child.try_wait() {
@@ -144,6 +145,7 @@ pub fn run_with(
         exit_code: status.and_then(|s| s.code()),
         timed_out,
         truncated: stdout_cut || stderr_cut,
+        duration_ms: started.elapsed().as_millis() as u64,
     })
 }
 

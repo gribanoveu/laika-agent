@@ -19,8 +19,8 @@ use chrono::{Local, TimeZone};
 use git2::{BlameOptions, Repository, Status, StatusOptions};
 
 use crate::domain::tools::{
-    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileStatus, ToolError, ToolResult,
-    ToolScope,
+    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileDiff, GitFileStatus, ToolError,
+    ToolResult, ToolScope,
 };
 use crate::services::text_diff;
 
@@ -32,6 +32,10 @@ const MAX_BLAME_LINES: u32 = 400;
 /// Cap on paths one status may carry across all three lists. A repository with
 /// thousands of untracked files would otherwise bury the turn in one message.
 const MAX_STATUS_ENTRIES: usize = 200;
+/// Caps on a directory's diff: files, and the diff text across all of them.
+/// A file past the text budget still shows its counts.
+const MAX_DIFF_FILES: usize = 50;
+const MAX_DIFF_CHARS: usize = 20_000;
 
 /// The working tree's changed paths.
 ///
@@ -105,76 +109,164 @@ pub fn git_status(scope: &ToolScope) -> Result<ToolResult, ToolError> {
 pub fn git_diff(scope: &ToolScope, args: &GitDiffArgs) -> Result<ToolResult, ToolError> {
     let repo = open(scope)?;
     let resolved = resolve_existing(scope, &args.path)?;
-    // A directory has no blob anywhere, so it would come back as a valid empty
-    // diff — which the model reads as "nothing changed here" and stops looking.
-    if resolved.is_dir() {
-        return Err(ToolError::InvalidArguments {
-            tool: "gitDiff".into(),
-            reason: format!(
-                "{} is a directory; gitDiff works on one file. Use gitStatus to find changed files, then ask for each.",
-                args.path
-            ),
-        });
-    }
-    let repo_rel = repo_relative(scope, &repo, &resolved)?;
+    let comparison = Comparison::of(&repo, args)?;
 
-    let (original, modified, label) = match args.commit.as_deref().filter(|c| !c.is_empty()) {
-        Some(commit) => {
+    if resolved.is_dir() {
+        return directory_diff(scope, &repo, &comparison, &resolved);
+    }
+
+    let repo_rel = repo_relative(scope, &repo, &resolved)?;
+    let (diff, is_binary) = file_diff(&repo, &comparison, &repo_rel, &resolved)?;
+    Ok(ToolResult::GitDiff {
+        path: relative_to_root(scope, &resolved)?,
+        label: comparison.label(),
+        diff,
+        is_binary,
+    })
+}
+
+/// What a diff compares: one commit against its parent, the index against
+/// the working tree, or `HEAD` against the index.
+enum Comparison<'r> {
+    Commit(git2::Commit<'r>),
+    Unstaged,
+    Staged,
+}
+
+impl<'r> Comparison<'r> {
+    fn of(repo: &'r Repository, args: &GitDiffArgs) -> Result<Self, ToolError> {
+        if let Some(commit) = args.commit.as_deref().filter(|c| !c.is_empty()) {
             let object = repo.revparse_single(commit).map_err(git_error)?;
-            let commit = object.peel_to_commit().map_err(git_error)?;
-            let after = tree_blob(&repo, &commit.tree().map_err(git_error)?, &repo_rel);
+            return Ok(Comparison::Commit(object.peel_to_commit().map_err(git_error)?));
+        }
+        match args.scope.as_deref() {
+            None | Some("unstaged") => Ok(Comparison::Unstaged),
+            Some("staged") => Ok(Comparison::Staged),
+            Some(other) => Err(ToolError::InvalidArguments {
+                tool: "gitDiff".into(),
+                reason: format!("scope must be \"unstaged\" or \"staged\" (got \"{other}\")"),
+            }),
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Comparison::Commit(commit) => {
+                let id = short(&commit.id().to_string());
+                format!("{id}^ → {id}")
+            }
+            Comparison::Unstaged => "index → working tree".to_string(),
+            Comparison::Staged => "HEAD → index".to_string(),
+        }
+    }
+}
+
+/// One file's two sides, diffed. `on_disk` is where the working-tree side is
+/// read from.
+fn file_diff(
+    repo: &Repository,
+    comparison: &Comparison,
+    repo_rel: &str,
+    on_disk: &Path,
+) -> Result<(FileDiffStats, bool), ToolError> {
+    let (original, modified) = match comparison {
+        Comparison::Commit(commit) => {
+            let after = tree_blob(repo, &commit.tree().map_err(git_error)?, repo_rel);
             let before = match commit.parent(0) {
-                Ok(parent) => tree_blob(&repo, &parent.tree().map_err(git_error)?, &repo_rel),
+                Ok(parent) => tree_blob(repo, &parent.tree().map_err(git_error)?, repo_rel),
                 // A root commit has no parent: everything in it is new.
                 Err(_) => Some(Vec::new()),
             };
-            (
-                before,
-                after,
-                format!("{}^ → {}", short(&commit.id().to_string()), short(&commit.id().to_string())),
-            )
+            (before, after)
         }
-        None => match args.scope.as_deref() {
-            None | Some("unstaged") => (
-                index_blob(&repo, &repo_rel),
-                fs::read(&resolved).ok(),
-                "index → working tree".to_string(),
-            ),
-            Some("staged") => (
-                repo.head()
-                    .ok()
-                    .and_then(|h| h.peel_to_tree().ok())
-                    .and_then(|tree| tree_blob(&repo, &tree, &repo_rel)),
-                index_blob(&repo, &repo_rel),
-                "HEAD → index".to_string(),
-            ),
-            Some(other) => {
-                return Err(ToolError::InvalidArguments {
-                    tool: "gitDiff".into(),
-                    reason: format!("scope must be \"unstaged\" or \"staged\" (got \"{other}\")"),
-                })
-            }
-        },
+        Comparison::Unstaged => (index_blob(repo, repo_rel), fs::read(on_disk).ok()),
+        Comparison::Staged => (
+            repo.head()
+                .ok()
+                .and_then(|h| h.peel_to_tree().ok())
+                .and_then(|tree| tree_blob(repo, &tree, repo_rel)),
+            index_blob(repo, repo_rel),
+        ),
     };
 
     let original = original.unwrap_or_default();
     let modified = modified.unwrap_or_default();
     let is_binary = looks_binary(&original) || looks_binary(&modified);
-
     let diff = if is_binary {
         FileDiffStats::default()
     } else {
-        text_diff::diff_stats(
-            &String::from_utf8_lossy(&original),
-            &String::from_utf8_lossy(&modified),
-        )
+        text_diff::diff_stats(&String::from_utf8_lossy(&original), &String::from_utf8_lossy(&modified))
     };
+    Ok((diff, is_binary))
+}
 
-    Ok(ToolResult::GitDiff {
-        path: relative_to_root(scope, &resolved)?,
-        label,
-        diff,
-        is_binary,
+/// Every changed file under a directory — the scope root being the whole
+/// change. Each is diffed the way a single file is; what does not fit the
+/// budget keeps its counts and loses its text, and the model can ask for
+/// that file on its own.
+fn directory_diff(
+    scope: &ToolScope,
+    repo: &Repository,
+    comparison: &Comparison,
+    dir: &Path,
+) -> Result<ToolResult, ToolError> {
+    let prefix = scope_prefix(scope, repo)?;
+    let dir_rel = repo_relative(scope, repo, dir)?;
+    // The scope root comes back as `.`, which as a pathspec matches nothing.
+    let dir_rel = dir_rel.strip_suffix('.').filter(|rest| rest.is_empty() || rest.ends_with('/')).unwrap_or(&dir_rel);
+    let dir_rel = dir_rel.trim_end_matches('/');
+
+    let mut options = git2::DiffOptions::new();
+    if !dir_rel.is_empty() {
+        options.pathspec(dir_rel);
+    }
+    let changes = match comparison {
+        Comparison::Commit(commit) => {
+            let parent = commit.parent(0).ok().and_then(|p| p.tree().ok());
+            let tree = commit.tree().map_err(git_error)?;
+            repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut options))
+        }
+        Comparison::Unstaged => {
+            options.include_untracked(true).recurse_untracked_dirs(true);
+            repo.diff_index_to_workdir(None, Some(&mut options))
+        }
+        Comparison::Staged => {
+            let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+            repo.diff_tree_to_index(head.as_ref(), None, Some(&mut options))
+        }
+    }
+    .map_err(git_error)?;
+
+    let changed: Vec<String> = changes
+        .deltas()
+        .filter_map(|delta| {
+            let file = delta.new_file().path().or_else(|| delta.old_file().path())?;
+            Some(file.to_str()?.to_string())
+        })
+        .collect();
+
+    let truncated = changed.len() > MAX_DIFF_FILES;
+    let workdir = repo.workdir().unwrap_or(scope.root());
+    let mut budget = MAX_DIFF_CHARS;
+    let mut files = Vec::new();
+    for repo_rel in changed.into_iter().take(MAX_DIFF_FILES) {
+        let (mut diff, is_binary) = file_diff(repo, comparison, &repo_rel, &workdir.join(&repo_rel))?;
+        let size = diff.unified_diff.chars().count();
+        if size > budget {
+            diff.unified_diff.clear();
+            diff.truncated = true;
+        } else {
+            budget -= size;
+        }
+        let path = repo_rel.strip_prefix(&prefix).unwrap_or(&repo_rel).to_string();
+        files.push(GitFileDiff { path, diff, is_binary });
+    }
+
+    Ok(ToolResult::GitDiffFiles {
+        path: relative_to_root(scope, dir)?,
+        label: comparison.label(),
+        files,
+        truncated,
     })
 }
 
@@ -373,7 +465,7 @@ pub(super) fn status_definition() -> LlmToolDefinition {
 pub(super) fn diff_definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "gitDiff".to_string(),
-        description: "The diff for one path. Read-only. Use it to see your own uncommitted work, or what a particular commit did."
+        description: "The diff for a file, or for every changed file under a directory (\\\".\\\" for the whole change). Read-only. Use it to see your own uncommitted work, or what a particular commit did — a commit with path \\\".\\\" is everything it changed."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -634,24 +726,81 @@ mod tests {
         assert_eq!((diff.lines_added, diff.lines_removed), (1, 1));
     }
 
-    /// A directory has no blob, so it would come back as a valid empty diff —
-    /// which reads as "nothing changed here" and stops the search.
+    fn diff_files(scope: &ToolScope, args: GitDiffArgs) -> Vec<(String, u32, u32, bool)> {
+        let ToolResult::GitDiffFiles { mut files, .. } = git_diff(scope, &args).expect("diff runs") else {
+            panic!("not a directory diff")
+        };
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        files
+            .into_iter()
+            .map(|f| (f.path, f.diff.lines_added, f.diff.lines_removed, f.diff.unified_diff.is_empty()))
+            .collect()
+    }
+
+    /// A directory is every changed file under it — untracked ones included —
+    /// and nothing outside it; `.` is the whole change.
     #[test]
-    fn diffing_a_directory_says_so_instead_of_answering_empty() {
-        let (scope, root, _repo) = repo_fixture("git-diff-dir");
-        write(&root, "sub/a.txt", "x");
+    fn a_directory_diff_covers_each_changed_file_under_it() {
+        let (scope, root, repo) = repo_fixture("git-diff-dir");
+        write(&root, "sub/a.txt", "a\n");
+        commit(&repo, "add sub");
+        write(&root, "sub/a.txt", "A\n");
+        write(&root, "sub/new.txt", "n\n");
+        write(&root, "tracked.txt", "one\nTWO\n");
 
-        let err = git_diff(
-            &scope,
-            &GitDiffArgs {
-                path: "sub".into(),
-                ..GitDiffArgs::default()
-            },
-        )
-        .expect_err("a directory is not a file");
+        let sub = diff_files(&scope, GitDiffArgs { path: "sub".into(), ..GitDiffArgs::default() });
+        assert_eq!(sub, [("sub/a.txt".into(), 1, 1, false), ("sub/new.txt".into(), 1, 0, false)]);
 
-        assert!(matches!(err, ToolError::InvalidArguments { .. }));
-        assert!(err.to_string().contains("gitStatus"), "names the way out: {err}");
+        let all = diff_files(&scope, GitDiffArgs { path: ".".into(), ..GitDiffArgs::default() });
+        assert_eq!(all.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), ["sub/a.txt", "sub/new.txt", "tracked.txt"]);
+    }
+
+    /// What one commit did, across files, in one call.
+    #[test]
+    fn a_whole_commit_is_a_directory_diff_of_the_root() {
+        let (scope, root, repo) = repo_fixture("git-diff-commit-dir");
+        write(&root, "sub/a.txt", "a\n");
+        write(&root, "sub/b.txt", "b\n");
+        commit(&repo, "two files");
+
+        let files = diff_files(&scope, GitDiffArgs { path: ".".into(), commit: Some("HEAD".into()), ..GitDiffArgs::default() });
+
+        assert_eq!(files, [("sub/a.txt".into(), 1, 0, false), ("sub/b.txt".into(), 1, 0, false)]);
+    }
+
+    /// Past the file cap the rest is left out, and the result says so.
+    #[test]
+    fn past_the_file_cap_the_diff_says_it_left_some_out() {
+        let (scope, root, _repo) = repo_fixture("git-diff-cap");
+        for n in 0..=MAX_DIFF_FILES {
+            write(&root, &format!("many/{n:03}.txt"), "x\n");
+        }
+
+        let ToolResult::GitDiffFiles { files, truncated, .. } =
+            git_diff(&scope, &GitDiffArgs { path: "many".into(), ..GitDiffArgs::default() }).expect("diff runs")
+        else {
+            panic!("not a directory diff")
+        };
+
+        assert_eq!(files.len(), MAX_DIFF_FILES);
+        assert!(truncated);
+    }
+
+    /// Past the budget a file keeps its counts and loses its text, so the
+    /// answer stays one message and says what it left out.
+    #[test]
+    fn past_the_budget_a_file_keeps_its_counts_but_not_its_text() {
+        let (scope, root, _repo) = repo_fixture("git-diff-budget");
+        let big = "x\n".repeat(5000);
+        for name in ["a", "b", "c", "d"] {
+            write(&root, &format!("big/{name}.txt"), &big);
+        }
+
+        let files = diff_files(&scope, GitDiffArgs { path: "big".into(), ..GitDiffArgs::default() });
+
+        assert_eq!(files.len(), 4);
+        assert!(files.iter().all(|f| f.1 == 5000), "every count is exact: {files:?}");
+        assert_eq!(files.iter().filter(|f| f.3).count(), 1, "one diff did not fit: {files:?}");
     }
 
     #[test]
