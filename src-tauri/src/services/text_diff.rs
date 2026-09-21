@@ -38,6 +38,26 @@ pub fn diff_stats(old: &str, new: &str) -> FileDiffStats {
     }
 }
 
+/// What the model reads after a write: one line saying what happened, then the
+/// diff as plain text. Serialized as JSON the same diff is one string of `\n`
+/// escapes and quoted quotes — the model can read it, but pays for the noise
+/// and sees the hunks less clearly than in the format it was trained on.
+///
+/// A deletion gets the line alone: the model needs to know how much went, not
+/// to read back the whole file it just removed.
+pub fn render_for_model(verb: &str, path: &str, diff: &FileDiffStats, show_diff: bool) -> String {
+    let head = format!("{verb} {path} (+{} -{} lines)", diff.lines_added, diff.lines_removed);
+    if !show_diff || diff.unified_diff.is_empty() {
+        return head;
+    }
+    let tail = if diff.truncated {
+        "\n[diff cut short here — read the file to see the rest]"
+    } else {
+        ""
+    };
+    format!("{head}\n```diff\n{}\n```{tail}", diff.unified_diff.trim_end_matches('\n'))
+}
+
 /// Cuts to at most `max_chars`, never mid-line.
 ///
 /// A diff cut mid-line reads as corrupted rather than merely incomplete. And
@@ -63,6 +83,22 @@ fn truncate_on_line_boundary(text: &str, max_chars: usize) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_model_reads_a_write_as_a_line_and_a_diff_block() {
+        let shown = render_for_model("Edited", "a.md", &diff_stats("one\ntwo\n", "one\n2\n"), true);
+        assert_eq!(shown, "Edited a.md (+1 -1 lines)\n```diff\n@@ -1,2 +1,2 @@\n one\n-two\n+2\n```");
+    }
+
+    #[test]
+    fn a_cut_diff_says_so_and_a_deletion_is_one_line() {
+        let long = "x\n".repeat(MAX_UNIFIED_DIFF_CHARS);
+        let shown = render_for_model("Wrote", "big", &diff_stats("", &long), true);
+        assert!(shown.ends_with("read the file to see the rest]"), "{shown}");
+
+        let gone = render_for_model("Deleted", "a.md", &diff_stats("one\ntwo\n", ""), false);
+        assert_eq!(gone, "Deleted a.md (+0 -2 lines)");
+    }
 
     #[test]
     fn identical_content_has_no_changes() {

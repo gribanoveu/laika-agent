@@ -40,6 +40,7 @@ use crate::domain::turn::{
 use crate::infra::llm_debug_log;
 use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
+use crate::services::text_diff::render_for_model;
 use crate::services::ai_tools::tools::{execute_tool, tool_definitions};
 use crate::services::context_compaction;
 use crate::services::llm_session::LlmSession;
@@ -668,6 +669,16 @@ fn run(
             let content = match &outcome {
                 Ok(ToolResult::FileList { entries, truncated }) => {
                     render_file_tree(entries, *truncated)
+                }
+                // A diff reads best as a diff, not as a JSON string of escapes.
+                Ok(ToolResult::FileWritten { path, diff }) => render_for_model("Wrote", path, diff, true),
+                Ok(ToolResult::FileEdited { path, diff }) => render_for_model("Edited", path, diff, true),
+                Ok(ToolResult::FileDeleted { path, diff }) => render_for_model("Deleted", path, diff, false),
+                Ok(ToolResult::GitDiff { path, is_binary: true, label, .. }) => {
+                    format!("{path} is a binary file — no text diff ({label})")
+                }
+                Ok(ToolResult::GitDiff { path, label, diff, .. }) => {
+                    render_for_model(&format!("Diff ({label}):"), path, diff, true)
                 }
                 // Already the text the server meant for a model.
                 Ok(ToolResult::Mcp { text }) => text.clone(),
@@ -3031,8 +3042,32 @@ mod tests {
         );
         let told = tool_contents(h.provider.requests().last().unwrap());
         let edit = told.last().expect("the edit was reported");
-        assert!(edit.contains("linesAdded"), "no diff stats: {edit}");
-        assert!(edit.contains("-fn one"), "no diff itself: {edit}");
+        // Plain text, not a JSON string of escapes: the counts, then the diff.
+        assert!(edit.starts_with("Edited lib.rs (+1 -1 lines)\n```diff\n"), "{edit}");
+        assert!(edit.contains("\n-fn one"), "no diff itself: {edit}");
+    }
+
+    /// A git diff reaches the model the way a write does: a line, then the
+    /// diff as a diff — not a JSON string of `\n` escapes.
+    #[test]
+    fn a_git_diff_reaches_the_model_as_a_diff() {
+        let h = harness(
+            "loop-git-diff",
+            vec![asks(vec![wants("d1", "gitDiff", r#"{"path":"a.md"}"#)]), text("seen")],
+        );
+        std::fs::write(h.root.join("a.md"), "one\n").unwrap();
+        let repo = git2::Repository::init(&h.root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.md")).unwrap();
+        index.write().unwrap();
+        std::fs::write(h.root.join("a.md"), "uno\n").unwrap();
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("what changed")], vec![]))
+            .expect("finishes");
+
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert!(told[0].starts_with("Diff (index → working tree): a.md (+1 -1 lines)\n```diff\n"), "{}", told[0]);
+        assert!(told[0].contains("\n-one\n+uno\n"), "{}", told[0]);
     }
 
     /// The turn hands the tool the folder's search; without it the model gets
