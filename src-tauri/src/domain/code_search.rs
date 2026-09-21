@@ -42,6 +42,14 @@ pub struct SearchMeta {
     pub hint: Option<String>,
 }
 
+/// What a code search may return besides its ranking: documentation or not,
+/// and which paths.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilter {
+    pub include_docs: bool,
+    pub paths: crate::domain::search_query::PathFilter,
+}
+
 /// One commit as search weighs it: what it said, and the files it touched,
 /// relative to the searched folder.
 #[derive(Debug, Clone, PartialEq, Eq)]

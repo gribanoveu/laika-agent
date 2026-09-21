@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use crate::domain::chunk_index::ChunkBuildOptions;
+use crate::domain::code_search::SearchFilter;
 use crate::domain::embeddings::{Embedding, EmbeddingError, EmbeddingProvider};
 use crate::domain::workspace_index::IndexEventSink;
 use crate::infra::local_embeddings::{DEFAULT_IDLE_UNLOAD, DIMENSIONS, LocalEmbeddings, bundled_model_dir};
@@ -151,10 +152,10 @@ fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, 
     let started = Instant::now();
     // Documentation is searched when the answer is documentation — what a
     // model asking that question sets `includeDocs` for.
-    let include_docs = query.answer == "docs";
-    code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K, include_docs).unwrap();
+    let filter = SearchFilter { include_docs: query.answer == "docs", ..SearchFilter::default() };
+    code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K, &filter).unwrap();
     let spent = started.elapsed();
-    let mut result = code_search::search(indexer, &query.q, None, 20, include_docs).unwrap();
+    let mut result = code_search::search(indexer, &query.q, None, 20, &filter).unwrap();
     result.matches.retain(|m| !is_bench(&m.path));
     result.matches.truncate(10);
     if std::env::var_os("SEARCH_BENCH_VERBOSE").is_some() {
@@ -178,6 +179,13 @@ fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, 
         (first.map(|(r, _)| r), top, first.map(|(_, s)| s))
     });
     (file, decl, meaning, spent)
+}
+
+/// A question's answer as a key: its acceptable files, in order.
+fn answer_of(query: &Query) -> Vec<&str> {
+    let mut paths: Vec<&str> = query.expect.iter().map(|e| e.path.as_str()).collect();
+    paths.sort_unstable();
+    paths
 }
 
 #[test]
@@ -211,6 +219,16 @@ fn search_bench() {
             // How often history said anything, and how often it named the
             // answer's file — what `HISTORY_*` in `index_sync` are tuned by.
             let (mut history_fired, mut history_right) = (0, 0);
+            // Answers asked both in Russian and in English: the gap between the
+            // two is how much a Russian question loses to the language alone —
+            // the ceiling of a model rewriting its queries into English.
+            let paired: std::collections::HashSet<Vec<&str>> = repo
+                .queries
+                .iter()
+                .filter(|q| q.lang == "ru")
+                .map(answer_of)
+                .filter(|answer| repo.queries.iter().any(|q| q.lang == "en" && answer_of(q) == *answer))
+                .collect();
             for query in &repo.queries {
                 let near = indexer.files_by_history(&query.q);
                 if !near.is_empty() {
@@ -224,6 +242,9 @@ fn search_bench() {
                 by_lang.entry(query.lang.clone()).or_default().add(file, decl);
                 if !query.answer.is_empty() {
                     by_lang.entry(format!("answer: {}", query.answer)).or_default().add(file, decl);
+                }
+                if paired.contains(&answer_of(query)) {
+                    by_lang.entry(format!("pairs: {}", query.lang)).or_default().add(file, decl);
                 }
                 let show = |r: Rank| r.map_or("-".to_string(), |r| r.to_string());
                 let meaning = meaning.map_or(String::new(), |(rank, top, hit)| {

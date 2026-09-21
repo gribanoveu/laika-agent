@@ -44,6 +44,48 @@ use crate::domain::embeddings::{EmbeddingError, EmbeddingProvider, QuantizedVect
 use crate::domain::repo_index::FileId;
 use crate::infra::index_store::{IndexStore, IndexStoreError};
 
+/// Appended to the model id under which vectors are stored: what is embedded,
+/// not only by which weights. Change it with [`embedded_text`], so the index
+/// is rebuilt rather than new vectors compared against old ones.
+pub const EMBEDDED_TEXT_VERSION: &str = "+path1";
+
+/// What a chunk is embedded as: its path in words, then its text.
+///
+/// Contextual retrieval without a language model and without the network: a
+/// `retry()` in `service/SendNotificationService.java` means "sending
+/// notifications" only if the vector is told so. Words
+/// (`service Send Notification Service`), not the path as written, because a
+/// static model knows words.
+///
+/// Chosen on the bench (2026-09-21, MRR over 93 questions, 0.564 without a
+/// header): the path 0.577, the file's name alone 0.574, the file's name and
+/// the enclosing declaration 0.585 but Russian questions down 0.028, the
+/// declaration alone 0.558. The declaration is already weighted in the word
+/// index; in the vector it only pulled towards English.
+pub fn embedded_text(chunk: &ChunkMetadata, text: &str) -> String {
+    let path = &chunk.file_id.0;
+    let without_extension = path.rsplit_once('.').filter(|(_, ext)| !ext.contains('/')).map_or(path.as_str(), |(p, _)| p);
+    format!("{}\n{text}", words(without_extension))
+}
+
+/// `SendNotificationService.retry_later` → `Send Notification Service retry later`.
+fn words(identifier: &str) -> String {
+    let mut out = String::with_capacity(identifier.len() + 8);
+    let mut previous: Option<char> = None;
+    for c in identifier.chars() {
+        if c.is_alphanumeric() {
+            if c.is_uppercase() && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit()) {
+                out.push(' ');
+            }
+            out.push(c);
+        } else if !out.ends_with(' ') && !out.is_empty() {
+            out.push(' ');
+        }
+        previous = Some(c);
+    }
+    out.trim_end().to_string()
+}
+
 /// Texts per call to the model, and per transaction in the store. Also how
 /// often progress is reported.
 const EMBED_BATCH: usize = 64;
@@ -174,7 +216,7 @@ impl EmbeddingIndex {
                     .get(chunk.start_byte as usize..chunk.end_byte as usize)
                     .and_then(|slice| std::str::from_utf8(slice).ok());
                 if let Some(text) = text {
-                    texts.push((chunk, text.to_string()));
+                    texts.push((chunk, embedded_text(chunk, text)));
                 }
             }
         }
@@ -227,6 +269,33 @@ impl EmbeddingIndex {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn identifiers_become_words_for_the_header() {
+        assert_eq!(super::words("SendNotificationService.retry_later"), "Send Notification Service retry later");
+        assert_eq!(super::words("Install > macOS"), "Install mac OS");
+        assert_eq!(super::words("v2Parser"), "v2 Parser");
+        assert_eq!(super::words("__init__"), "init");
+    }
+
+    /// The path, extension dropped, in words — and a dot in a folder's name
+    /// is not taken for an extension.
+    #[test]
+    fn a_chunk_is_embedded_under_its_path_in_words() {
+        use crate::domain::chunk_index::{ChunkBuildOptions, build_chunks};
+        use crate::domain::repo_index::{FileId, Language};
+        let chunk_at = |path: &str| {
+            build_chunks(&FileId(path.into()), Language::PlainText, "body\n", &[], &ChunkBuildOptions::default())
+                .into_iter()
+                .next()
+                .expect("one chunk")
+                .metadata
+        };
+        assert_eq!(
+            super::embedded_text(&chunk_at("src/service/SendNotificationService.java"), "body"),
+            "src service Send Notification Service\nbody"
+        );
+        assert_eq!(super::embedded_text(&chunk_at(".github/workflows/ci"), "body"), "github workflows ci\nbody");
+    }
     use super::*;
     use crate::domain::chunk_index::ChunkBuildOptions;
     use crate::domain::embeddings::Embedding;

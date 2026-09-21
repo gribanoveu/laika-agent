@@ -277,6 +277,8 @@ mod definition_tests {
                     top_k: Some(5),
                     preview: Some(true),
                     include_docs: Some(true),
+                    glob: Some("src/**".to_string()),
+                    exclude: Some("**/generated/**".to_string()),
                 })],
             ),
             ToolName::WritePlan => (

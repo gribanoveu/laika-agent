@@ -1421,14 +1421,21 @@ pub struct SemanticSearchArgs {
     /// share its words, and the model is told when some were left out.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
     pub include_docs: Option<bool>,
+    /// Same as `grep`'s: a file name, or a path when it has a `/`.
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// Same as `grep`'s: a glob over the path to leave out.
+    #[serde(default)]
+    pub exclude: Option<String>,
 }
 
 /// Search of the open folder's code — `services::code_search::search` behind a
 /// port, because the tools live below the service that owns the index.
 /// `None` in [`ToolDeps`] when no folder's index is open.
 pub type CodeSearchFn = std::sync::Arc<
-    // Query, `fts`, how many, and whether documentation is searched too.
-    dyn Fn(&str, Option<&[String]>, usize, bool) -> Result<crate::domain::code_search::CodeSearchResult, String>
+    // Query, `fts`, how many, and what may be returned.
+    dyn Fn(&str, Option<&[String]>, usize, &crate::domain::code_search::SearchFilter)
+            -> Result<crate::domain::code_search::CodeSearchResult, String>
         + Send
         + Sync,
 >;

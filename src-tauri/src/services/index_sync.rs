@@ -40,7 +40,7 @@ use crate::domain::chunk_index::{ChunkBuildOptions, ChunkId};
 use crate::domain::embeddings::{EmbeddingError, EmbeddingProvider, LOCAL_MODEL_ID};
 use crate::domain::workspace_index::{IndexEvent, IndexEventSink};
 use crate::infra::index_store::{IndexStore, IndexStoreError};
-use crate::services::embedding_index::EmbeddingIndex;
+use crate::services::embedding_index::{EmbeddingIndex, EMBEDDED_TEXT_VERSION};
 use crate::services::repo_index::{self, RepoSyncError};
 
 /// What the last sync left behind, for a status line.
@@ -98,7 +98,8 @@ impl RepoIndexer {
         options: ChunkBuildOptions,
     ) -> Result<Self, IndexStoreError> {
         let store = IndexStore::open(store_dir)?;
-        let embeddings = EmbeddingIndex::load(&store, LOCAL_MODEL_ID, provider.dimensions())?;
+        let model_id = format!("{LOCAL_MODEL_ID}{EMBEDDED_TEXT_VERSION}");
+        let embeddings = EmbeddingIndex::load(&store, &model_id, provider.dimensions())?;
         let status = IndexStatus { embedded: embeddings.len(), ..IndexStatus::default() };
         Ok(Self {
             root: root.to_path_buf(),

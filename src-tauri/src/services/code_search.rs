@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::domain::chunk_index::{ChunkId, ChunkMetadata};
-use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchMeta};
+use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchFilter, SearchMeta};
 use crate::domain::repo_index::Language;
 use crate::domain::search_query::{
     SearchMetaInput, extract_search_tokens, fts5_query, is_documentation, looks_like_identifier,
@@ -68,24 +68,32 @@ const PATH_BOOST: f32 = 1.5;
 /// the work; raise it only on a bench that shows a gain.
 const HISTORY_BOOST: f32 = 1.2;
 
-/// With documentation left out, how many more candidates each ranking brings
-/// in. In a repository whose docs outnumber its code the plain pool can be
-/// mostly prose, and dropping it would leave fewer matches than asked for.
-const WITHOUT_DOCS_SLACK: usize = 2;
+/// How many passages of one file a result lists before other files get their
+/// turn. Five chunks of one long file can otherwise push the second file that
+/// matters out of the top ten; the rest of them come back if there is room.
+const MAX_PER_FILE: usize = 2;
+
+/// With something filtered out — documentation, or paths — how many more
+/// candidates each ranking brings in. In a repository whose docs outnumber
+/// its code the plain pool can be mostly prose, and dropping it would leave
+/// fewer matches than asked for.
+const FILTERED_SLACK: usize = 2;
 
 /// `fts`, when given, is what the word ranking searches instead of `query` —
 /// unless it has no searchable word in it, in which case `query` is: a model
 /// that asked for more precision must not lose the ranking for it.
 ///
-/// `include_docs` false leaves documentation out (`is_documentation`); the
-/// hint then says how many matches that cost, so the model can ask again.
+/// `filter.include_docs` false leaves documentation out (`is_documentation`);
+/// the hint then says how many matches that cost, so the model can ask again.
+/// `filter.paths` keeps only the files it allows.
 pub fn search(
     indexer: &RepoIndexer,
     query: &str,
     fts: Option<&[String]>,
     top_k: usize,
-    include_docs: bool,
+    filter: &SearchFilter,
 ) -> Result<CodeSearchResult, IndexStoreError> {
+    let include_docs = filter.include_docs;
     let top_k = top_k.clamp(1, MAX_TOP_K);
     let store = indexer.store();
     let tokens = extract_search_tokens(query);
@@ -97,7 +105,8 @@ pub fn search(
         }
     }
 
-    let candidates = top_k * CANDIDATES_PER_MATCH * if include_docs { 1 } else { WITHOUT_DOCS_SLACK };
+    let filtered = !include_docs || !filter.paths.is_empty();
+    let candidates = top_k * CANDIDATES_PER_MATCH * if filtered { FILTERED_SLACK } else { 1 };
     let lexical = match fts.and_then(|terms| fts5_query(&terms.join(" "))).or_else(|| fts5_query(query)) {
         Some(fts) => store.search_bm25(&fts, candidates)?.into_iter().map(|(id, _)| id).collect(),
         None => Vec::new(),
@@ -136,11 +145,18 @@ pub fn search(
     let mut seen = HashSet::new();
     let mut matches = Vec::with_capacity(top_k);
     let mut docs_left_out = 0;
+    let mut paths_left_out = 0;
+    let mut per_file: HashMap<String, usize> = HashMap::new();
+    let mut later = Vec::new();
     for (chunk, source) in ranked {
         if matches.len() == top_k {
             break;
         }
         if !seen.insert(chunk.id.clone()) {
+            continue;
+        }
+        if !filter.paths.allows(&chunk.file_id.0) {
+            paths_left_out += 1;
             continue;
         }
         if !include_docs && is_documentation(&chunk.file_id.0) {
@@ -149,15 +165,26 @@ pub fn search(
         }
         // Changed on disk since it was indexed: the watcher is on its way.
         let Ok(resolved) = resolve_chunk(indexer.root(), &chunk) else { continue };
-        matches.push(CodeMatch {
+        let found = CodeMatch {
             path: chunk.file_id.0,
             start_line: resolved.start_line,
             end_line: resolved.end_line,
             name: chunk.qualified_name,
             text: resolved.text,
             source,
-        });
+        };
+        // A declaration the query named is exempt: it is the answer, however
+        // many of its file's passages came before it.
+        let count = per_file.entry(found.path.clone()).or_default();
+        if *count >= MAX_PER_FILE && source != MatchSource::Symbol {
+            later.push(found);
+            continue;
+        }
+        *count += 1;
+        matches.push(found);
     }
+    let room = top_k - matches.len();
+    matches.extend(later.into_iter().take(room));
 
     let (weak, hint) = weak_search_hint(SearchMetaInput {
         match_count: matches.len(),
@@ -186,6 +213,15 @@ pub fn search(
             );
             Some(hint.map_or(docs.clone(), |hint| format!("{hint} {docs}")))
         }
+    };
+    // Nothing passed the path filter: without saying so this reads as
+    // "nothing like it exists" rather than "not where you looked".
+    let hint = if matches.is_empty() && paths_left_out > 0 {
+        Some(format!(
+            "None of the {paths_left_out} best matches passed glob/exclude; widen them or search without them."
+        ))
+    } else {
+        hint
     };
     Ok(CodeSearchResult { matches, meta: SearchMeta { tiers_used, weak, hint } })
 }
@@ -248,6 +284,16 @@ mod tests {
 
     const DIMS: usize = 64;
 
+    /// Code and documentation, no path filter — the ranking as it was.
+    fn all() -> SearchFilter {
+        SearchFilter { include_docs: true, ..SearchFilter::default() }
+    }
+
+    /// Code only, as the model searches by default.
+    fn code() -> SearchFilter {
+        SearchFilter::default()
+    }
+
     /// "Meaning" is shared words, with one synonym so that meaning and words
     /// can disagree: `automobile` means `car`, and no text says `automobile`.
     #[derive(Default)]
@@ -309,7 +355,7 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "where is parse_config", None, 5, true).unwrap();
+        let result = search(&indexer, "where is parse_config", None, 5, &all()).unwrap();
 
         let first = &result.matches[0];
         assert_eq!((first.path.as_str(), first.source), ("config.rs", MatchSource::Symbol));
@@ -330,12 +376,12 @@ mod tests {
             Arc::default(),
         );
 
-        let code = search(&indexer, "where is parse_config called", None, 5, false).unwrap();
+        let code = search(&indexer, "where is parse_config called", None, 5, &code()).unwrap();
         assert!(code.matches.iter().all(|m| m.path == "config.rs"), "{:?}", summary(&code));
         let hint = code.meta.hint.unwrap_or_default();
         assert!(hint.contains("1 documentation match was left out") && hint.contains("includeDocs"), "{hint}");
 
-        let all = search(&indexer, "where is parse_config called", None, 5, true).unwrap();
+        let all = search(&indexer, "where is parse_config called", None, 5, &all()).unwrap();
         assert!(all.matches.iter().any(|m| m.path == "notes.md"), "{:?}", summary(&all));
         assert!(!all.meta.hint.unwrap_or_default().contains("includeDocs"));
     }
@@ -355,7 +401,7 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "gizmo stuff", None, 1, false).unwrap();
+        let result = search(&indexer, "gizmo stuff", None, 1, &code()).unwrap();
 
         assert_eq!(summary(&result).first().map(|(name, _)| name.as_str()), Some("run"), "{:?}", summary(&result));
     }
@@ -375,6 +421,49 @@ mod tests {
         let near = indexer.files_by_history("gear");
 
         assert_eq!(near, HashSet::from(["f1.rs".to_string(), "f2.rs".to_string(), "f3.rs".to_string()]));
+    }
+
+    /// The path filter keeps what it allows; when nothing passes, the hint
+    /// says it was the filter, not an absence.
+    #[test]
+    fn a_path_filter_keeps_what_it_allows_and_says_when_nothing_passed() {
+        use crate::domain::search_query::PathFilter;
+        let indexer = indexed(
+            "search-paths",
+            &[("a.rs", "fn a() { gizmo }\n"), ("b.java", "class B { void gizmo() {} }\n")],
+            Arc::default(),
+        );
+        let only = |glob: &str| SearchFilter { paths: PathFilter::new(Some(glob), None).unwrap(), ..all() };
+
+        let java = search(&indexer, "gizmo please", None, 5, &only("*.java")).unwrap();
+        assert!(!java.matches.is_empty() && java.matches.iter().all(|m| m.path == "b.java"), "{:?}", summary(&java));
+
+        let none = search(&indexer, "gizmo please", None, 5, &only("*.py")).unwrap();
+        assert!(none.matches.is_empty());
+        assert!(none.meta.hint.unwrap_or_default().contains("passed glob/exclude"));
+    }
+
+    /// One file's passages all outrank another file's only one: the other
+    /// file still gets a place, and the rest come back when there is room.
+    #[test]
+    fn one_file_does_not_take_every_place() {
+        let indexer = indexed(
+            "search-per-file",
+            &[
+                (
+                    "long.rs",
+                    "fn a() { gizmo(gizmo) }\n\nfn b() { gizmo(gizmo) }\n\nfn c() { gizmo(gizmo) }\n\nfn d() { gizmo(gizmo) }\n",
+                ),
+                ("other.rs", "fn e() { gizmo() }\n"),
+            ],
+            Arc::default(),
+        );
+        let files = |top_k| -> Vec<String> {
+            search(&indexer, "gizmo please", None, top_k, &all()).unwrap().matches.into_iter().map(|m| m.path).collect()
+        };
+
+        assert_eq!(files(3), ["long.rs", "long.rs", "other.rs"]);
+        assert_eq!(files(10).len(), 5, "held-back passages return when there is room");
     }
 
     /// Commits one file at a time, so each commit touches exactly `path`.
@@ -423,20 +512,20 @@ mod tests {
     #[test]
     fn a_plain_word_is_not_taken_for_a_name() {
         let indexer = indexed("search-plain", &[("a.rs", "fn sync() {}\n")], Arc::default());
-        let result = search(&indexer, "how does sync work", None, 5, true).unwrap();
+        let result = search(&indexer, "how does sync work", None, 5, &all()).unwrap();
         assert!(result.matches.iter().all(|m| m.source != MatchSource::Symbol), "{:?}", summary(&result));
     }
 
     #[test]
     fn a_one_word_query_is_taken_for_a_name() {
         let indexer = indexed("search-one-word", &[("a.rs", "fn first() {}\n\nfn tokenize() {}\n")], Arc::default());
-        let result = search(&indexer, "tokenize", None, 5, true).unwrap();
+        let result = search(&indexer, "tokenize", None, 5, &all()).unwrap();
         // The chunk the declaration is in, not the file's first.
         let symbols: Vec<_> = summary(&result).into_iter().filter(|(_, s)| *s == MatchSource::Symbol).collect();
         assert_eq!(symbols, [("tokenize".to_string(), MatchSource::Symbol)]);
         assert_eq!((result.matches[0].start_line, result.matches[0].end_line), (3, 3));
         // In whatever case it was typed.
-        assert_eq!(search(&indexer, "TOKENIZE", None, 5, true).unwrap().matches[0].source, MatchSource::Symbol);
+        assert_eq!(search(&indexer, "TOKENIZE", None, 5, &all()).unwrap().matches[0].source, MatchSource::Symbol);
     }
 
     // --------------------------------------------------- words and meaning
@@ -449,12 +538,12 @@ mod tests {
             Arc::default(),
         );
 
-        let result = search(&indexer, "automobile", None, 1, true).unwrap();
+        let result = search(&indexer, "automobile", None, 1, &all()).unwrap();
 
         assert_eq!(summary(&result), [("start_car".to_string(), MatchSource::Semantic)]);
         assert!(result.meta.tiers_used.contains(&MatchSource::Semantic));
         // Found by words as well, it is still labelled by meaning.
-        let both = search(&indexer, "turn the key", None, 1, true).unwrap();
+        let both = search(&indexer, "turn the key", None, 1, &all()).unwrap();
         assert_eq!(summary(&both), [("start_car".to_string(), MatchSource::Semantic)]);
     }
 
@@ -499,18 +588,91 @@ mod tests {
         assert_eq!(fused[0].0, id("top"));
     }
 
+    /// Two files with the same text differ only by where they are; the vector
+    /// knows it, because the file's name is embedded with the text.
+    #[test]
+    fn meaning_knows_which_file_a_chunk_is_in() {
+        let indexer = indexed(
+            "search-embedded-header",
+            &[("gearbox.rs", "fn run() {}\n"), ("other.rs", "fn run() {}\n")],
+            Arc::default(),
+        );
+
+        let hits = indexer.search_meaning("gearbox", 2).unwrap();
+
+        assert_eq!(indexer.store().load_chunk(&hits[0].0).unwrap().unwrap().file_id.0, "gearbox.rs");
+        assert!(hits[0].1 > hits[1].1, "by meaning, not by a tie: {hits:?}");
+    }
+
+    /// What is embedded is part of the vectors' identity: stored under the
+    /// model's id alone, vectors of the text without its path would be taken
+    /// for current ones after an update, and never rebuilt.
+    #[test]
+    fn vectors_are_stored_under_the_model_and_the_embedded_text() {
+        use crate::domain::embeddings::LOCAL_MODEL_ID;
+        use crate::services::embedding_index::EMBEDDED_TEXT_VERSION;
+        let indexer = indexed("search-model-id", &[("a.rs", "fn a() {}\n")], Arc::default());
+        let store = indexer.store();
+
+        assert!(store.load_all_embeddings(LOCAL_MODEL_ID, DIMS).unwrap().is_empty());
+        let versioned = format!("{LOCAL_MODEL_ID}{EMBEDDED_TEXT_VERSION}");
+        assert!(!store.load_all_embeddings(&versioned, DIMS).unwrap().is_empty());
+    }
+
+    /// Declarations the query names are exempt from the per-file limit: the
+    /// third one named is still an answer, not a repeat.
+    #[test]
+    fn declarations_the_query_names_are_not_held_back() {
+        let indexer = indexed(
+            "search-per-file-named",
+            &[
+                ("one.rs", "fn alpha_fn() {}\n\nfn beta_fn() {}\n\nfn gamma_fn() {}\n"),
+                ("two.rs", "fn other() { alpha_fn(); beta_fn(); gamma_fn(); }\n"),
+            ],
+            Arc::default(),
+        );
+
+        let result = search(&indexer, "alpha_fn beta_fn gamma_fn", None, 3, &all()).unwrap();
+
+        let mut names: Vec<_> = result.matches.iter().map(|m| m.name.clone().unwrap_or_default()).collect();
+        names.sort();
+        assert_eq!(names, ["alpha_fn", "beta_fn", "gamma_fn"], "{:?}", summary(&result));
+    }
+
+    /// A path filter that drops the whole plain candidate pool must not leave
+    /// the search empty-handed: filtered, each ranking brings in more.
+    #[test]
+    fn a_path_filter_widens_the_pool_it_filters() {
+        use crate::domain::search_query::PathFilter;
+        let indexer = indexed(
+            "search-paths-crowd",
+            &[
+                ("a.rs", "fn a() { gizmo(gizmo, gizmo) }\n"),
+                ("b.rs", "fn b() { gizmo(gizmo, gizmo) }\n"),
+                ("c.rs", "fn c() { gizmo(gizmo, gizmo) }\n"),
+                ("D.java", "class D { void d() { gizmo(); } }\n"),
+            ],
+            Arc::default(),
+        );
+        let java = SearchFilter { paths: PathFilter::new(Some("*.java"), None).unwrap(), ..all() };
+
+        let result = search(&indexer, "gizmo please", None, 1, &java).unwrap();
+
+        assert_eq!(result.matches.first().map(|m| m.path.as_str()), Some("D.java"), "{:?}", summary(&result));
+    }
+
     /// Each is first by one measure and second by the other: words win.
     #[test]
     fn a_first_place_by_words_outweighs_one_by_meaning() {
         let indexer = indexed(
             "search-words-weigh",
-            &[("x.rs", "fn x() {\n    wheel(wheel, wheel);\n}\n"), ("y.rs", "fn y() {\n    car(wheel);\n}\n")],
+            &[("x.rs", "fn x() {\n    wheel(wheel, wheel);\n}\n"), ("y.rs", "fn y() {\n    car(wheel, car, car);\n}\n")],
             Arc::default(),
         );
         let meaning = indexer.search_meaning("automobile wheel", 2).unwrap();
         assert_eq!(indexer.store().load_chunk(&meaning[0].0).unwrap().unwrap().file_id.0, "y.rs", "set-up");
 
-        let result = search(&indexer, "automobile wheel", None, 2, true).unwrap();
+        let result = search(&indexer, "automobile wheel", None, 2, &all()).unwrap();
 
         assert_eq!(result.matches[0].path, "x.rs", "{:?}", summary(&result));
     }
@@ -525,7 +687,7 @@ mod tests {
                 &[(notes, "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    widget(gear);\n}\n")],
                 Arc::default(),
             );
-            let result = search(&indexer, "widget gear", None, 2, true).unwrap();
+            let result = search(&indexer, "widget gear", None, 2, &all()).unwrap();
             assert_eq!(result.matches[0].path, "turn.rs", "{notes}: {:?}", summary(&result));
         }
     }
@@ -539,7 +701,7 @@ mod tests {
             &[("notes.md", "# Notes\n\nwidget gear widget gear\n"), ("turn.rs", "fn turn() {\n    spin();\n}\n")],
             Arc::default(),
         );
-        let result = search(&indexer, "widget gear", None, 2, true).unwrap();
+        let result = search(&indexer, "widget gear", None, 2, &all()).unwrap();
         assert_eq!(result.matches[0].path, "notes.md", "{:?}", summary(&result));
     }
 
@@ -551,7 +713,7 @@ mod tests {
             &[("other.rs", "fn run() {\n    gear(gear);\n}\n"), ("widget.rs", "fn run() {\n    gear();\n}\n")],
             Arc::default(),
         );
-        let result = search(&indexer, "widget gear", None, 2, true).unwrap();
+        let result = search(&indexer, "widget gear", None, 2, &all()).unwrap();
         assert_eq!(result.matches[0].path, "widget.rs", "{:?}", summary(&result));
     }
 
@@ -566,7 +728,7 @@ mod tests {
         );
         fs::write(indexer.root().join("a.rs"), "fn widget_ONE() {}\n").unwrap();
 
-        let result = search(&indexer, "widget", None, 5, true).unwrap();
+        let result = search(&indexer, "widget", None, 5, &all()).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -585,7 +747,7 @@ mod tests {
         fs::write(indexer.root().join("a.rs"), "fn changed() {}
 ").unwrap();
 
-        let result = search(&indexer, "calls to widget", None, 1, true).unwrap();
+        let result = search(&indexer, "calls to widget", None, 1, &all()).unwrap();
 
         assert_eq!(result.matches.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(), ["b.rs"]);
     }
@@ -594,8 +756,8 @@ mod tests {
     fn the_number_asked_for_is_held_between_one_and_the_maximum() {
         let body: String = (0..60).map(|i| format!("fn gadget_{i}() {{ gadget }}\n")).collect();
         let indexer = indexed("search-limits", &[("a.rs", &body)], Arc::default());
-        assert_eq!(search(&indexer, "gadget", None, 0, true).unwrap().matches.len(), 1);
-        assert_eq!(search(&indexer, "gadget", None, 500, true).unwrap().matches.len(), MAX_TOP_K);
+        assert_eq!(search(&indexer, "gadget", None, 0, &all()).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "gadget", None, 500, &all()).unwrap().matches.len(), MAX_TOP_K);
     }
 
     // ------------------------------------------------ meaning unavailable
@@ -609,7 +771,7 @@ mod tests {
         model.fail.store(true, Ordering::SeqCst);
 
         // A plain word, so no name lookup: only words can find it.
-        let result = search(&indexer, "what does gizmo do", None, 5, true).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5, &all()).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(!result.meta.tiers_used.contains(&MatchSource::Semantic));
@@ -625,10 +787,10 @@ mod tests {
         model.fail.store(true, Ordering::SeqCst);
 
         let terms = ["gizmo".to_string()];
-        assert_eq!(search(&indexer, "the thing that starts up", Some(&terms), 5, true).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "the thing that starts up", Some(&terms), 5, &all()).unwrap().matches.len(), 1);
         // Nothing searchable in `fts`: the query's own words are used.
         let noise = ["!!".to_string()];
-        assert_eq!(search(&indexer, "what does gizmo do", Some(&noise), 5, true).unwrap().matches.len(), 1);
+        assert_eq!(search(&indexer, "what does gizmo do", Some(&noise), 5, &all()).unwrap().matches.len(), 1);
     }
 
     /// Never embedded because the model would not load: nothing to search by
@@ -638,7 +800,7 @@ mod tests {
         let model = Arc::new(FakeModel { fail: AtomicBool::new(true) });
         let indexer = indexed("search-no-model", &[("a.rs", "fn gizmo() {}\n")], model);
 
-        let result = search(&indexer, "what does gizmo do", None, 5, true).unwrap();
+        let result = search(&indexer, "what does gizmo do", None, 5, &all()).unwrap();
 
         let hint = result.meta.hint.unwrap();
         assert!(hint.contains("unavailable") && !hint.contains("finished building"), "{hint}");

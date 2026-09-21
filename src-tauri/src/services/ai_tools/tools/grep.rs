@@ -10,13 +10,13 @@ use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use globset::GlobMatcher;
 use regex::RegexBuilder;
 
+use crate::domain::search_query::PathFilter;
 use crate::domain::tools::{GrepArgs, GrepMatch, ToolError, ToolResult, ToolScope};
 use crate::infra::workspace_scanner;
 
-use super::super::resolve::{basename, relative_to_root, resolve_existing};
+use super::super::resolve::{relative_to_root, resolve_existing};
 
 const DEFAULT_RESULTS: usize = 50;
 const MAX_RESULTS: usize = 200;
@@ -45,16 +45,11 @@ pub fn grep(scope: &ToolScope, args: &GrepArgs) -> Result<ToolResult, ToolError>
         .build()
         .map_err(|e| ToolError::InvalidPattern(e.to_string()))?;
 
-    let glob = compile(args.glob.as_deref())?;
-    let exclude = compile(args.exclude.as_deref())?;
-    // A glob with a `/` names a place, so it is matched against the path.
-    let glob_on_path = args.glob.as_deref().is_some_and(|g| g.contains('/'));
+    let paths = PathFilter::new(args.glob.as_deref(), args.exclude.as_deref()).map_err(ToolError::InvalidPattern)?;
 
     let mut search = Search {
         pattern,
-        glob,
-        glob_on_path,
-        exclude,
+        paths,
         max_results,
         context_lines,
         matches: Vec::new(),
@@ -105,34 +100,17 @@ fn target(scope: &ToolScope, path: Option<&str>) -> Result<Target, ToolError> {
 
 struct Search {
     pattern: regex::Regex,
-    glob: Option<GlobMatcher>,
-    glob_on_path: bool,
-    exclude: Option<GlobMatcher>,
+    paths: PathFilter,
     max_results: usize,
     context_lines: usize,
     matches: Vec<GrepMatch>,
-}
-
-fn compile(glob: Option<&str>) -> Result<Option<GlobMatcher>, ToolError> {
-    match glob {
-        Some(g) if !g.is_empty() => globset::Glob::new(g)
-            .map(|g| Some(g.compile_matcher()))
-            .map_err(|e| ToolError::InvalidPattern(e.to_string())),
-        _ => Ok(None),
-    }
 }
 
 impl Search {
     /// Appends this file's hits. Returns whether the cap was reached with
     /// matching still to do — which is what `truncated` reports.
     fn file(&mut self, absolute: &Path, relative: &str) -> bool {
-        if let Some(glob) = &self.glob {
-            let subject = if self.glob_on_path { relative } else { basename(relative) };
-            if !glob.is_match(subject) {
-                return false;
-            }
-        }
-        if self.exclude.as_ref().is_some_and(|exclude| exclude.is_match(relative)) {
+        if !self.paths.allows(relative) {
             return false;
         }
         let Ok(meta) = fs::metadata(absolute) else {

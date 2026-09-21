@@ -213,6 +213,46 @@ pub fn path_segment_matches(relative_path: &str, token: &str) -> bool {
     })
 }
 
+/// Which files a search may return — `grep` and `semanticSearch` both, so the
+/// two read a pattern the same way. `glob` matches the file's *name*
+/// (`*.java`), or its path when it has a `/` in it (`src/main/**`); `exclude`
+/// always matches the path (`src/docs/**`).
+#[derive(Debug, Clone, Default)]
+pub struct PathFilter {
+    include: Option<(globset::GlobMatcher, bool)>,
+    exclude: Option<globset::GlobMatcher>,
+}
+
+impl PathFilter {
+    /// An empty or missing pattern filters nothing. `Err` carries the glob
+    /// parser's message for a pattern that does not compile.
+    pub fn new(glob: Option<&str>, exclude: Option<&str>) -> Result<Self, String> {
+        let compile = |pattern: Option<&str>| match pattern {
+            Some(p) if !p.is_empty() => {
+                globset::Glob::new(p).map(|g| Some(g.compile_matcher())).map_err(|e| e.to_string())
+            }
+            _ => Ok(None),
+        };
+        let on_path = glob.is_some_and(|g| g.contains('/'));
+        Ok(Self { include: compile(glob)?.map(|m| (m, on_path)), exclude: compile(exclude)? })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.include.is_none() && self.exclude.is_none()
+    }
+
+    /// Whether `relative_path` (`/`-separated, from the workspace root) passes.
+    pub fn allows(&self, relative_path: &str) -> bool {
+        if let Some((glob, on_path)) = &self.include {
+            let name = relative_path.rsplit('/').next().unwrap_or(relative_path);
+            if !glob.is_match(if *on_path { relative_path } else { name }) {
+                return false;
+            }
+        }
+        !self.exclude.as_ref().is_some_and(|exclude| exclude.is_match(relative_path))
+    }
+}
+
 /// Folders whose files are documentation whatever they are written in —
 /// `src/docs/asciidoc/…/x.puml` is a diagram of the docs, not code.
 const DOC_DIRS: &[&str] = &["docs", "doc", "documentation", "wiki"];
@@ -322,6 +362,23 @@ pub fn looks_like_identifier(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rules `grep` and `semanticSearch` share: a glob without `/` is a
+    /// file name at any depth, with one it is a path; `exclude` is a path.
+    #[test]
+    fn a_path_filter_reads_names_paths_and_exclusions() {
+        let only = |glob: Option<&str>, exclude: Option<&str>, paths: &[&str]| -> Vec<String> {
+            let filter = PathFilter::new(glob, exclude).unwrap();
+            paths.iter().filter(|p| filter.allows(p)).map(|p| p.to_string()).collect()
+        };
+        let paths = ["src/main/A.java", "src/test/B.java", "src/docs/c.adoc", "build.gradle"];
+        assert_eq!(only(Some("*.java"), None, &paths), ["src/main/A.java", "src/test/B.java"]);
+        assert_eq!(only(Some("src/main/**"), None, &paths), ["src/main/A.java"]);
+        assert_eq!(only(None, Some("src/docs/**"), &paths), ["src/main/A.java", "src/test/B.java", "build.gradle"]);
+        assert_eq!(only(Some("*.java"), Some("src/test/**"), &paths), ["src/main/A.java"]);
+        assert!(PathFilter::new(Some(""), None).unwrap().is_empty());
+        assert!(PathFilter::new(Some("["), None).is_err());
+    }
 
     #[test]
     fn documentation_is_a_docs_folder_or_prose_anywhere() {
