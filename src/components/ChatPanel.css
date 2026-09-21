@@ -336,6 +336,10 @@
   white-space: pre-wrap;
 }
 
+.tool-detail-diff {
+  margin: 0 0 4px 8px;
+}
+
 .approval-card {
   margin: 6px 0 4px;
   padding: 7px 9px;
@@ -498,28 +502,6 @@
   font-size: var(--fs-xs);
   color: var(--text-dim);
   font-family: var(--font-mono);
-}
-.diff-preview {
-  margin: 0;
-  padding: 8px 9px;
-  border-radius: 7px;
-  background: var(--bg-bubble);
-  border: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  line-height: 1.55;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  /* A long diff scrolls inside the card rather than pushing the buttons that
-     answer it off the screen. */
-  max-height: 180px;
-  overflow-y: auto;
-}
-.diff-preview .ln-add {
-  color: var(--green);
-}
-.diff-preview .ln-del {
-  color: var(--red);
 }
 .approval-preview {
   margin: 0 0 8px;

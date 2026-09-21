@@ -130,7 +130,7 @@ textarea,
 .msg,
 .tool-detail,
 .approval-cmd,
-.diff-preview,
+.diff-view,
 .terminal-out,
 .rule-block,
 .commit-status {
@@ -234,4 +234,11 @@ textarea,
 }
 .mono {
   font-family: var(--font-mono);
+}
+/* JetBrains Mono draws `-|` as one arrow glyph: a removed table row in a diff
+   stops reading as a removed line. Code shows the characters it has. */
+.mono,
+code,
+pre {
+  font-variant-ligatures: none;
 }

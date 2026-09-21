@@ -181,8 +181,24 @@ describe("what each call shows", () => {
       }),
     );
 
-    expect(shown).toMatchObject({ name: "Edit", arg: "Mapper.java", meta: "+4 -1" });
+    expect(shown).toMatchObject({ name: "Edit", arg: "Mapper.java", meta: "+4 -1", diff: true });
     expect(shown.detail).toContain("+b");
+  });
+
+  test("a git diff is drawn as a diff, like a write", () => {
+    const shown = describeTool(
+      tool({
+        name: "gitDiff",
+        arguments: '{"path":"AGENTS.md"}',
+        result: { path: "AGENTS.md", label: "index → working tree", isBinary: false, diff: { linesAdded: 3, linesRemoved: 3, unifiedDiff: "-a\n+b\n" } },
+      }),
+    );
+    expect(shown).toMatchObject({ name: "Diff", arg: "AGENTS.md", meta: "+3 -3", detail: "-a\n+b\n", diff: true });
+
+    const binary = describeTool(
+      tool({ name: "gitDiff", arguments: '{"path":"logo.png"}', result: { path: "logo.png", label: "x", isBinary: true, diff: {} } }),
+    );
+    expect(binary.meta).toBe("binary");
   });
 
   test("a command shows its exit code", () => {

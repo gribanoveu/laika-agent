@@ -217,6 +217,28 @@ describe("the approval card", () => {
     expect(decided[0]?.decisions[0]?.reason).toBe("use the existing helper");
   });
 
+  test("calls that need no answer fold into one line, counted", async () => {
+    panel(
+      state([
+        {
+          ...approval,
+          calls: [
+            { id: "w1", name: "writeFile", arguments: '{"path":"a.rs"}', requiresConfirmation: true },
+            { id: "t1", name: "todo", arguments: '{"op":"update"}', requiresConfirmation: false },
+            { id: "t2", name: "todo", arguments: '{"op":"update"}', requiresConfirmation: false },
+            { id: "l1", name: "listFiles", arguments: "{}", requiresConfirmation: false },
+          ],
+        } as Block,
+      ]),
+    );
+    await settle();
+
+    const passive = document.querySelectorAll(".approval-cmd.passive");
+    expect(passive).toHaveLength(1);
+    expect(passive[0].textContent).toMatch(/×2, List/);
+    expect(screen.queryByText("update")).toBeNull();
+  });
+
   test("always allow names the tool it should stop asking about", async () => {
     const decided: { always: string[] }[] = [];
     panel(state([approval]), (_decisions, always) => decided.push({ always }));
@@ -247,8 +269,10 @@ describe("what a call would do", () => {
 
     expect(screen.getByText("Mapper.java")).toBeDefined();
     expect(screen.getByText("+1")).toBeDefined();
-    expect(document.querySelectorAll(".ln-add")).toHaveLength(1);
-    expect(document.querySelectorAll(".ln-del")).toHaveLength(1);
+    expect(document.querySelectorAll(".diff-add")).toHaveLength(1);
+    expect(document.querySelectorAll(".diff-del")).toHaveLength(1);
+    // Of the edited line, only what changed is marked.
+    expect([...document.querySelectorAll(".diff-view mark")].map((m) => m.textContent)).toEqual(["null", "IncomeAmount.zero()"]);
   });
 
   /// Learning that an edit cannot apply after approving it costs a round and
@@ -553,5 +577,28 @@ describe("the answer as Markdown", () => {
   test("once the turn ends, nothing is", () => {
     const { container } = panel(state(blocks, { status: "done" }));
     expect(container.textContent).toContain("and more");
+  });
+});
+
+describe("a finished call's diff", () => {
+  test("opens as a diff, not as text", () => {
+    const { container } = panel(
+      state([
+        {
+          kind: "tool",
+          id: "d1",
+          round: 1,
+          name: "gitDiff",
+          arguments: '{"path":"a.md"}',
+          status: "done",
+          output: "",
+          result: { path: "a.md", label: "index → working tree", isBinary: false, diff: { linesAdded: 1, linesRemoved: 1, unifiedDiff: "@@ -1 +1 @@\n-one\n+uno\n", truncated: false } },
+        } as Block,
+      ]),
+    );
+    fireEvent.click(container.querySelector(".tool-item button.tool")!);
+
+    expect(container.querySelector(".tool-detail")).toBeNull();
+    expect(container.querySelectorAll(".diff-view .diff-add")).toHaveLength(1);
   });
 });

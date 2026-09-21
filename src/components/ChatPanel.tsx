@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { ChatMenu, type ChatMenuItem } from "./ChatMenu";
+import { DiffView } from "./DiffView";
 import { PANES } from "./panes";
 import type { AsideTab } from "../types";
 import { IndexBadge } from "./IndexBadge";
@@ -72,7 +73,15 @@ function ToolRow({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         {shown.meta && <span className="meta">{shown.meta}</span>}
         {shown.detail && <ChevronRight className="chev" size={12} />}
       </button>
-      {open && shown.detail && <pre className="tool-detail">{shown.detail}</pre>}
+      {open &&
+        shown.detail &&
+        (shown.diff ? (
+          <div className="tool-detail-diff">
+            <DiffView unified={shown.detail} />
+          </div>
+        ) : (
+          <pre className="tool-detail">{shown.detail}</pre>
+        ))}
     </div>
   );
 }
@@ -89,6 +98,11 @@ function ApprovalCard({
   // and the arguments alone do not show them.
   const [previews, setPreviews] = useState<ToolPreview[]>([]);
   const asked = block.calls.filter((call) => call.requiresConfirmation);
+  // Bundled into the round but not in question — six todo updates are one
+  // line, not six lines of "update" between the diff and the buttons.
+  const passive = countedNames(
+    block.calls.filter((call) => !call.requiresConfirmation).map((call) => describeTool({ ...emptyTool, ...call }).name),
+  );
 
   useEffect(() => {
     let live = true;
@@ -115,20 +129,26 @@ function ApprovalCard({
       <div className="approval-label">
         Approval required · {asked.map((call) => describeTool({ ...emptyTool, ...call }).name).join(", ")}
       </div>
-      {block.calls.map((call, index) => (
-        <div key={call.id}>
-          <div className={`approval-cmd${call.requiresConfirmation ? "" : " passive"}`}>
-            {describeTool({ ...emptyTool, ...call }).arg}
+      {block.calls.map((call, index) =>
+        call.requiresConfirmation ? (
+          <div key={call.id}>
+            {/* A diff names its file in its own header. */}
+            {previews[index]?.kind !== "diff" && (
+              <div className="approval-cmd">{describeTool({ ...emptyTool, ...call }).arg}</div>
+            )}
+            {call.reason && (
+              <div className="approval-why" title="Asked even when this tool is always allowed">
+                <ShieldAlert size={13} aria-hidden />
+                <span>Always asks: {call.reason}</span>
+              </div>
+            )}
+            <Preview preview={previews[index]} />
           </div>
-          {call.requiresConfirmation && call.reason && (
-            <div className="approval-why" title="Asked even when this tool is always allowed">
-              <ShieldAlert size={13} aria-hidden />
-              <span>Always asks: {call.reason}</span>
-            </div>
-          )}
-          <Preview preview={previews[index]} />
-        </div>
-      ))}
+        ) : null,
+      )}
+      {passive.length > 0 && (
+        <div className="approval-cmd passive">Also runs, no approval needed: {passive}</div>
+      )}
       <input
         className="approval-reason"
         type="text"
@@ -188,21 +208,18 @@ export function Preview({ preview }: { preview?: ToolPreview }) {
           </span>
         </span>
       </div>
-      <pre className="diff-preview">
-        {preview.diff.unifiedDiff.split("\n").map((line, i) => (
-          <span key={i} className={lineClass(line)}>
-            {line}
-            {"\n"}
-          </span>
-        ))}
-      </pre>
+      <DiffView unified={preview.diff.unifiedDiff} />
       {preview.diff.truncated && <p className="approval-preview">…the rest is not shown</p>}
     </div>
   );
 }
 
-const lineClass = (line: string) =>
-  line.startsWith("+") ? "ln-add" : line.startsWith("-") ? "ln-del" : undefined;
+/** `["Todo", "Todo", "Read"]` → `"Todo ×2, Read"`, first-seen order. */
+function countedNames(names: string[]): string {
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return [...counts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(", ");
+}
 
 /** A pending call has no result yet, and `describeTool` reads the same shape either way. */
 const emptyTool = {

@@ -21,6 +21,8 @@ export type ToolDisplay = {
   meta?: string;
   /** The expandable body. Empty means there is nothing to expand. */
   detail: string;
+  /** `detail` is a unified diff, to be drawn as one rather than as text. */
+  diff?: boolean;
 };
 
 export const LABELS: Record<string, string> = {
@@ -164,6 +166,19 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         arg: str(args.path) ?? "",
         meta: added === undefined ? undefined : `+${added} -${removed ?? 0}`,
         detail: str(diff.unifiedDiff) ?? "",
+        diff: true,
+      };
+    }
+
+    case "gitDiff": {
+      const diff = asObject(result.diff);
+      const added = num(diff.linesAdded);
+      return {
+        name,
+        arg: str(args.path) ?? str(result.path) ?? "",
+        meta: result.isBinary === true ? "binary" : added === undefined ? str(result.label) : `+${added} -${num(diff.linesRemoved) ?? 0}`,
+        detail: str(diff.unifiedDiff) ?? "",
+        diff: true,
       };
     }
 

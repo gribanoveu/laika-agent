@@ -1,0 +1,68 @@
+.diff-view {
+  margin: 0;
+  border-radius: 7px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text-dim);
+  font-variant-ligatures: none;
+  max-height: 240px;
+  overflow: auto;
+}
+.diff-view-raw {
+  padding: 8px 9px;
+  white-space: pre-wrap;
+}
+.diff-row {
+  display: grid;
+  grid-template-columns: max-content max-content 1.5ch 1fr;
+  min-width: 0;
+}
+.diff-no {
+  min-width: 3ch;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+}
+.diff-sign {
+  user-select: none;
+}
+.diff-text {
+  padding-right: 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-hunk {
+  display: block;
+  padding: 2px 9px;
+  color: var(--text-faint);
+  background: var(--bg-panel-soft);
+}
+.diff-add {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+.diff-add .diff-sign,
+.diff-add .diff-text {
+  color: var(--green);
+}
+.diff-del {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.diff-del .diff-sign,
+.diff-del .diff-text {
+  color: var(--red);
+}
+/* The words that changed within an edited line. */
+.diff-view mark {
+  color: inherit;
+  border-radius: 2px;
+}
+.diff-add mark {
+  background: color-mix(in srgb, var(--green) 28%, transparent);
+}
+.diff-del mark {
+  background: color-mix(in srgb, var(--red) 28%, transparent);
+}
