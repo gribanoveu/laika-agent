@@ -12,7 +12,9 @@ const results: Record<string, unknown> = {};
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
-    return Promise.resolve(results[command] ?? null);
+    const result = results[command];
+    // Tauri rejects with the command's error string.
+    return result instanceof Error ? Promise.reject(result.message) : Promise.resolve(result ?? null);
   },
 }));
 
@@ -459,5 +461,20 @@ describe("branching", () => {
     const before = result.current.turn.blocks;
     act(() => result.current.branch("user:0"));
     expect(result.current.turn.blocks).toBe(before);
+  });
+});
+
+describe("a turn that fails to start", () => {
+  test("says why in the transcript, not only in `error`", async () => {
+    results.chat_start = new Error("provider said 401");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    expect(result.current.turn.status).toBe("done");
+    const notice = result.current.turn.blocks.find((b) => b.kind === "notice");
+    expect(notice && "text" in notice && notice.text).toBe("The turn failed: provider said 401");
   });
 });

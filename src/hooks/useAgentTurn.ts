@@ -195,7 +195,9 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
         finish(await startChat(id, history.current, todos.current, planRef.current));
       } catch (e) {
         setError(String(e));
-        setTurn((state) => endTurn(state));
+        // In the transcript, not only in `error`: a turn that fails before its
+        // first event otherwise ends with nothing on screen to say why.
+        setTurn((state) => appendNotice(endTurn(state), `The turn failed: ${e}`));
       }
     },
     [turn.status, turn.blocks.length, listen, finish, makeRoom],
@@ -214,7 +216,9 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
         finish(await resumeChat(id, checkpoint, decisions, planRef.current));
       } catch (e) {
         setError(String(e));
-        setTurn((state) => endTurn(state));
+        // In the transcript, not only in `error`: a turn that fails before its
+        // first event otherwise ends with nothing on screen to say why.
+        setTurn((state) => appendNotice(endTurn(state), `The turn failed: ${e}`));
       }
     },
     [turn.checkpoint, finish],
