@@ -1,0 +1,43 @@
+import { describe, expect, test } from "bun:test";
+import { changesShown, openPane, toggleChanges, type Docks } from "../lib/docks";
+
+const docks = (top: Docks["top"], topHidden: boolean, bottom: Docks["bottom"] = null): Docks => ({ top, topHidden, bottom });
+
+describe("the Changes button", () => {
+  test("opens Changes on top when nothing is there", () => {
+    expect(toggleChanges(docks("plan", true))).toEqual(docks("changes", false));
+  });
+
+  test("does not replace another pane on top: Changes goes under it", () => {
+    const next = toggleChanges(docks("plan", false, "terminal"));
+    expect(next).toEqual(docks("plan", false, "changes"));
+    expect(changesShown(next)).toBe(true);
+  });
+
+  test("hides Changes wherever it is, and leaves the rest", () => {
+    expect(toggleChanges(docks("changes", false, "terminal"))).toEqual(docks("changes", true, "terminal"));
+    expect(toggleChanges(docks("plan", false, "changes"))).toEqual(docks("plan", false, null));
+  });
+});
+
+describe("a pane from the menu", () => {
+  test("opens on top when the top is free", () => {
+    expect(openPane(docks("changes", true), "mcp", "right")).toEqual(docks("mcp", false));
+    expect(openPane(docks("changes", true, "terminal"), "mcp", "right")).toEqual(docks("mcp", false, "terminal"));
+  });
+
+  test("does not replace the pane on top: it goes under it, in place of what was there", () => {
+    expect(openPane(docks("hooks", false), "plan", "right")).toEqual(docks("hooks", false, "plan"));
+    expect(openPane(docks("hooks", false, "plan"), "mcp", "right")).toEqual(docks("hooks", false, "mcp"));
+  });
+
+  test("a bottom pane goes under even when the top is free", () => {
+    expect(openPane(docks("plan", true), "terminal", "bottom")).toEqual(docks("plan", true, "terminal"));
+  });
+
+  test("already on screen stays where it is, so it is never drawn twice", () => {
+    const state = docks("plan", false, "changes");
+    expect(openPane(state, "changes", "right")).toBe(state);
+    expect(openPane(state, "plan", "right")).toBe(state);
+  });
+});

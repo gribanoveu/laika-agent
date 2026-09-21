@@ -30,6 +30,7 @@ import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
 import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
+import { changesShown, openPane, toggleChanges, type Docks } from "./lib/docks";
 import { exportChat, setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import "./App.css";
@@ -50,7 +51,8 @@ const isPaneIn =
   (dock: Dock) =>
   (value: unknown): value is AsideTab =>
     isAsideTab(value) && PANES.find((p) => p.id === value)?.dock === dock;
-const isBottomTab = (value: unknown): value is AsideTab | null => value === null || isPaneIn("bottom")(value);
+// Any pane may sit under the top one: Changes goes there when the top is taken.
+const isBottomTab = (value: unknown): value is AsideTab | null => value === null || isAsideTab(value);
 
 /** What "Implement in Agent mode" says on the user's behalf. Shown in the transcript like anything they type. */
 const IMPLEMENT_PLAN = "Implement the plan above. Work through the checklist in order.";
@@ -65,6 +67,10 @@ export default function App() {
   const [bottomTab, setBottomTab] = useStoredState<AsideTab | null>("atlas-bottom-tab", null, isBottomTab);
   // On screen in either dock: what decides whether a pane's data is read.
   const shown = (pane: AsideTab) => (tab === pane && !asideHidden) || bottomTab === pane;
+  // Held here, not in the Changes pane: closing the pane, or moving it to the
+  // other dock, would otherwise throw away a message half written. A different
+  // folder is a different repository, and starts empty.
+  const [commitMessage, setCommitMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [mcpEditing, setMcpEditing] = useState(false);
@@ -77,6 +83,7 @@ export default function App() {
   const toast = useToast();
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
+  useEffect(() => setCommitMessage(""), [workspace.path]);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -97,8 +104,6 @@ export default function App() {
       collapse: () => setCollapsed(true),
       expand: () => setCollapsed(false),
     },
-    // Dragged shut, it is closed; it reopens only from the menu.
-    bottom: { collapsed: false, collapse: () => setBottomTab(null), expand: () => {} },
   });
 
   // Narrow window: the sidebar falls back to its rail and the side panel
@@ -115,17 +120,15 @@ export default function App() {
   );
   useNarrowCollapse("(max-width: 900px)", hideAsideWhenNarrow);
 
-  // The header's button is Changes' own: it opens Changes over whatever the
-  // "⋮" put there, and hides only Changes. Every other pane opens from the menu.
-  const changesShown = tab === "changes" && !asideHidden;
-
-  // Every panel opens the same way: pick it in the header's "⋮", and the dock
-  // it belongs to shows it.
-  const openTab = (next: AsideTab) => {
-    if (PANES.find((p) => p.id === next)?.dock === "bottom") return setBottomTab(next);
-    setTab(next);
-    setAsideHidden(false);
+  // Where each pane goes is `lib/docks.ts`'s rule; this only stores the answer.
+  const docks: Docks = { top: tab, topHidden: asideHidden, bottom: bottomTab };
+  const setDocks = (next: Docks) => {
+    setTab(next.top);
+    setAsideHidden(next.topHidden);
+    setBottomTab(next.bottom);
   };
+  const openTab = (next: AsideTab) =>
+    setDocks(openPane(docks, next, PANES.find((p) => p.id === next)?.dock ?? "right"));
 
   // The conversation just left is already on disk and stays in the sidebar;
   // this only stops pointing at it.
@@ -209,6 +212,7 @@ export default function App() {
   const panes: Omit<PaneContext, "active"> = {
     workspace: workspace.path,
     onNotify: toast.show,
+    commitDraft: { message: commitMessage, onMessage: setCommitMessage },
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
@@ -279,8 +283,8 @@ export default function App() {
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
             onNewChat={newChat}
-            asideOpen={changesShown}
-            onToggleAside={() => (changesShown ? setAsideHidden(true) : openTab("changes"))}
+            asideOpen={changesShown(docks)}
+            onToggleAside={() => setDocks(toggleChanges(docks))}
             onOpenPanel={openTab}
             onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}

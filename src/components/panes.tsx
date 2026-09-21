@@ -30,6 +30,8 @@ export type PaneContext = {
   active: boolean;
   workspace: string | null;
   onNotify: (msg: string) => void;
+  /** The commit message being written in Changes. */
+  commitDraft: { message: string; onMessage: (message: string) => void };
   mcp: McpListProps;
   hooks: HooksListProps;
   plan: {
@@ -323,7 +325,7 @@ function TerminalPane({ active }: PaneContext) {
 // names a pane. `dock` is where the menu opens it; each dock shows one pane. There is no tab strip: eight icons in a 300px column were
 // unreadable, and only one of them is opened often.
 export const PANES: PaneDef[] = [
-  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ onNotify }) => <ChangesPanel onNotify={onNotify} /> },
+  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ onNotify, commitDraft }) => <ChangesPanel onNotify={onNotify} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },

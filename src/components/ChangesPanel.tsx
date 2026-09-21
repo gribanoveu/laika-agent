@@ -1,10 +1,14 @@
-import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
 import type { ChangedFile } from "../types";
 import "./ChangesPanel.css";
 
-type Props = { onNotify: (msg: string) => void };
+type Props = {
+  onNotify: (msg: string) => void;
+  /** The commit message, held above the panel: it outlives the panel being closed or moved. */
+  message: string;
+  onMessage: (message: string) => void;
+};
 
 function StageRow({
   file,
@@ -38,9 +42,8 @@ function StageRow({
   );
 }
 
-export function ChangesPanel({ onNotify }: Props) {
+export function ChangesPanel({ onNotify, message, onMessage }: Props) {
   const { unstaged, staged, stage, unstage, stageAll } = useStaging();
-  const [message, setMessage] = useState("");
 
   const canCommit = staged.length > 0 && message.trim().length > 0;
 
@@ -93,7 +96,7 @@ export function ChangesPanel({ onNotify }: Props) {
           rows={4}
           placeholder="Describe the commit…"
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => onMessage(e.target.value)}
         />
         <div className="commit-actions">
           <button

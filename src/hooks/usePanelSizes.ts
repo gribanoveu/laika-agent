@@ -10,7 +10,8 @@ export const PANEL_LIMITS: Record<PanelKey, { min: number; max: number; initial:
   // panel has none: it is hidden from the chat header, never by dragging.
   sidebar: { min: 180, max: 420, initial: 248, rail: 58 },
   aside: { min: 260, max: 560, initial: 300 },
-  // A height: the pane docked under the chat. Dragged past its minimum it closes.
+  // A height: the lower pane of the right column. Like the side panel it stops
+  // at its minimum — it closes from its own button, never by dragging.
   bottom: { min: 120, max: 640, initial: 240 },
 };
 
