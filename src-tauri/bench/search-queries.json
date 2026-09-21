@@ -2,7 +2,7 @@
   "about": "Questions with known answers for the code-search quality bench (services/search_bench.rs). `expect` lists acceptable answers: a file, and optionally the declaration (a substring of the chunk's qualified name). Answers were checked by reading the code. Repositories not found on disk are skipped. Questions marked `\"answer\": \"docs\"` are answered by documentation, so that a ranking which buries prose is caught; `\"caller\"` name an identifier whose use, not declaration, is the answer.",
   "repos": [
     {
-      "name": "atlas-desktop",
+      "name": "laika-agent",
       "root": "..",
       "queries": [
         {

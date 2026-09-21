@@ -6,7 +6,7 @@ import type { RuleListItem, SkillsView } from "../lib/chat";
 // so each tab re-reads them; a switch is shown at once and then settled by
 // what the backend saved.
 
-let disk: SkillsView = { dir: "/home/.atlas-desktop/skills", skills: [] };
+let disk: SkillsView = { dir: "/home/.laika/skills", skills: [] };
 let calls: string[] = [];
 let failToggle = false;
 let ruleFiles: RuleListItem[] = [];
@@ -44,7 +44,7 @@ const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 const skill = (name: string, enabled = true) => ({ name, description: `${name} does a thing`, enabled, error: null });
 
 beforeEach(() => {
-  disk = { dir: "/home/.atlas-desktop/skills", skills: [skill("release"), skill("review")] };
+  disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")] };
   calls = [];
   failToggle = false;
   ruleFiles = [rule("AGENTS.md")];
@@ -133,8 +133,8 @@ describe("the skills tab", () => {
   });
 
   test("an empty folder says where skills go", () => {
-    panel({ dir: "/home/.atlas-desktop/skills", skills: [] });
-    expect(screen.getByText(/SKILL\.md in \/home\/\.atlas-desktop\/skills/)).toBeTruthy();
+    panel({ dir: "/home/.laika/skills", skills: [] });
+    expect(screen.getByText(/SKILL\.md in \/home\/\.laika\/skills/)).toBeTruthy();
   });
 });
 

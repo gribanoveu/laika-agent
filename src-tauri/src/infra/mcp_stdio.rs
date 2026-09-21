@@ -85,7 +85,7 @@ impl Connection {
         let params = json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": { "name": "atlas-desktop", "version": env!("CARGO_PKG_VERSION") },
+            "clientInfo": { "name": "laika-agent", "version": env!("CARGO_PKG_VERSION") },
         });
         let result = self.request("initialize", params, cancelled).map_err(|e| match e {
             // -32601: no such method; -32022: unsupported protocol version —
@@ -465,7 +465,7 @@ mod tests {
         let seen = fake.seen.lock().unwrap();
         assert_eq!(seen[0]["method"], "initialize");
         assert_eq!(seen[0]["params"]["protocolVersion"], PROTOCOL_VERSION);
-        assert_eq!(seen[0]["params"]["clientInfo"]["name"], "atlas-desktop");
+        assert_eq!(seen[0]["params"]["clientInfo"]["name"], "laika-agent");
         assert_eq!(seen[1], json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
         assert_eq!(seen[2]["method"], "tools/list");
     }

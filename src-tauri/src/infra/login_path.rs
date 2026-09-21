@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use super::process_runner::{kill_tree, set_process_group};
 
-const MARK: &str = "__ATLAS_PATH__";
+const MARK: &str = "__LAIKA_PATH__";
 /// A login shell that loads `nvm` or `conda` takes a second or two; one that
 /// takes longer is not waited for.
 const TIMEOUT: Duration = Duration::from_secs(5);

@@ -162,7 +162,7 @@ export function Sidebar({
                 <span className="ico">
                   <Clock size={14} />
                 </span>
-                About atlas-cli
+                About Laika Agent
               </button>
             </div>
           )}

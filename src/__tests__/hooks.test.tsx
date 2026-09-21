@@ -39,7 +39,7 @@ const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
 beforeEach(() => {
   disk = {
-    path: "/home/.atlas-desktop/hooks.json",
+    path: "/home/.laika/hooks.json",
     text: '{\n  "hooks": {}\n}\n',
     hooks: [
       { event: "PreToolUse", matcher: "runCommand", command: "guard.sh", timeoutSecs: 60, problem: null },

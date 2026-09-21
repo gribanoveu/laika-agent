@@ -134,7 +134,7 @@ fn models() -> Vec<(String, Arc<dyn EmbeddingProvider>)> {
 }
 
 fn open(repo: &Repo, root: &Path, model: &str, provider: Arc<dyn EmbeddingProvider>) -> (RepoIndexer, Duration) {
-    let store = std::env::temp_dir().join("atlas-search-bench").join(format!("{}-{model}", repo.name));
+    let store = std::env::temp_dir().join("laika-search-bench").join(format!("{}-{model}", repo.name));
     let indexer = RepoIndexer::open(root, &store, provider, ChunkBuildOptions::default()).unwrap();
     let sink: IndexEventSink = Arc::new(|_| {});
     let started = Instant::now();

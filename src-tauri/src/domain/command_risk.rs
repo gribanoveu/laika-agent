@@ -510,7 +510,7 @@ fn is_secret(word: &str) -> bool {
                 | "shadow" | "sudoers" | "environ"
         )
         || [".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".secret", ".secrets"].iter().any(|ext| name.ends_with(ext));
-    let secret_dir = [".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/", ".gcloud/", ".terraform/", ".atlas-desktop/"]
+    let secret_dir = [".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/", ".gcloud/", ".terraform/", ".laika/"]
         .iter()
         .any(|dir| path.contains(dir) || path.ends_with(dir.trim_end_matches('/')));
     secret_name || secret_dir

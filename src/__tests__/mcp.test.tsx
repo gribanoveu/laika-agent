@@ -47,7 +47,7 @@ const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
 beforeEach(() => {
   disk = {
-    path: "/home/.atlas-desktop/mcp.json",
+    path: "/home/.laika/mcp.json",
     text: '{\n  "mcpServers": {}\n}\n',
     servers: [
       { name: "github", command: "npx -y server-github", enabled: true, error: null, state: { state: "running", tools: 3 } },

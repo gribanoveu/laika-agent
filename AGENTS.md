@@ -13,9 +13,9 @@ Context for AI coding agents (Claude Code and others) working in this repository
 
 ## Project - this app
 
-**Atlas desktop** - a cli agent like claude code desktop 
+**Laika Agent** - a cli agent like claude code desktop 
 
-- Identifier: `com.eugene.atlas-desktop`
+- Identifier: `com.eugene.laika-agent`
 - Stack: Tauri v2, React + TypeScript frontend, Rust backend
 - Package manager: **bun** — always use `bun`/`bunx`, never `npm`/`pnpm`/`yarn`
 

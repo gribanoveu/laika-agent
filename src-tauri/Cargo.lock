@@ -257,53 +257,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atlas-desktop"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "blake3",
- "chrono",
- "dirs 7.0.0",
- "git2",
- "globset",
- "http",
- "ignore",
- "keyring",
- "libc",
- "notify",
- "pulldown-cmark",
- "rand 0.8.8",
- "regex",
- "rusqlite",
- "secrecy",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "similar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-window-state",
- "thiserror 2.0.20",
- "tokenizers",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-go",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-language",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
- "ureq",
- "uuid",
- "yaml_serde",
- "zeroize",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2523,6 +2476,53 @@ checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
+]
+
+[[package]]
+name = "laika-agent"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "blake3",
+ "chrono",
+ "dirs 7.0.0",
+ "git2",
+ "globset",
+ "http",
+ "ignore",
+ "keyring",
+ "libc",
+ "notify",
+ "pulldown-cmark",
+ "rand 0.8.8",
+ "regex",
+ "rusqlite",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "similar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-window-state",
+ "thiserror 2.0.20",
+ "tokenizers",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-language",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "ureq",
+ "uuid",
+ "yaml_serde",
+ "zeroize",
 ]
 
 [[package]]

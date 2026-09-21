@@ -53,7 +53,7 @@ export function DataPolicy({ provider, debugLogging, mcpServers, hooks }: Props)
       name: "Request log",
       value: debugLogging ? "on" : "off",
       note: debugLogging
-        ? "Every request is written whole to ~/.atlas-desktop/logs, on this machine."
+        ? "Every request is written whole to ~/.laika/logs, on this machine."
         : "Nothing about requests is written to disk.",
     },
   ];
@@ -73,7 +73,7 @@ export function DataPolicy({ provider, debugLogging, mcpServers, hooks }: Props)
         ))}
       </dl>
       <p className="data-policy-note">
-        Everything else stays in ~/.atlas-desktop: chats, the index (embeddings are computed on this machine) and
+        Everything else stays in ~/.laika: chats, the index (embeddings are computed on this machine) and
         the tool log, with file contents cut out. No telemetry.
       </p>
     </section>
