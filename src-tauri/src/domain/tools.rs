@@ -684,6 +684,12 @@ pub enum ToolError {
     /// An `editFile` edit's `old` text appears nowhere in the file.
     #[error("edit text not found: {0}")]
     EditTextNotFound(String),
+    /// The anchor is in the file but with the other line endings. A `\r` is
+    /// invisible in an error message, so without saying this the model can
+    /// only guess why a text it copied does not match. Carries no text of
+    /// its own, so the tool-call log needs no redaction for it.
+    #[error("edit text not found: the file uses {file} line endings and your text has {edit} — resend it with {file}")]
+    EditLineEndings { file: &'static str, edit: &'static str },
     /// An `editFile` edit's `old` text appears more than once — which
     /// occurrence was meant is unknowable, so nothing is written. `.1` is the
     /// match count, so the model learns how much more context to include.

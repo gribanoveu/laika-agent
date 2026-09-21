@@ -10,6 +10,8 @@
 //! The `match` is exhaustive on purpose: a new result kind has to decide how
 //! it reads, rather than fall back to JSON unnoticed.
 
+use std::collections::BTreeMap;
+
 use crate::domain::background::ProcessOutput;
 use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
@@ -22,6 +24,7 @@ pub fn for_model(result: &ToolResult) -> String {
         ToolResult::File { content, start_line, end_line, total_lines } => file(content, *start_line, *end_line, *total_lines),
         ToolResult::FileOutline { path, entries, total_lines } => outline(path, entries, *total_lines),
         ToolResult::GrepResults { matches, truncated } => grep(matches, *truncated),
+        ToolResult::FileList { entries, .. } if entries.is_empty() => "No files found.".to_string(),
         ToolResult::FileList { entries, truncated } => render_file_tree(entries, *truncated),
         ToolResult::FileWritten { path, diff } => render_for_model("Wrote", path, diff, true),
         ToolResult::FileEdited { path, diff } => render_for_model("Edited", path, diff, true),
@@ -76,41 +79,48 @@ fn outline(path: &str, entries: &[OutlineEntry], total: u32) -> String {
 
 /// As `rg -n` prints it: a file's name once, then `line:` for a hit and
 /// `line-` for the context around it, `--` between groups that do not touch.
+///
+/// Each line is printed once. Two hits whose context windows overlap share
+/// their lines, and a line that is itself a hit is shown as one even when it
+/// also falls in another hit's context.
 fn grep(matches: &[GrepMatch], truncated: bool) -> String {
     if matches.is_empty() {
-        return "No matches.".to_string();
+        return "No matches. Git-ignored paths (build output, dependencies) are not searched — use runCommand to search them.".to_string();
     }
-    let mut out = String::new();
-    let mut current: Option<&str> = None;
-    let mut last_line = 0u32;
+    // Files in the order they came, each with its lines by number.
+    let mut files: Vec<(&str, BTreeMap<u32, (bool, &str)>)> = Vec::new();
     for m in matches {
+        if files.last().is_none_or(|(path, _)| *path != m.path) {
+            files.push((&m.path, BTreeMap::new()));
+        }
+        let Some((_, lines)) = files.last_mut() else { continue };
         let first = m.line.saturating_sub(m.before.len() as u32);
-        if current != Some(m.path.as_str()) {
-            if current.is_some() {
-                out.push('\n');
-            }
-            out.push_str(&m.path);
-            out.push('\n');
-            current = Some(&m.path);
-        } else if first > last_line + 1 {
-            out.push_str("--\n");
-        }
         for (k, text) in m.before.iter().enumerate() {
-            let n = first + k as u32;
-            if n > last_line {
-                out.push_str(&format!("{n}-{text}\n"));
-            }
+            lines.entry(first + k as u32).or_insert((false, text));
         }
-        out.push_str(&format!("{}:{}\n", m.line, m.text));
+        lines.insert(m.line, (true, &m.text));
         for (k, text) in m.after.iter().enumerate() {
-            out.push_str(&format!("{}-{text}\n", m.line + 1 + k as u32));
+            lines.entry(m.line + 1 + k as u32).or_insert((false, text));
         }
-        last_line = m.line + m.after.len() as u32;
     }
+    let mut blocks = Vec::new();
+    for (path, lines) in files {
+        let mut out = path.to_string();
+        let mut previous: Option<u32> = None;
+        for (n, (hit, text)) in lines {
+            if previous.is_some_and(|p| n > p + 1) {
+                out.push_str("\n--");
+            }
+            out.push_str(&format!("\n{n}{}{text}", if hit { ':' } else { '-' }));
+            previous = Some(n);
+        }
+        blocks.push(out);
+    }
+    let mut out = blocks.join("\n\n");
     if truncated {
-        out.push_str("\n[more matches not shown — narrow the pattern or the glob]");
+        out.push_str("\n\n[more matches not shown — narrow the pattern or the glob]");
     }
-    out.trim_end().to_string()
+    out
 }
 
 fn todo(tasks: &[Task]) -> String {
@@ -254,6 +264,11 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_listing_says_so_instead_of_drawing_a_bare_root() {
+        assert_eq!(for_model(&ToolResult::FileList { entries: vec![], truncated: false }), "No files found.");
+    }
+
+    #[test]
     fn a_file_says_whether_it_is_whole() {
         let whole = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2 });
         assert_eq!(whole, "All 2 lines:\na\nb\n");
@@ -279,7 +294,22 @@ mod tests {
             shown,
             "a.rs\n2-// one\n3:fn one()\n4-}\n5:fn two()\n--\n20:fn far()\n\nb.rs\n1:use a;\n\n[more matches not shown — narrow the pattern or the glob]"
         );
-        assert_eq!(for_model(&ToolResult::GrepResults { matches: vec![], truncated: false }), "No matches.");
+        let none = for_model(&ToolResult::GrepResults { matches: vec![], truncated: false });
+        assert!(none.starts_with("No matches. Git-ignored paths"), "{none}");
+    }
+
+    /// Hits on 118 and 120 with two lines of context: 120 is both the first
+    /// hit's context and the second hit. Each line once, 120 as the hit.
+    #[test]
+    fn overlapping_context_prints_each_line_once() {
+        let shown = for_model(&ToolResult::GrepResults {
+            matches: vec![
+                hit("t.java", 118, "retry()", &["a", "b"], &["c", "retry()"]),
+                hit("t.java", 120, "retry()", &["retry()", "c"], &["d", "e"]),
+            ],
+            truncated: false,
+        });
+        assert_eq!(shown, "t.java\n116-a\n117-b\n118:retry()\n119-c\n120:retry()\n121-d\n122-e");
     }
 
     #[test]

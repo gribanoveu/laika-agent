@@ -43,7 +43,12 @@ pub fn git_status(scope: &ToolScope) -> Result<ToolResult, ToolError> {
     let prefix = scope_prefix(scope, &repo)?;
 
     let mut options = StatusOptions::new();
-    options.include_untracked(true).recurse_untracked_dirs(true);
+    // Renames on the staged side: `git mv` otherwise reads as an addition and
+    // an unrelated deletion, and the model loses that the file only moved.
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true);
     let statuses = repo.statuses(Some(&mut options)).map_err(git_error)?;
 
     let (mut staged, mut unstaged, mut conflicted) = (Vec::new(), Vec::new(), Vec::new());
@@ -55,8 +60,17 @@ pub fn git_status(scope: &ToolScope) -> Result<ToolResult, ToolError> {
             continue;
         };
         let status = entry.status();
+        // A rename shows where it came from: `old → new`, as git prints it.
+        let rename = entry
+            .head_to_index()
+            .filter(|_| status.contains(Status::INDEX_RENAMED))
+            .and_then(|delta| Some((in_scope(delta.old_file().path()?, &prefix)?, in_scope(delta.new_file().path()?, &prefix)?)));
+        let shown = match rename {
+            Some((old, new)) => format!("{old} → {new}"),
+            None => path.to_string(),
+        };
         let file = |letter: &str| GitFileStatus {
-            path: path.to_string(),
+            path: shown.clone(),
             status: letter.to_string(),
         };
 
@@ -291,6 +305,11 @@ fn format_time(seconds: i64) -> String {
     }
 }
 
+/// A path from a git delta, relative to the scope root; `None` outside it.
+fn in_scope<'a>(path: &'a Path, prefix: &str) -> Option<&'a str> {
+    path.to_str()?.strip_prefix(prefix)
+}
+
 fn index_letter(status: Status) -> Option<&'static str> {
     if status.contains(Status::INDEX_NEW) {
         Some("A")
@@ -521,6 +540,24 @@ mod tests {
         );
         assert!(conflicted.is_empty());
         assert!(!truncated);
+    }
+
+    /// `git mv` is one move, not an addition and an unrelated deletion.
+    #[test]
+    fn a_staged_rename_is_one_entry_from_old_to_new() {
+        let (scope, root, repo) = repo_fixture("git-rename");
+        std::fs::rename(root.join("tracked.txt"), root.join("moved.txt")).expect("renamed");
+        {
+            let mut index = repo.index().expect("index");
+            index.remove_path(Path::new("tracked.txt")).expect("old path unstaged");
+            index.add_path(Path::new("moved.txt")).expect("new path staged");
+            index.write().expect("written");
+        }
+
+        let (staged, unstaged, _, _) = status_of(&scope);
+
+        assert_eq!(entries(&staged), [("tracked.txt → moved.txt", "R")]);
+        assert!(unstaged.is_empty(), "{unstaged:?}");
     }
 
     #[test]

@@ -58,6 +58,11 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
         // Directories always survive: the pattern scopes which files come
         // back, not the structure needed to navigate to them.
         entries.retain(|e| e.is_dir || matcher.is_match(basename(&e.path)));
+        // Kept for the way to what matched; with nothing matched, a tree of
+        // folders only reads as "found a lot".
+        if entries.iter().all(|e| e.is_dir) {
+            entries.clear();
+        }
     }
 
     // After the pattern, deliberately — narrowing the request is then a way
@@ -279,6 +284,22 @@ mod tests {
 
     /// Matching on the name, not the path — otherwise `*.rs` would match
     /// nothing below the top level.
+    #[test]
+    fn a_pattern_nothing_matches_leaves_no_folders_behind() {
+        let (scope, root) = fixture("list-pattern-none");
+        write(&root, "src/main.rs", "");
+
+        let (entries, _) = run(
+            &scope,
+            &ListFilesArgs {
+                pattern: Some("*.xyz".to_string()),
+                ..ListFilesArgs::default()
+            },
+        );
+
+        assert!(entries.is_empty(), "{:?}", paths(&entries));
+    }
+
     #[test]
     fn the_pattern_matches_at_any_depth() {
         let (scope, root) = fixture("list-pattern-depth");

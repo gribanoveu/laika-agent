@@ -96,6 +96,19 @@ fn exact_match_ranges<'a>(
     Ok(ranges)
 }
 
+/// Whether `old` would have matched with the file's line endings. Said rather
+/// than fixed: an edit applied to text other than what the model sent is a
+/// change nobody asked for.
+fn line_endings_differ(content: &str, old: &str) -> Option<ToolError> {
+    if old.contains("\r\n") && content.contains(&old.replace("\r\n", "\n")) {
+        return Some(ToolError::EditLineEndings { file: "LF", edit: "CRLF" });
+    }
+    if old.contains('\n') && !old.contains('\r') && content.contains(&old.replace('\n', "\r\n")) {
+        return Some(ToolError::EditLineEndings { file: "CRLF", edit: "LF" });
+    }
+    None
+}
+
 /// The anchor's single occurrence.
 ///
 /// Reporting the count on an ambiguous match is the actionable half: it tells
@@ -104,7 +117,7 @@ fn exact_match_ranges<'a>(
 fn find_unique(content: &str, old: &str) -> Result<(usize, usize), ToolError> {
     let mut occurrences = content.match_indices(old);
     let Some((start, _)) = occurrences.next() else {
-        return Err(ToolError::EditTextNotFound(old.to_string()));
+        return Err(line_endings_differ(content, old).unwrap_or_else(|| ToolError::EditTextNotFound(old.to_string())));
     };
     let count = 1 + occurrences.count();
     if count > 1 {
@@ -260,6 +273,24 @@ mod tests {
 
         assert!(matches!(err, ToolError::EditTextNotFound(_)));
         assert_eq!(on_disk(&root), "let x = 1;\n", "left untouched");
+    }
+
+    /// A `\r` does not show in an error, so a mismatch in line endings has to
+    /// be named — both ways round, and not for an anchor that is simply absent.
+    #[test]
+    fn a_line_ending_mismatch_is_named_not_guessed() {
+        let (scope, root, mut reads) = fixture("edit-crlf", "a: 1\nb: 2\n");
+        let err = edit_file(&scope, &edits(&[("a: 1\r\nb: 2", "x")]), &mut reads).expect_err("CRLF anchor");
+        assert!(matches!(err, ToolError::EditLineEndings { file: "LF", edit: "CRLF" }), "{err}");
+        assert_eq!(on_disk(&root), "a: 1\nb: 2\n", "left untouched");
+
+        let (scope, _, mut reads) = fixture("edit-lf", "a: 1\r\nb: 2\r\n");
+        let err = edit_file(&scope, &edits(&[("a: 1\nb: 2", "x")]), &mut reads).expect_err("LF anchor");
+        assert!(matches!(err, ToolError::EditLineEndings { file: "CRLF", edit: "LF" }), "{err}");
+
+        let (scope, _, mut reads) = fixture("edit-absent", "a: 1\nb: 2\n");
+        let err = edit_file(&scope, &edits(&[("a: 9\r\nb: 2", "x")]), &mut reads).expect_err("absent");
+        assert!(matches!(err, ToolError::EditTextNotFound(_)), "{err}");
     }
 
     /// The count is what tells the model the anchor was too short.

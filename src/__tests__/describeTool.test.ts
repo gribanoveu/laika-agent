@@ -101,7 +101,25 @@ describe("what each call shows", () => {
 
     expect(shown.meta).toBe("3 matches · 2 files");
     // Grouped by file, as grep prints it, with the lines around a hit.
-    expect(shown.detail).toBe("a.java\n1: getIncome()\n7- // why\n8- // because\n9: getIncome()\n10- }\n\nb.java\n4: getIncome()");
+    expect(shown.detail).toBe("a.java\n1: getIncome()\n--\n7- // why\n8- // because\n9: getIncome()\n10- }\n\nb.java\n4: getIncome()");
+  });
+
+  test("overlapping context is shown once, and a line that is a hit shows as one", () => {
+    const shown = describeTool(
+      tool({
+        name: "grep",
+        arguments: '{"pattern":"retry"}',
+        result: {
+          matches: [
+            { path: "t.java", line: 118, text: "retry()", before: ["a"], after: ["c", "retry()"] },
+            { path: "t.java", line: 120, text: "retry()", before: ["c"], after: ["d"] },
+            { path: "t.java", line: 130, text: "retry()" },
+          ],
+          truncated: false,
+        },
+      }),
+    );
+    expect(shown.detail).toBe("t.java\n117- a\n118: retry()\n119- c\n120: retry()\n121- d\n--\n130: retry()");
   });
 
   /// A capped search that reads as exhaustive is the one thing grep must not

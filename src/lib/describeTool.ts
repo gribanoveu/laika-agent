@@ -308,25 +308,42 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
   }
 }
 
-/** A file's name once, then `line:` for a hit and `line-` for the lines around it. */
+/**
+ * A file's name once, then `line:` for a hit and `line-` for the lines around
+ * it, `--` between groups that do not touch. Each line once: overlapping
+ * context is shared, and a line that is a hit shows as one.
+ */
 function grepDetail(matches: Json[]): string {
-  const lines: string[] = [];
-  let current: string | undefined;
+  const files: [string, Map<number, [boolean, string]>][] = [];
   for (const m of matches) {
-    const path = str(m.path);
-    if (path !== current) {
-      if (current !== undefined) lines.push("");
-      lines.push(path ?? "");
-      current = path;
-    }
+    const path = str(m.path) ?? "";
+    if (files[files.length - 1]?.[0] !== path) files.push([path, new Map()]);
+    const lines = files[files.length - 1][1];
     const line = num(m.line) ?? 0;
     const before = Array.isArray(m.before) ? (m.before as string[]) : [];
     const after = Array.isArray(m.after) ? (m.after as string[]) : [];
-    before.forEach((text, k) => lines.push(`${line - before.length + k}- ${text}`));
-    lines.push(`${line}: ${str(m.text) ?? ""}`);
-    after.forEach((text, k) => lines.push(`${line + 1 + k}- ${text}`));
+    before.forEach((text, k) => {
+      const n = line - before.length + k;
+      if (!lines.has(n)) lines.set(n, [false, text]);
+    });
+    lines.set(line, [true, str(m.text) ?? ""]);
+    after.forEach((text, k) => {
+      if (!lines.has(line + 1 + k)) lines.set(line + 1 + k, [false, text]);
+    });
   }
-  return lines.join("\n");
+  return files
+    .map(([path, lines]) => {
+      const out = [path];
+      let previous: number | undefined;
+      for (const n of [...lines.keys()].sort((a, b) => a - b)) {
+        if (previous !== undefined && n > previous + 1) out.push("--");
+        const [hit, text] = lines.get(n)!;
+        out.push(`${n}${hit ? ":" : "-"} ${text}`);
+        previous = n;
+      }
+      return out.join("\n");
+    })
+    .join("\n\n");
 }
 
 function primaryArgument(wireName: string, args: Json): string {
