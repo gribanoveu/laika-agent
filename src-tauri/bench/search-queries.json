@@ -399,6 +399,30 @@
             }
           ],
           "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "kubernetes helm chart deployment pipeline",
+          "expect": []
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "payment checkout with stripe credit card",
+          "expect": []
+        },
+        {
+          "lang": "ru",
+          "answer": "none",
+          "q": "подключение к PostgreSQL через пул соединений",
+          "expect": []
+        },
+        {
+          "lang": "ru",
+          "answer": "none",
+          "q": "отправка SMS-кода для входа по номеру телефона",
+          "expect": []
         }
       ]
     },
@@ -596,6 +620,24 @@
             }
           ],
           "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "kafka consumer group offset commit",
+          "expect": []
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "payment checkout with stripe credit card",
+          "expect": []
+        },
+        {
+          "lang": "ru",
+          "answer": "none",
+          "q": "расчёт стоимости доставки по весу посылки",
+          "expect": []
         }
       ]
     },
@@ -946,6 +988,30 @@
             }
           ],
           "answer": "caller"
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "kubernetes helm chart deployment pipeline",
+          "expect": []
+        },
+        {
+          "lang": "en",
+          "answer": "none",
+          "q": "render a sidebar tree of files in a React component",
+          "expect": []
+        },
+        {
+          "lang": "ru",
+          "answer": "none",
+          "q": "парсинг исходников tree-sitter на фрагменты",
+          "expect": []
+        },
+        {
+          "lang": "ru",
+          "answer": "none",
+          "q": "подсветка синтаксиса markdown в редакторе",
+          "expect": []
         }
       ]
     }

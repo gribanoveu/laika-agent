@@ -311,6 +311,26 @@ pub fn weak_search_hint(input: SearchMetaInput<'_>) -> (bool, Option<&'static st
     (false, None)
 }
 
+/// The words of a query worth asking the index whether it has them: long
+/// enough for the prefix match of the word ranking ([`fts5_query`]) to be
+/// specific. At three letters a prefix is in every index.
+pub fn query_words(query: &str) -> Vec<&str> {
+    query.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= FTS_PREFIX_MIN_CHARS).collect()
+}
+
+/// Whether the query is about something the workspace does not have: two of
+/// its words or more, and a third of them or more, are in no indexed passage.
+///
+/// The ranking returns its nearest passages whatever the query, and by
+/// similarity alone "kubernetes helm chart" and a real question look the same
+/// (the bench's unanswerable questions scored 0.23–0.54, real answers from
+/// 0.32). Words the workspace lacks tell them apart: `kubernetes`, `helm`,
+/// `stripe` are nowhere in a Java service. One missing word is not enough —
+/// "which" or "stored" is missing from code without comments.
+pub fn absent_from_workspace(unknown: usize, words: usize) -> bool {
+    unknown >= 2 && unknown * 3 >= words
+}
+
 /// Runs of characters that can make up an identifier or a path.
 fn split_raw_segments(query: &str) -> Vec<String> {
     query
@@ -553,6 +573,19 @@ mod tests {
     #[test]
     fn a_named_query_that_hit_needs_no_hint() {
         assert_eq!(verdict(3, 1, true, false, &["read_source"]), (false, None));
+    }
+
+    #[test]
+    fn words_worth_asking_about_are_four_letters_or_more_in_any_script() {
+        assert_eq!(query_words("the kubernetes helm, пул соединений"), ["kubernetes", "helm", "соединений"]);
+    }
+
+    /// Two missing words and a third of the query; one is noise.
+    #[test]
+    fn a_workspace_lacks_the_topic_when_enough_of_its_words_are_missing() {
+        assert!(absent_from_workspace(2, 6));
+        assert!(!absent_from_workspace(2, 7), "under a third");
+        assert!(!absent_from_workspace(1, 1), "one word is not enough");
     }
 
     /// Every string the model reads is English (port plan, "service strings").

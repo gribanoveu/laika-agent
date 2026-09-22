@@ -47,7 +47,8 @@ struct Repo {
 struct Query {
     lang: String,
     /// `"docs"` when the answer is documentation, `"caller"` when it is the
-    /// use of a name the question gives rather than its declaration.
+    /// use of a name the question gives rather than its declaration, `"none"`
+    /// when the repository has no answer and the result should say it is weak.
     #[serde(default)]
     answer: String,
     q: String,
@@ -145,8 +146,8 @@ fn open(repo: &Repo, root: &Path, model: &str, provider: Arc<dyn EmbeddingProvid
 
 /// Where the first answer is in the tool's own result, and in the semantic
 /// ranking alone (with the cosine of its first hit and of its top result),
-/// and how long the tool's search took.
-fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, Option<f32>)>, Duration) {
+/// how long the tool's search took, and whether it called its result weak.
+fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, Option<f32>)>, Duration, bool) {
     // Timed as the tool calls it; ranked from a longer list, so that the
     // bench's own files, dropped below, do not take a place.
     let started = Instant::now();
@@ -156,6 +157,7 @@ fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, 
     code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K, &filter).unwrap();
     let spent = started.elapsed();
     let mut result = code_search::search(indexer, &query.q, None, 20, &filter).unwrap();
+    let weak = result.meta.weak;
     result.matches.retain(|m| !is_bench(&m.path));
     result.matches.truncate(10);
     if std::env::var_os("SEARCH_BENCH_VERBOSE").is_some() {
@@ -178,7 +180,7 @@ fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, 
         });
         (first.map(|(r, _)| r), top, first.map(|(_, s)| s))
     });
-    (file, decl, meaning, spent)
+    (file, decl, meaning, spent, weak)
 }
 
 /// A question's answer as a key: its acceptable files, in order.
@@ -199,6 +201,9 @@ fn search_bench() {
         println!("\n=== {model}");
         let mut all = Tally::default();
         let mut by_lang: std::collections::BTreeMap<String, Tally> = Default::default();
+        // Questions without an answer that were called weak, of how many;
+        // and questions with one that were, wrongly.
+        let (mut none_weak, mut none_total, mut false_weak) = (0, 0, 0);
         for repo in &bench.repos {
             let root = manifest.join(&repo.root);
             let Ok(root) = root.canonicalize() else {
@@ -227,6 +232,7 @@ fn search_bench() {
                 .iter()
                 .filter(|q| q.lang == "ru")
                 .map(answer_of)
+                .filter(|answer| !answer.is_empty())
                 .filter(|answer| repo.queries.iter().any(|q| q.lang == "en" && answer_of(q) == *answer))
                 .collect();
             for query in &repo.queries {
@@ -235,8 +241,15 @@ fn search_bench() {
                     history_fired += 1;
                     history_right += usize::from(query.expect.iter().any(|e| near.iter().any(|path| e.file(path))));
                 }
-                let (file, decl, meaning, took) = ask(&indexer, query);
+                let (file, decl, meaning, took, weak) = ask(&indexer, query);
                 spent += took;
+                if query.answer == "none" {
+                    none_total += 1;
+                    none_weak += usize::from(weak);
+                    println!("  none    weak {weak:<5} [{}] {}", query.lang, query.q);
+                    continue;
+                }
+                false_weak += usize::from(weak);
                 tally.add(file, decl);
                 all.add(file, decl);
                 by_lang.entry(query.lang.clone()).or_default().add(file, decl);
@@ -254,7 +267,8 @@ fn search_bench() {
                         hit.map_or("-".to_string(), |s| format!("{s:.2}"))
                     )
                 });
-                println!("  file#{:<2} decl#{:<2}{meaning:<26} [{}] {}", show(file), show(decl), query.lang, query.q);
+                let weak = if weak { " weak" } else { "" };
+                println!("  file#{:<2} decl#{:<2}{meaning:<26}{weak} [{}] {}", show(file), show(decl), query.lang, query.q);
             }
             println!("{}", tally.row(&repo.name));
             println!(
@@ -267,6 +281,7 @@ fn search_bench() {
             println!("{}", tally.row(lang));
         }
         println!("{}", all.row(&format!("ALL {model}")));
+        println!("weak: {none_weak} of {none_total} without an answer, {false_weak} of {} with one", all.n);
     }
 }
 

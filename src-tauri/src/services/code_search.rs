@@ -20,8 +20,8 @@ use crate::domain::chunk_index::{ChunkId, ChunkMetadata};
 use crate::domain::code_search::{CodeMatch, CodeSearchResult, MatchSource, SearchFilter, SearchMeta};
 use crate::domain::repo_index::Language;
 use crate::domain::search_query::{
-    SearchMetaInput, extract_search_tokens, fts5_query, is_documentation, looks_like_identifier,
-    path_segment_matches, weak_search_hint,
+    SearchMetaInput, absent_from_workspace, extract_search_tokens, fts5_query, is_documentation,
+    looks_like_identifier, path_segment_matches, query_words, weak_search_hint,
 };
 use crate::infra::index_store::IndexStoreError;
 use crate::services::chunk_text::resolve_chunk;
@@ -186,20 +186,35 @@ pub fn search(
     let room = top_k - matches.len();
     matches.extend(later.into_iter().take(room));
 
+    let symbol_hits = matches.iter().filter(|m| m.source == MatchSource::Symbol).count() as u32;
     let (weak, hint) = weak_search_hint(SearchMetaInput {
         match_count: matches.len(),
-        symbol_hits: matches.iter().filter(|m| m.source == MatchSource::Symbol).count() as u32,
+        symbol_hits,
         has_semantic: matches.iter().any(|m| m.source == MatchSource::Semantic),
         only_lexical: matches.iter().all(|m| m.source == MatchSource::Lexical),
         extracted_tokens: &tokens,
     });
+    // A declaration the query named is found, whatever else it asks about.
+    let unknown = if matches.is_empty() || symbol_hits > 0 { Vec::new() } else { unknown_words(indexer, query)? };
+    let (weak, hint) = if absent_from_workspace(unknown.len(), query_words(query).len()) {
+        let words = unknown.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(", ");
+        (
+            true,
+            Some(format!(
+                "No indexed file has the words {words}: what the query asks about may not be in this workspace. \
+                 These are only the nearest passages, not an answer — check with grep before relying on one."
+            )),
+        )
+    } else {
+        (weak, hint.map(str::to_string))
+    };
     // Outranks the ordinary advice, which would say to wait for the semantic
     // index — wrong when waiting will not bring it back.
     let hint = match unavailable {
         Some(reason) => Some(format!(
             "Search by meaning is unavailable ({reason}); these results matched on names and words only."
         )),
-        None => hint.map(str::to_string),
+        None => hint,
     };
     // Said even beside another hint: it is the one thing a second search can
     // change without rewording anything.
@@ -224,6 +239,19 @@ pub fn search(
         hint
     };
     Ok(CodeSearchResult { matches, meta: SearchMeta { tiers_used, weak, hint } })
+}
+
+/// The words of the query ([`query_words`]) no indexed passage has, by the
+/// prefix match the word ranking uses.
+fn unknown_words<'q>(indexer: &RepoIndexer, query: &'q str) -> Result<Vec<&'q str>, IndexStoreError> {
+    let mut unknown = Vec::new();
+    for word in query_words(query) {
+        let Some(fts) = fts5_query(word) else { continue };
+        if indexer.store().search_bm25(&fts, 1)?.is_empty() {
+            unknown.push(word);
+        }
+    }
+    Ok(unknown)
 }
 
 /// The words of the query that are names as code spells them — and the whole
@@ -529,6 +557,28 @@ mod tests {
     }
 
     // --------------------------------------------------- words and meaning
+
+    /// Nearest passages come back for any query; words the workspace has
+    /// nowhere say they are not an answer.
+    #[test]
+    fn a_query_about_what_the_workspace_lacks_is_weak_and_names_the_words() {
+        let indexer =
+            indexed("search-absent", &[("deploy.rs", "fn deploy_service() {\n    // push the build\n}\n")], Arc::default());
+
+        let result = search(&indexer, "kubernetes helm deploy", None, 5, &all()).unwrap();
+
+        assert!(!result.matches.is_empty(), "the nearest passages still come back");
+        assert!(result.meta.weak);
+        let hint = result.meta.hint.unwrap();
+        assert!(hint.starts_with("No indexed file has the words `kubernetes`, `helm`:"), "{hint}");
+        // A declaration the query names is found, whatever else it asks about.
+        let named = search(&indexer, "kubernetes helm deploy_service", None, 5, &all()).unwrap();
+        assert!(!named.meta.hint.unwrap_or_default().contains("No indexed file"));
+        // Not the verdict: the ordinary ones still come through.
+        let wordless = search(&indexer, "как это работает", None, 5, &all()).unwrap();
+        assert!(wordless.meta.weak, "{:?}", wordless.meta);
+        assert!(wordless.meta.hint.unwrap().contains("no names from code"));
+    }
 
     #[test]
     fn meaning_finds_what_shares_no_word_with_the_query() {
