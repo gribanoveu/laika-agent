@@ -37,6 +37,9 @@ const MAX_STATUS_ENTRIES: usize = 200;
 /// A file past the text budget still shows its counts.
 const MAX_DIFF_FILES: usize = 50;
 pub(in crate::services::ai_tools) const MAX_DIFF_CHARS: usize = 20_000;
+/// Files a `stat` diff of a directory lists: no text, so far more than
+/// `MAX_DIFF_FILES` fit.
+const MAX_STAT_FILES: usize = 500;
 /// `gitLog` commits by default, and at most.
 const DEFAULT_LOG_COMMITS: u32 = 20;
 const MAX_LOG_COMMITS: u32 = 100;
@@ -119,16 +122,21 @@ pub fn git_diff(scope: &ToolScope, args: &GitDiffArgs) -> Result<ToolResult, Too
     let repo = open(scope)?;
     let resolved = resolve_existing(scope, &args.path)?;
     let comparison = Comparison::of(&repo, args)?;
+    let stat = args.stat == Some(true);
 
     if resolved.is_dir() {
-        return directory_diff(scope, &repo, &comparison, &resolved);
+        return directory_diff(scope, &repo, &comparison, &resolved, stat);
     }
 
     let repo_rel = repo_relative(scope, &repo, &resolved)?;
-    let (diff, is_binary) = file_diff(&repo, &comparison, &repo_rel, &resolved)?;
+    let (mut diff, is_binary) = file_diff(&repo, &comparison, &repo_rel, &resolved)?;
+    if stat {
+        diff.unified_diff.clear();
+        diff.truncated = false;
+    }
     Ok(ToolResult::GitDiff {
         path: relative_to_root(scope, &resolved)?,
-        label: comparison.label(),
+        label: label(&comparison, stat),
         diff,
         is_binary,
     })
@@ -213,11 +221,19 @@ fn file_diff(
 /// change. Each is diffed the way a single file is; what does not fit the
 /// budget keeps its counts and loses its text, and the model can ask for
 /// that file on its own.
+/// What was compared, and whether only the totals were asked for — so a
+/// header with no text under it is not read as an empty change.
+fn label(comparison: &Comparison, stat: bool) -> String {
+    let label = comparison.label();
+    if stat { format!("{label}, totals only") } else { label }
+}
+
 fn directory_diff(
     scope: &ToolScope,
     repo: &Repository,
     comparison: &Comparison,
     dir: &Path,
+    stat: bool,
 ) -> Result<ToolResult, ToolError> {
     let prefix = scope_prefix(scope, repo)?;
     let dir_rel = repo_relative(scope, repo, dir)?;
@@ -254,14 +270,18 @@ fn directory_diff(
         })
         .collect();
 
-    let truncated = changed.len() > MAX_DIFF_FILES;
+    let cap = if stat { MAX_STAT_FILES } else { MAX_DIFF_FILES };
+    let truncated = changed.len() > cap;
     let workdir = repo.workdir().unwrap_or(scope.root());
     let mut budget = MAX_DIFF_CHARS;
     let mut files = Vec::new();
-    for repo_rel in changed.into_iter().take(MAX_DIFF_FILES) {
+    for repo_rel in changed.into_iter().take(cap) {
         let (mut diff, is_binary) = file_diff(repo, comparison, &repo_rel, &workdir.join(&repo_rel))?;
         let size = diff.unified_diff.chars().count();
-        if size > budget {
+        if stat {
+            diff.unified_diff.clear();
+            diff.truncated = false;
+        } else if size > budget {
             diff.unified_diff.clear();
             diff.truncated = true;
         } else {
@@ -273,7 +293,7 @@ fn directory_diff(
 
     Ok(ToolResult::GitDiffFiles {
         path: relative_to_root(scope, dir)?,
-        label: comparison.label(),
+        label: label(comparison, stat),
         files,
         truncated,
     })
@@ -581,6 +601,10 @@ pub(super) fn diff_definition() -> LlmToolDefinition {
                         "null"
                     ],
                     "description": "A commit hash or ref. When given, diffs that commit against its parent."
+                },
+                "stat": {
+                    "type": ["boolean", "null"],
+                    "description": "Only how many lines each file gained and lost, no text — like git diff --stat. Cheap on a large change: look first, then ask for the files that matter."
                 }
             },
             "required": [
@@ -1046,6 +1070,29 @@ mod tests {
 
         assert_eq!(files.len(), MAX_DIFF_FILES);
         assert!(truncated);
+    }
+
+    /// Totals only: every file's counts and no text, far past the text cap,
+    /// and a label that says so — or the empty diffs read as no change.
+    #[test]
+    fn a_stat_diff_has_the_counts_without_the_text() {
+        let (scope, root, _repo) = repo_fixture("git-diff-stat");
+        for n in 0..=MAX_DIFF_FILES {
+            write(&root, &format!("many/{n:03}.txt"), "x\ny\n");
+        }
+        write(&root, "tracked.txt", "one\nchanged\n");
+        let stat = GitDiffArgs { path: "many".into(), stat: Some(true), ..GitDiffArgs::default() };
+
+        let ToolResult::GitDiffFiles { files, truncated, label, .. } = git_diff(&scope, &stat).unwrap() else { panic!() };
+
+        assert_eq!((files.len(), truncated), (MAX_DIFF_FILES + 1, false));
+        assert!(files.iter().all(|f| f.diff.unified_diff.is_empty() && !f.diff.truncated && f.diff.lines_added == 2));
+        assert!(label.ends_with(", totals only"), "{label}");
+
+        let one = GitDiffArgs { path: "tracked.txt".into(), stat: Some(true), ..GitDiffArgs::default() };
+        let ToolResult::GitDiff { diff, label, .. } = git_diff(&scope, &one).unwrap() else { panic!() };
+        assert_eq!((diff.unified_diff.as_str(), diff.lines_added, diff.lines_removed), ("", 1, 1));
+        assert!(label.ends_with(", totals only"));
     }
 
     /// Past the budget a file keeps its counts and loses its text, so the

@@ -14,6 +14,9 @@ use crate::domain::tools::{DeleteDirectoryArgs, ToolError, ToolResult, ToolScope
 
 use super::super::resolve::{relative_to_root, resolve_existing};
 
+/// Paths a recursive delete names; past it, a count.
+const MAX_LISTED: usize = 50;
+
 pub fn delete_directory(
     scope: &ToolScope,
     args: &DeleteDirectoryArgs,
@@ -35,14 +38,16 @@ pub fn delete_directory(
         return Err(ToolError::DirectoryNotEmpty(relative));
     }
 
-    let files = super::move_path::count_files(&path);
+    let under = super::move_path::files_under(&path);
+    let files = under.len();
+    let listed = under.iter().take(MAX_LISTED).filter_map(|file| relative_to_root(scope, file).ok()).collect();
     if empty {
         fs::remove_dir(&path).map_err(ToolError::Io)?;
     } else {
         fs::remove_dir_all(&path).map_err(ToolError::Io)?;
     }
 
-    Ok(ToolResult::DirectoryDeleted { path: relative, files })
+    Ok(ToolResult::DirectoryDeleted { path: relative, files, listed })
 }
 
 /// What the model is told `deleteDirectory` is for.
@@ -116,7 +121,7 @@ mod tests {
         .expect("removes");
 
         assert!(!root.join("empty").exists());
-        assert!(matches!(result, ToolResult::DirectoryDeleted { ref path, files: 0 } if path == "empty"));
+        assert!(matches!(result, ToolResult::DirectoryDeleted { ref path, files: 0, .. } if path == "empty"));
     }
 
     /// The default that makes an over-broad path cost one refusal instead of a
@@ -149,7 +154,8 @@ mod tests {
         .expect("removes");
 
         assert!(!root.join("full").exists());
-        assert!(matches!(result, ToolResult::DirectoryDeleted { files: 2, .. }), "{result:?}");
+        let ToolResult::DirectoryDeleted { files, listed, .. } = result else { panic!() };
+        assert_eq!((files, listed), (2, vec!["full/b.txt".to_string(), "full/deep/a.txt".to_string()]));
     }
 
     /// Nothing addresses the scope root but a mistake, and honouring it would

@@ -40,15 +40,22 @@ pub fn move_path(scope: &ToolScope, args: &MoveArgs, reads: &mut ReadFiles) -> R
 /// Files anywhere under `dir`, not following links: "moved 0 files" is how
 /// the model learns it moved an empty shell rather than the tree it meant.
 pub(super) fn count_files(dir: &std::path::Path) -> usize {
-    let Ok(entries) = fs::read_dir(dir) else { return 0 };
-    entries
+    files_under(dir).len()
+}
+
+/// Every file under `dir`, not following links, in path order.
+pub(super) fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let mut files: Vec<std::path::PathBuf> = entries
         .flatten()
-        .map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_dir() => count_files(&entry.path()),
-            Ok(_) => 1,
-            Err(_) => 0,
+        .flat_map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => files_under(&entry.path()),
+            Ok(_) => vec![entry.path()],
+            Err(_) => Vec::new(),
         })
-        .sum()
+        .collect();
+    files.sort();
+    files
 }
 
 /// What the model is told `move` is for.

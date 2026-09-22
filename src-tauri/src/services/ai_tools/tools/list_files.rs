@@ -36,6 +36,14 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
         }
     };
 
+    // `path` itself is depth 0, so this would list nothing and read as "no
+    // files" — refused, with the depth that was meant.
+    if args.depth == Some(0) {
+        return Err(ToolError::InvalidArguments {
+            tool: "listFiles".into(),
+            reason: "depth 0 is the folder itself and lists nothing; use 1 for its entries, or omit depth".into(),
+        });
+    }
     let scanned = workspace_scanner::scan_entries(&dir, args.depth.map(|d| d as usize))
         .map_err(ToolError::Io)?;
     // A folder at the last level walked, with something in it, was not
@@ -166,8 +174,8 @@ pub(super) fn definition() -> LlmToolDefinition {
                         "integer",
                         "null"
                     ],
-                    "minimum": 0,
-                    "description": "Levels below `path`: `path` itself is 0, its direct children 1. Omit for unlimited. Start shallow on an unfamiliar repository. With a pattern, prefer no depth: files below it are not searched, and the result says when folders were left unopened."
+                    "minimum": 1,
+                    "description": "Levels below `path`: its direct children are 1. Omit for unlimited. Start shallow on an unfamiliar repository. With a pattern, prefer no depth: files below it are not searched, and the result says when folders were left unopened."
                 },
                 "pattern": {
                     "type": [
@@ -266,7 +274,8 @@ mod tests {
 
         assert_eq!(at(1), ["one", "top.txt"]);
         assert_eq!(at(2), ["one", "one/mid.txt", "one/two", "top.txt"]);
-        assert!(at(0).is_empty(), "depth 0 is valid and means no descendants");
+        let zero = list_files(&scope, &ListFilesArgs { depth: Some(0), ..ListFilesArgs::default() }).unwrap_err();
+        assert!(zero.to_string().contains("use 1 for its entries"), "{zero}");
     }
 
     /// The pattern scopes which *files* come back. Dropping the directories

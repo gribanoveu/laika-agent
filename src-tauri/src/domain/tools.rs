@@ -994,6 +994,10 @@ pub enum ToolResult {
         /// stands guard over a tree.
         #[serde(default)]
         files: usize,
+        /// Which ones, up to a limit — what a deleted file's diff is to
+        /// `deleteFile`: the trace of what an irreversible call removed.
+        #[serde(default)]
+        listed: Vec<String>,
     },
     #[serde(rename_all = "camelCase")]
     Moved {
@@ -1475,7 +1479,7 @@ impl From<TodoUpdateStatus> for TodoStatus {
     }
 }
 
-/// `gitDiff` arguments — one file, never a directory.
+/// `gitDiff` arguments — a file, or a directory file by file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffArgs {
@@ -1484,6 +1488,10 @@ pub struct GitDiffArgs {
     pub scope: Option<String>,
     /// A commit hash or ref. When set, diffs that commit against its parent.
     pub commit: Option<String>,
+    /// Totals per file only, no text — `git diff --stat`: the cheap look at
+    /// a large change before asking for the files that matter.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_bool")]
+    pub stat: Option<bool>,
 }
 
 /// `semanticSearch` arguments.

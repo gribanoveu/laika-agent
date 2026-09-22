@@ -47,9 +47,16 @@ pub fn for_model(result: &ToolResult) -> String {
         // this is the only trace of an irreversible change.
         ToolResult::FileDeleted { path, diff } => render_for_model("Deleted", path, diff, true),
         ToolResult::DirectoryCreated { path } => format!("Created directory {path}"),
-        ToolResult::DirectoryDeleted { path, files: 0 } => format!("Deleted empty directory {path}"),
-        ToolResult::DirectoryDeleted { path, files } => {
-            format!("Deleted directory {path} with {files} {}", if *files == 1 { "file" } else { "files" })
+        ToolResult::DirectoryDeleted { path, files: 0, .. } => format!("Deleted empty directory {path}"),
+        ToolResult::DirectoryDeleted { path, files, listed } => {
+            let mut out = format!("Deleted directory {path} with {files} {}", if *files == 1 { "file" } else { "files" });
+            if !listed.is_empty() {
+                out.push_str(&format!(":\n- {}", listed.join("\n- ")));
+                if *files > listed.len() {
+                    out.push_str(&format!("\n- and {} more", files - listed.len()));
+                }
+            }
+            out
         }
         ToolResult::Moved { from, to, files: None } => format!("Moved {from} → {to}"),
         ToolResult::Moved { from, to, files: Some(n) } => {
@@ -410,7 +417,9 @@ mod tests {
 
     #[test]
     fn a_deleted_directory_says_how_much_went_with_it() {
-        let deleted = |files| for_model(&ToolResult::DirectoryDeleted { path: "a".into(), files });
+        let deleted = |files| for_model(&ToolResult::DirectoryDeleted { path: "a".into(), files, listed: vec![] });
+        let named = for_model(&ToolResult::DirectoryDeleted { path: "a".into(), files: 3, listed: vec!["a/x".into(), "a/y".into()] });
+        assert_eq!(named, "Deleted directory a with 3 files:\n- a/x\n- a/y\n- and 1 more");
         assert_eq!(deleted(0), "Deleted empty directory a");
         assert_eq!(deleted(1), "Deleted directory a with 1 file");
         assert_eq!(deleted(3), "Deleted directory a with 3 files");

@@ -260,6 +260,7 @@ mod definition_tests {
                     path: path(),
                     scope: Some("staged".to_string()),
                     commit: Some("HEAD~1".to_string()),
+                    stat: None,
                 })],
             ),
             ToolName::RunCommand => (
