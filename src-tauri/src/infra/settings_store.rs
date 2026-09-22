@@ -55,6 +55,11 @@ mod tests {
             skill_sources: crate::domain::settings::OptOut { disabled: vec!["agents".to_string()] },
             rules: crate::domain::settings::OptOut { disabled: vec!["/repo/AGENTS.md".to_string()] },
             tool_log: crate::domain::settings::ToolLogSettings { enabled: false },
+            approval: crate::domain::settings::ApprovalMemory {
+                remember: crate::domain::settings::RememberScope::Repository,
+                auto_chats: vec!["c1".to_string()],
+                auto_folders: vec!["/repo".to_string()],
+            },
         }
     }
 

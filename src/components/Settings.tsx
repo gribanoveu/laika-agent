@@ -1,9 +1,9 @@
 import { useState, type ComponentProps } from "react";
-import { Bot, Palette, Shield, Sparkles } from "lucide-react";
+import { Bot, Palette, Shield, ShieldCheck, Sparkles } from "lucide-react";
 import { ProviderSettings } from "./ProviderSettings";
 import { DataPolicy } from "./DataPolicy";
 import { ItemList } from "./ItemList";
-import type { SkillSourceItem, SkillsView } from "../lib/chat";
+import type { RememberScope, SkillSourceItem, SkillsView } from "../lib/chat";
 import type { PanelItem } from "../types";
 import { THEMES, type ThemePreference } from "../hooks/useTheme";
 import { FONT_SIZES, type FontSize } from "../hooks/useChatFontSize";
@@ -16,10 +16,24 @@ const SECTIONS = [
   { id: "models", label: "Models", icon: Bot },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "permissions", label: "Permissions", icon: ShieldCheck },
   { id: "privacy", label: "Privacy", icon: Shield },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"];
+
+const REMEMBER: { value: RememberScope; label: string; hint: string }[] = [
+  {
+    value: "chat",
+    label: "Per chat",
+    hint: "Each chat keeps the Ask or Auto it was left in. A new chat starts in Ask.",
+  },
+  {
+    value: "repository",
+    label: "Per repository",
+    hint: "One choice for every chat in the open folder, new ones included. Other folders keep their own.",
+  },
+];
 
 /** What each skills folder is called here, and what reading it means. */
 const SOURCES: Record<SkillSourceItem["id"], { badge: string; title: string; desc: string }> = {
@@ -47,6 +61,9 @@ type Props = {
   provider: ComponentProps<typeof ProviderSettings>;
   /** The skills folders: which of them are read at all. */
   skills: { view: SkillsView | null; error: string | null; onToggle: (id: SkillSourceItem["id"], enabled: boolean) => void };
+  /** Where the composer's Ask/Auto is remembered. */
+  remember: RememberScope;
+  onRemember: (remember: RememberScope) => void;
   debugLogging: boolean;
   onDebugLogging: (enabled: boolean) => void;
   theme: ThemePreference;
@@ -60,6 +77,8 @@ type Props = {
 export function Settings({
   provider,
   skills,
+  remember,
+  onRemember,
   debugLogging,
   onDebugLogging,
   theme,
@@ -151,6 +170,30 @@ export function Settings({
               A folder switched off is not read at all, in any repository. When two folders have a skill of the same
               name, the one higher in this list is used. Single skills are switched off in the Skills panel.
             </p>
+          </>
+        )}
+
+        {section === "permissions" && (
+          <>
+            <h3 className="settings-title">Permissions</h3>
+            <div className="modal-field">
+              <label>Remember Ask / Auto</label>
+              <div className="segmented" role="radiogroup" aria-label="Remember Ask / Auto">
+                {REMEMBER.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={remember === value}
+                    className={`segment${remember === value ? " active" : ""}`}
+                    onClick={() => onRemember(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="modal-note settings-hint">{REMEMBER.find((r) => r.value === remember)?.hint}</p>
           </>
         )}
 

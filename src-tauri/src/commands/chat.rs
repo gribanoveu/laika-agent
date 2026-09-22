@@ -24,6 +24,7 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use crate::domain::command_exec::Shell;
 use crate::domain::compaction::ContextUsage;
 use crate::domain::conversation_mode::ConversationMode;
+use crate::domain::settings::RememberScope;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
 use crate::domain::tools::{ApprovalPolicy, CodeSearchFn, Task, ToolPreview, ToolScope};
 use crate::domain::turn::{
@@ -358,13 +359,67 @@ pub fn chat_set_mode(
 #[tauri::command]
 pub fn approval_set_unattended(
     unattended: bool,
+    chat_id: Option<String>,
     state: State<'_, Arc<AgentState>>,
 ) -> Result<(), String> {
-    state
-        .approval
-        .lock()
-        .map_err(|_| "approval lock poisoned".to_string())?
-        .skip_all = unattended;
+    set_unattended(&state, unattended, chat_id.as_deref())
+}
+
+fn set_unattended(state: &AgentState, unattended: bool, chat_id: Option<&str>) -> Result<(), String> {
+    set_skip_all(state, unattended)?;
+    // Remembered after it took effect: a settings file that cannot be read
+    // costs the memory, not the choice made for this turn.
+    // No folder open, nothing to remember it for.
+    let Ok(folder) = state.workspace() else { return Ok(()) };
+    let mut settings = crate::infra::settings_store::load().map_err(|e| e.to_string())?;
+    if settings.approval.set_auto(chat_id, &folder.display().to_string(), unattended) {
+        crate::infra::settings_store::save(&settings).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Puts back what was chosen for this chat, or for the open folder, and says
+/// what it is. Ask when nothing was, or no folder is open.
+#[tauri::command]
+pub fn approval_restore(chat_id: Option<String>, state: State<'_, Arc<AgentState>>) -> Result<bool, String> {
+    restore_unattended(&state, chat_id.as_deref())
+}
+
+fn restore_unattended(state: &AgentState, chat_id: Option<&str>) -> Result<bool, String> {
+    let settings = crate::infra::settings_store::load().map_err(|e| e.to_string())?;
+    let auto = state
+        .workspace()
+        .is_ok_and(|folder| settings.approval.is_auto(chat_id, &folder.display().to_string()));
+    set_skip_all(state, auto)?;
+    Ok(auto)
+}
+
+#[tauri::command]
+pub fn approval_remember_get() -> Result<RememberScope, String> {
+    Ok(crate::infra::settings_store::load().map_err(|e| e.to_string())?.approval.remember)
+}
+
+/// Refuses on settings it cannot read, rather than saving defaults over them.
+#[tauri::command]
+pub fn approval_remember_set(remember: RememberScope) -> Result<(), String> {
+    let mut settings = crate::infra::settings_store::load().map_err(|e| e.to_string())?;
+    settings.approval.remember = remember;
+    crate::infra::settings_store::save(&settings).map_err(|e| e.to_string())
+}
+
+/// A chat switched to Auto before its first save had no id to be remembered
+/// by; it has one now. Best effort: the chat is saved either way, and a
+/// memory that failed to save only means it asks next time.
+pub(super) fn remember_new_chat(state: &AgentState, id: &str) {
+    let auto = state.approval.lock().is_ok_and(|approval| approval.skip_all);
+    let Ok(mut settings) = crate::infra::settings_store::load() else { return };
+    if auto && settings.approval.remember == RememberScope::Chat && settings.approval.set_auto(Some(id), "", true) {
+        let _ = crate::infra::settings_store::save(&settings);
+    }
+}
+
+fn set_skip_all(state: &AgentState, unattended: bool) -> Result<(), String> {
+    state.approval.lock().map_err(|_| "approval lock poisoned".to_string())?.skip_all = unattended;
     Ok(())
 }
 
@@ -503,6 +558,49 @@ mod tests {
             assert_eq!(starts.load(Ordering::SeqCst), 0);
             mcp_for_turn(Some(&servers), ConversationMode::Agent, &root, &|| false);
             assert_eq!(starts.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    fn skip_all(state: &AgentState) -> bool {
+        state.approval.lock().unwrap().skip_all
+    }
+
+    /// Auto is remembered for the chat, or for the folder, and put back from
+    /// there; a chat switched to Auto before it had an id keeps it once saved.
+    #[test]
+    fn ask_or_auto_is_remembered_and_put_back() {
+        crate::testing::with_app_dir("cmd-approval-memory", || {
+            let state = state();
+            // No folder: it takes effect, and nothing is remembered.
+            set_unattended(&state, true, Some("c0")).unwrap();
+            assert!(skip_all(&state));
+            assert!(!restore_unattended(&state, Some("c0")).unwrap(), "no folder asks");
+
+            *state.workspace.lock().unwrap() = Some(temp_dir("cmd-approval-folder").canonicalize().unwrap());
+            set_unattended(&state, true, Some("c1")).unwrap();
+            assert!(!restore_unattended(&state, Some("c2")).unwrap());
+            assert!(!skip_all(&state), "the other chat asks, and the policy says so");
+            assert!(restore_unattended(&state, Some("c1")).unwrap());
+            assert!(skip_all(&state));
+
+            // A new chat picked Auto with no id; its first save remembers it.
+            set_unattended(&state, true, None).unwrap();
+            remember_new_chat(&state, "c3");
+            assert!(restore_unattended(&state, Some("c3")).unwrap());
+            set_unattended(&state, false, Some("c3")).unwrap();
+            remember_new_chat(&state, "c4");
+            assert!(!restore_unattended(&state, Some("c4")).unwrap(), "saved under Ask, it asks");
+
+            // Per repository, one choice for every chat, a new one included.
+            let mut settings = crate::infra::settings_store::load().unwrap();
+            settings.approval.remember = RememberScope::Repository;
+            crate::infra::settings_store::save(&settings).unwrap();
+            assert!(!restore_unattended(&state, Some("c1")).unwrap(), "the chat's choice is not the folder's");
+            set_unattended(&state, true, Some("c1")).unwrap();
+            assert!(restore_unattended(&state, None).unwrap());
+            let before = crate::infra::settings_store::load().unwrap().approval;
+            remember_new_chat(&state, "c5");
+            assert_eq!(crate::infra::settings_store::load().unwrap().approval, before, "the folder already holds it");
         });
     }
 

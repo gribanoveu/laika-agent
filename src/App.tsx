@@ -29,13 +29,14 @@ import { useToast } from "./hooks/useToast";
 import { nativeFrame, startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { pickSavePath } from "./lib/dialog";
 import { useBackendSetting } from "./hooks/useBackendSetting";
+import { useApprovalMemory } from "./hooks/useApprovalMemory";
 import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
 import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, type Docks } from "./lib/docks";
-import { exportChat, setConversationMode, setUnattended, type ConversationMode } from "./lib/chat";
+import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import "./App.css";
 
@@ -90,7 +91,6 @@ export default function App() {
   // does it. Two chips, two questions — and both are enforced on the backend,
   // so these hold only what the chips read back.
   const conversation = useBackendSetting(setConversationMode, "agent" as ConversationMode);
-  const unattended = useBackendSetting<boolean>(setUnattended, false);
   const toast = useToast();
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
@@ -100,6 +100,9 @@ export default function App() {
   // The list is redrawn from disk after every save rather than guessed at
   // here: what belongs in it, and in what order, is the store's rule.
   const agent = useAgentTurn({ onSaved: history.refresh });
+  const approval = useApprovalMemory(agent.chatId, workspace.path, () =>
+    toast.show("Auto is on here — the agent will change files without asking"),
+  );
   const branch = useGitBranch(workspace.path, agent.turn.status);
   useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
@@ -164,7 +167,7 @@ export default function App() {
   // no warning; turning them off means the next write happens without anyone
   // seeing it, and the chip alone is a small thing to have noticed.
   const pickUnattended = async (next: boolean) => {
-    const failed = await unattended.pick(next);
+    const failed = await approval.pick(next);
     if (failed) toast.show(failed);
     else if (next) toast.show("Auto — the agent will change files without asking");
   };
@@ -324,7 +327,7 @@ export default function App() {
             running={agent.turn.status === "running"}
             conversation={conversation.value}
             onConversation={pickConversation}
-            unattended={unattended.value}
+            unattended={approval.unattended}
             onUnattended={pickUnattended}
             draft={agent.draft}
             models={llm.models}
@@ -387,6 +390,11 @@ export default function App() {
             onSave: llm.save,
             onRemove: llm.remove,
             onSelect: llm.select,
+          }}
+          remember={approval.remember}
+          onRemember={async (next) => {
+            const failed = await approval.pickRemember(next);
+            if (failed) toast.show(failed);
           }}
           debugLogging={llm.settings?.debugLogging ?? false}
           onDebugLogging={llm.debugLogging}

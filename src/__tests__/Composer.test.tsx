@@ -159,9 +159,9 @@ describe("holding the chosen mode", () => {
   /// the backend for two stages with no way to reach it.
   test("the permission chip reaches the policy that enforces it", async () => {
     const { setUnattended } = await import("../lib/chat");
-    await setUnattended(true);
+    await setUnattended(true, "c1");
     expect(calls).toEqual([
-      { command: "approval_set_unattended", args: { unattended: true } },
+      { command: "approval_set_unattended", args: { unattended: true, chatId: "c1" } },
     ]);
   });
 });

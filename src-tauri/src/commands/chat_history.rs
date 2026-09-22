@@ -44,7 +44,8 @@ pub fn chat_save(
     branched_from: Option<String>,
 ) -> Result<ChatSummary, String> {
     let workspace = state.workspace()?;
-    chat_store::save(
+    let first = chat_store::load(&id).is_err();
+    let summary = chat_store::save(
         &id,
         &workspace.display().to_string(),
         &messages,
@@ -53,7 +54,11 @@ pub fn chat_save(
         plan.as_deref(),
         branched_from.as_deref(),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    if first {
+        super::chat::remember_new_chat(&state, &id);
+    }
+    Ok(summary)
 }
 
 /// Writes one saved chat to a file the user picked, as Markdown. The path is

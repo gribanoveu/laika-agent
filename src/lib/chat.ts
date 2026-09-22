@@ -228,9 +228,33 @@ export async function alwaysAllow(tool: string): Promise<void> {
   return invoke<void>("approval_always_allow", { tool });
 }
 
-export async function setUnattended(unattended: boolean): Promise<void> {
+/**
+ * Ask or Auto for the turns from now on, remembered for `chatId` or for the
+ * open folder — whichever Settings says. A chat not saved yet (`null`) is
+ * remembered when it first is.
+ */
+export async function setUnattended(unattended: boolean, chatId: string | null = null): Promise<void> {
   requireBackend();
-  return invoke<void>("approval_set_unattended", { unattended });
+  return invoke<void>("approval_set_unattended", { unattended, chatId });
+}
+
+/** Puts back what was chosen for this chat or folder, and says whether it is Auto. */
+export async function restoreUnattended(chatId: string | null): Promise<boolean> {
+  requireBackend();
+  return invoke<boolean>("approval_restore", { chatId });
+}
+
+/** Where Ask/Auto is remembered: each chat its own, or one for the folder. */
+export type RememberScope = "chat" | "repository";
+
+export async function getRememberScope(): Promise<RememberScope> {
+  requireBackend();
+  return invoke<RememberScope>("approval_remember_get");
+}
+
+export async function setRememberScope(remember: RememberScope): Promise<void> {
+  requireBackend();
+  return invoke<void>("approval_remember_set", { remember });
 }
 
 /**

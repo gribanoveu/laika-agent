@@ -126,6 +126,57 @@ pub struct AppSettings {
     /// `AGENTS.md` leaves every other repository's alone.
     pub rules: OptOut,
     pub tool_log: ToolLogSettings,
+    pub approval: ApprovalMemory,
+}
+
+/// Where the composer's Ask/Auto is remembered. A chat or folder not listed
+/// asks: Auto is what has to be chosen, never what is fallen into.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ApprovalMemory {
+    pub remember: RememberScope,
+    /// Chats left in Auto, by id. A deleted chat's id costs nothing.
+    pub auto_chats: Vec<String>,
+    /// Folders every chat of which runs in Auto, by the path the chats are
+    /// saved under.
+    pub auto_folders: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RememberScope {
+    /// Each chat keeps its own; a new chat starts in Ask.
+    #[default]
+    Chat,
+    /// One choice for every chat in the open folder.
+    Repository,
+}
+
+impl ApprovalMemory {
+    /// Whether `chat` in `folder` runs in Auto. A chat not saved yet has no
+    /// id, and under `Chat` asks.
+    pub fn is_auto(&self, chat: Option<&str>, folder: &str) -> bool {
+        match self.remember {
+            RememberScope::Chat => chat.is_some_and(|id| self.auto_chats.iter().any(|c| c == id)),
+            RememberScope::Repository => self.auto_folders.iter().any(|f| f == folder),
+        }
+    }
+
+    /// Records the choice where the scope keeps it. `false` when there is
+    /// nowhere yet — a chat with no id — so the caller can record it once
+    /// there is.
+    pub fn set_auto(&mut self, chat: Option<&str>, folder: &str, auto: bool) -> bool {
+        let (list, key) = match (self.remember, chat) {
+            (RememberScope::Chat, Some(id)) => (&mut self.auto_chats, id),
+            (RememberScope::Chat, None) => return false,
+            (RememberScope::Repository, _) => (&mut self.auto_folders, folder),
+        };
+        list.retain(|k| k != key);
+        if auto {
+            list.push(key.to_string());
+        }
+        true
+    }
 }
 
 /// The tool-call log. On unless switched off: it keeps no file content, so
@@ -188,6 +239,30 @@ mod tests {
             base_url: format!("https://{id}.example/v1"),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn auto_is_remembered_per_chat_or_per_folder_and_asks_otherwise() {
+        let mut memory = ApprovalMemory::default();
+        assert!(!memory.is_auto(Some("c1"), "/repo"), "nothing chosen asks");
+        assert!(!memory.set_auto(None, "/repo", true), "an unsaved chat has nowhere to keep it");
+        assert!(memory.set_auto(Some("c1"), "/repo", true));
+        memory.set_auto(Some("c1"), "/repo", true);
+        assert_eq!(memory.auto_chats, ["c1"], "once");
+        assert!(memory.is_auto(Some("c1"), "/repo"));
+        assert!(!memory.is_auto(Some("c2"), "/repo"), "another chat asks");
+        assert!(!memory.is_auto(None, "/repo"), "a new chat asks");
+
+        memory.remember = RememberScope::Repository;
+        assert!(!memory.is_auto(Some("c1"), "/repo"), "the chat's choice is not the folder's");
+        assert!(memory.set_auto(None, "/repo", true));
+        assert!(memory.is_auto(None, "/repo") && memory.is_auto(Some("c9"), "/repo"));
+        assert!(!memory.is_auto(Some("c1"), "/other"));
+
+        memory.set_auto(Some("c1"), "/repo", false);
+        assert!(memory.auto_folders.is_empty(), "back to Ask leaves no trace");
+        memory.remember = RememberScope::Chat;
+        assert!(memory.is_auto(Some("c1"), "/repo"), "each scope keeps its own list");
     }
 
     #[test]
