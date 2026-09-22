@@ -325,8 +325,10 @@ pub fn resume(
     // The history has to still end with the assistant's tool-call turn: the
     // resumed round appends this round's tool results, and results with no
     // request in front of them are rejected by the provider — long after the
-    // point where the mismatch could be explained.
-    match checkpoint.history.last() {
+    // point where the mismatch could be explained. Results already after it
+    // are that round's too: calls the preflight refused are answered before
+    // the pause.
+    match checkpoint.history.iter().rev().find(|m| m.role != LlmRole::Tool) {
         Some(last) if last.role == LlmRole::Assistant && !last.tool_calls.is_empty() => {}
         _ => {
             return Err(TurnError::BadResume(
@@ -2243,6 +2245,26 @@ mod tests {
 
         let err = h.run(|turn| resume(turn, pending, vec![])).expect_err("refused");
         assert!(matches!(err, TurnError::BadResume(_)), "{err}");
+
+        // Only results may follow the round: anything else means it is over.
+        let round = LlmMessage {
+            role: LlmRole::Assistant,
+            content: None,
+            tool_call_id: None,
+            tool_calls: vec![wants("w1", "writeFile", "{}")],
+            native_content: None,
+        };
+        let pending = PendingApproval {
+            history: vec![round, LlmMessage::user("go")],
+            round: 1,
+            budget_used: 0,
+            event_seq: 0,
+            calls: vec![],
+            todos: vec![],
+            reads: ReadFiles::default(),
+        };
+        let err = h.run(|turn| resume(turn, pending, vec![])).expect_err("refused");
+        assert!(matches!(err, TurnError::BadResume(_)), "{err}");
     }
 
     /// One turn, one stream of numbers: a listener that reconnects after the
@@ -2457,6 +2479,35 @@ mod tests {
         let events = payloads(&h.events());
         assert!(events.contains(&"toolCall:w1".to_string()));
         assert!(events.contains(&"toolResult:w1".to_string()));
+    }
+
+    /// The preflight answers a refused call before the round pauses for the
+    /// rest, so the history then ends with that answer, not the request.
+    #[test]
+    fn a_round_with_a_refused_call_still_resumes_after_approval() {
+        let mut h = harness(
+            "loop-preflight-pause",
+            vec![
+                asks(vec![
+                    wants("w0", "writeFile", r#"{"path":"../outside.rs","content":"x"}"#),
+                    wants("w1", "writeFile", r#"{"path":"a.rs","content":"x"}"#),
+                ]),
+                text("done"),
+            ],
+        );
+        h.approval = asking();
+        let paused = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![]));
+        let ChatStreamOutcome::PendingApproval(pending) = paused.expect("pauses") else {
+            panic!("expected a pause");
+        };
+
+        let approve = vec![ToolCallDecision { id: "w1".to_string(), approved: true, reason: None }];
+        h.run(|turn| resume(turn, pending, approve)).expect("resumes");
+
+        let told = tool_contents(h.provider.requests().last().unwrap());
+        assert_eq!(told.len(), 2, "{told:?}");
+        assert!(told[0].starts_with("Error:"), "{}", told[0]);
+        assert!(h.root.join("a.rs").exists());
     }
 
     /// A listing goes to the model as a tree: a flat array of paths makes it
