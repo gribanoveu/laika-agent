@@ -72,7 +72,7 @@ pub(super) fn definition() -> LlmToolDefinition {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to the workspace root. Parent directories must already exist — use createDirectory first."
+                    "description": "File path relative to the workspace root. Missing parent directories are created."
                 },
                 "content": {
                     "type": "string",

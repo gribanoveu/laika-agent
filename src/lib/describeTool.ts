@@ -211,10 +211,16 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
       ];
       const lists = groups.map(([title, files]) => [title, Array.isArray(files) ? (files as Json[]) : []] as const);
       const changed = lists.reduce((n, [, files]) => n + files.length, 0);
+      const up = (result.upstream ?? {}) as Json;
+      // Only when apart: "↑0 ↓0" on every status is noise.
+      const apart = Number(up.ahead) || Number(up.behind) ? ` · ↑${up.ahead} ↓${up.behind}` : "";
       return {
         name,
         arg: str(result.branch) ?? "",
-        meta: block.result === undefined ? undefined : changed ? `${changed}${result.truncated ? "+" : ""} changed` : "clean",
+        meta:
+          block.result === undefined
+            ? undefined
+            : (changed ? `${changed}${result.truncated ? "+" : ""} changed` : "clean") + apart,
         detail: lists
           .filter(([, files]) => files.length)
           .map(([title, files]) => [`${title}:`, ...files.map((f) => `  ${str(f.status)} ${str(f.path)}`)].join("\n"))

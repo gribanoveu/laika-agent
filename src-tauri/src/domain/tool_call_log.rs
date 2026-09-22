@@ -219,7 +219,7 @@ mod tests {
             state: crate::domain::background::ProcessState::Running,
         };
         match tool {
-            ToolName::ReadFile => (None, ToolResult::File { content: LEAK.into(), start_line: 1, end_line: 1, total_lines: 1 }),
+            ToolName::ReadFile => (None, ToolResult::File { content: LEAK.into(), start_line: 1, end_line: 1, total_lines: 1, clamped: false }),
             ToolName::Grep => (
                 None,
                 ToolResult::GrepResults {
@@ -248,11 +248,11 @@ mod tests {
             ToolName::DeleteFile => (None, ToolResult::FileDeleted { path: path(), diff: diff() }),
             ToolName::CreateDirectory => (None, ToolResult::DirectoryCreated { path: path() }),
             ToolName::DeleteDirectory => (None, ToolResult::DirectoryDeleted { path: path() }),
-            ToolName::Move => (None, ToolResult::Moved { from: path(), to: path() }),
+            ToolName::Move => (None, ToolResult::Moved { from: path(), to: path(), files: None }),
             ToolName::Todo => (None, ToolResult::Todo { tasks: vec![] }),
             ToolName::GitStatus => (
                 None,
-                ToolResult::GitStatus { branch: None, staged: vec![], unstaged: vec![], conflicted: vec![], truncated: false },
+                ToolResult::GitStatus { branch: None, upstream: None, staged: vec![], unstaged: vec![], conflicted: vec![], truncated: false },
             ),
             ToolName::GitDiff => (
                 None,

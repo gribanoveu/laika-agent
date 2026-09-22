@@ -1,6 +1,6 @@
 //! `runCommand` — the one tool that is not a filesystem operation.
 
-use crate::domain::command_exec::{CommandError, CommandRequest};
+use crate::domain::command_exec::{CommandError, CommandRequest, MAX_OUTPUT_CHARS};
 use crate::domain::llm::LlmToolDefinition;
 use crate::domain::tools::{ToolDeps, ToolError, ToolResult, ToolScope};
 use crate::infra::process_runner;
@@ -48,8 +48,7 @@ pub fn run_command(
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "runCommand".to_string(),
-        description: "Run a shell command in the workspace — build, test, lint, inspect. This is how you check your own work: after changing code, run the tests rather than claiming they pass. The exit code, stdout and stderr all come back; a non-zero exit is an ordinary answer, not a failure of the call. Output is streamed as it is produced and cut in the middle if it is very long, keeping both the first lines and the last. The command runs to completion or is killed at its timeout, together with everything it started. For something that has to keep running — a dev server, a watcher — set background: the call returns at once with a process number, readOutput reads what it writes, stopProcess ends it, and you are told when one ends on its own."
-            .to_string(),
+        description: format!("Run a shell command in the workspace — build, test, lint, inspect. This is how you check your own work: after changing code, run the tests rather than claiming they pass. It runs under `/bin/sh -c` (`cmd.exe /C` on Windows), not the user's shell: write POSIX sh, not bash or zsh. The exit code, stdout and stderr all come back; a non-zero exit is an ordinary answer, not a failure of the call. The exit code is the whole line's — in `a; b` it is `b`'s, so use `&&` when an earlier failure matters. Output is streamed as it is produced; past {MAX_OUTPUT_CHARS} characters a stream is cut in the middle, keeping both the first lines and the last. The command runs to completion or is killed at its timeout, together with everything it started. For something that has to keep running — a dev server, a watcher — set background: the call returns at once with a process number, readOutput reads what it writes, stopProcess ends it, and you are told when one ends on its own."),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {

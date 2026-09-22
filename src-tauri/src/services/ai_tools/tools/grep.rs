@@ -43,7 +43,7 @@ pub fn grep(scope: &ToolScope, args: &GrepArgs) -> Result<ToolResult, ToolError>
     let pattern = RegexBuilder::new(&args.pattern)
         .case_insensitive(args.case_insensitive.unwrap_or(false))
         .build()
-        .map_err(|e| ToolError::InvalidPattern(e.to_string()))?;
+        .map_err(|e| ToolError::InvalidRegex(e.to_string()))?;
 
     let paths = PathFilter::new(args.glob.as_deref(), args.exclude.as_deref()).map_err(ToolError::InvalidPattern)?;
 
@@ -475,7 +475,7 @@ mod tests {
         let (scope, _) = fixture("grep-badre");
         assert!(matches!(
             grep(&scope, &args("(unclosed")),
-            Err(ToolError::InvalidPattern(_))
+            Err(ToolError::InvalidRegex(_))
         ));
     }
 

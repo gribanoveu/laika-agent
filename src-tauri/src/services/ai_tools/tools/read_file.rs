@@ -80,6 +80,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
             start_line: if total_lines == 0 { 0 } else { 1 },
             end_line: total_lines,
             total_lines,
+            clamped: false,
         };
     }
 
@@ -91,6 +92,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
             start_line: 0,
             end_line: 0,
             total_lines: 0,
+            clamped: false,
         };
     }
 
@@ -104,6 +106,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
         start_line: start,
         end_line: end,
         total_lines,
+        clamped: start_line.is_some_and(|s| s != start) || end_line.is_some_and(|e| e != end),
     }
 }
 
@@ -111,7 +114,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "readFile".to_string(),
-        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is clamped, not rejected. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read."
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read. To read several files, call readFile for each in the same response — they run together, in one round."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -182,6 +185,10 @@ mod tests {
         }
     }
 
+    fn clamped(result: ToolResult) -> bool {
+        matches!(result, ToolResult::File { clamped: true, .. })
+    }
+
     fn unwrap_file(result: ToolResult) -> (String, u32, u32, u32) {
         match result {
             ToolResult::File {
@@ -189,6 +196,7 @@ mod tests {
                 start_line,
                 end_line,
                 total_lines,
+                ..
             } => (content, start_line, end_line, total_lines),
             other => panic!("expected a file read, got {other:?}"),
         }
@@ -237,6 +245,12 @@ mod tests {
         let (_, start, end, _) =
             unwrap_file(read(&scope, &args("file.txt", Some(900), None)).unwrap());
         assert_eq!((start, end), (2, 2), "a start past EOF lands on the last line");
+
+        assert!(clamped(read(&scope, &args("file.txt", Some(1), Some(900))).unwrap()));
+        assert!(clamped(read(&scope, &args("file.txt", Some(900), None)).unwrap()));
+        assert!(clamped(read(&scope, &args("file.txt", Some(0), Some(1))).unwrap()), "no line 0");
+        assert!(!clamped(read(&scope, &args("file.txt", Some(1), Some(2))).unwrap()), "the exact range is not cut");
+        assert!(!clamped(read(&scope, &args("file.txt", None, Some(1))).unwrap()), "an open start is not cut");
     }
 
     /// An inverted range still answers with the line the model most likely

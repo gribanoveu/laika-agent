@@ -19,7 +19,7 @@ use chrono::{Local, TimeZone};
 use git2::{BlameOptions, Repository, Status, StatusOptions};
 
 use crate::domain::tools::{
-    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileDiff, GitFileStatus, ToolError,
+    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileDiff, GitFileStatus, GitUpstream, ToolError,
     ToolResult, ToolScope,
 };
 use crate::services::text_diff;
@@ -99,6 +99,7 @@ pub fn git_status(scope: &ToolScope) -> Result<ToolResult, ToolError> {
 
     Ok(ToolResult::GitStatus {
         branch: repo.head().ok().and_then(|h| h.shorthand().ok().map(String::from)),
+        upstream: upstream(&repo),
         staged,
         unstaged,
         conflicted,
@@ -402,6 +403,17 @@ fn in_scope<'a>(path: &'a Path, prefix: &str) -> Option<&'a str> {
     path.to_str()?.strip_prefix(prefix)
 }
 
+/// The tracking branch of the checked-out one, with the commit counts
+/// between them. `None` when detached, unborn or tracking nothing.
+fn upstream(repo: &Repository) -> Option<GitUpstream> {
+    let head = repo.head().ok().filter(|h| h.is_branch())?;
+    let local = head.target()?;
+    let tracked = git2::Branch::wrap(head).upstream().ok()?;
+    let name = tracked.name().ok()??.to_string();
+    let (ahead, behind) = repo.graph_ahead_behind(local, tracked.get().target()?).ok()?;
+    Some(GitUpstream { name, ahead, behind })
+}
+
 fn index_letter(status: Status) -> Option<&'static str> {
     if status.contains(Status::INDEX_NEW) {
         Some("A")
@@ -650,6 +662,27 @@ mod tests {
 
         assert_eq!(entries(&staged), [("tracked.txt → moved.txt", "R")]);
         assert!(unstaged.is_empty(), "{unstaged:?}");
+    }
+
+    /// Counted against the remote-tracking branch as it is locally; a branch
+    /// tracking nothing has no upstream to be ahead of.
+    #[test]
+    fn status_counts_commits_apart_from_the_upstream() {
+        let (scope, root, repo) = repo_fixture("git-upstream");
+        let ToolResult::GitStatus { upstream, .. } = git_status(&scope).unwrap() else { panic!() };
+        assert_eq!(upstream, None);
+
+        let base = repo.head().unwrap().target().unwrap();
+        repo.reference("refs/remotes/origin/main", base, true, "fetched").unwrap();
+        repo.remote("origin", "https://example.invalid/repo.git").unwrap();
+        git2::Branch::wrap(repo.head().unwrap()).set_upstream(Some("origin/main")).unwrap();
+        write(&root, "tracked.txt", "changed\n");
+        commit(&repo, "one more");
+        write(&root, "tracked.txt", "again\n");
+        commit(&repo, "and another");
+
+        let ToolResult::GitStatus { upstream, .. } = git_status(&scope).unwrap() else { panic!() };
+        assert_eq!(upstream, Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0 }));
     }
 
     #[test]

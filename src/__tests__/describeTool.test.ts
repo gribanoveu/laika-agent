@@ -240,6 +240,23 @@ describe("what each call shows", () => {
       tool({ name: "gitStatus", arguments: "{}", result: { branch: "main", staged: [], unstaged: [], conflicted: [], truncated: false } }),
     );
     expect(clean.meta).toBe("clean");
+
+    const ahead = describeTool(
+      tool({
+        name: "gitStatus",
+        arguments: "{}",
+        result: { branch: "main", upstream: { name: "origin/main", ahead: 2, behind: 0 }, staged: [], unstaged: [], conflicted: [], truncated: false },
+      }),
+    );
+    expect(ahead.meta).toBe("clean · ↑2 ↓0");
+    const even = describeTool(
+      tool({
+        name: "gitStatus",
+        arguments: "{}",
+        result: { branch: "main", upstream: { name: "origin/main", ahead: 0, behind: 0 }, staged: [], unstaged: [], conflicted: [], truncated: false },
+      }),
+    );
+    expect(even.meta).toBe("clean");
   });
 
   test("blame is one line per run of lines, not JSON", () => {

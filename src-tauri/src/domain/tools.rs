@@ -678,9 +678,14 @@ pub enum ToolError {
     NotAFile(String),
     #[error("io error: {0}")]
     Io(#[source] std::io::Error),
-    /// A `listFiles` `pattern` that does not compile as a glob.
+    /// A `glob`, `exclude` or `listFiles` `pattern` that does not compile as
+    /// a glob.
     #[error("invalid glob pattern: {0}")]
     InvalidPattern(String),
+    /// A `grep` `pattern` that does not compile as a regex — named apart from
+    /// a glob, or the model fixes the wrong argument.
+    #[error("invalid regex in `pattern`: {0}")]
+    InvalidRegex(String),
     /// An `editFile` edit's `old` text appears nowhere in the file.
     #[error("edit text not found: {0}")]
     EditTextNotFound(String),
@@ -880,6 +885,9 @@ pub enum ToolResult {
         start_line: u32,
         end_line: u32,
         total_lines: u32,
+        /// The range asked for reached outside the file and was cut to fit.
+        #[serde(default)]
+        clamped: bool,
     },
     /// `readFile` with `outline`: the file's shape rather than its text.
     /// Empty `entries` for a language with no parser, or a file declaring
@@ -930,7 +938,13 @@ pub enum ToolResult {
     #[serde(rename_all = "camelCase")]
     DirectoryDeleted { path: String },
     #[serde(rename_all = "camelCase")]
-    Moved { from: String, to: String },
+    Moved {
+        from: String,
+        to: String,
+        /// For a directory, how many files it carried; `None` for a file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files: Option<usize>,
+    },
     /// The whole checklist after the change. Returned in full rather than as a
     /// delta because the caller owns the list and this is how it gets it back.
     #[serde(rename_all = "camelCase")]
@@ -938,6 +952,10 @@ pub enum ToolResult {
     #[serde(rename_all = "camelCase")]
     GitStatus {
         branch: Option<String>,
+        /// The branch's remote-tracking branch and how far apart they are.
+        /// `None` when detached or with no upstream set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        upstream: Option<GitUpstream>,
         staged: Vec<GitFileStatus>,
         unstaged: Vec<GitFileStatus>,
         conflicted: Vec<GitFileStatus>,
@@ -1449,6 +1467,18 @@ pub struct GitBlameArgs {
     pub start_line: Option<u32>,
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
     pub end_line: Option<u32>,
+}
+
+/// As far as the last fetch knows: nothing here talks to the remote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitUpstream {
+    /// `origin/main`.
+    pub name: String,
+    /// Local commits the upstream does not have.
+    pub ahead: usize,
+    /// Upstream commits the branch does not have.
+    pub behind: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

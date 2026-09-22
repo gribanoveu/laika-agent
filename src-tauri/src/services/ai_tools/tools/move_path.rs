@@ -32,8 +32,23 @@ pub fn move_path(scope: &ToolScope, args: &MoveArgs, reads: &mut ReadFiles) -> R
     fs::rename(&from, &to).map_err(ToolError::Io)?;
     let to_relative = relative_to_root(scope, &to)?;
     reads.moved(&from_relative, &to_relative);
+    let files = to.is_dir().then(|| count_files(&to));
 
-    Ok(ToolResult::Moved { from: from_relative, to: to_relative })
+    Ok(ToolResult::Moved { from: from_relative, to: to_relative, files })
+}
+
+/// Files anywhere under `dir`, not following links: "moved 0 files" is how
+/// the model learns it moved an empty shell rather than the tree it meant.
+fn count_files(dir: &std::path::Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => count_files(&entry.path()),
+            Ok(_) => 1,
+            Err(_) => 0,
+        })
+        .sum()
 }
 
 /// What the model is told `move` is for.
@@ -106,19 +121,22 @@ mod tests {
 
         assert!(!root.join("a.txt").exists());
         assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "body\n");
-        let ToolResult::Moved { from, to } = result else {
+        let ToolResult::Moved { from, to, files } = result else {
             panic!("wrong result")
         };
-        assert_eq!((from.as_str(), to.as_str()), ("a.txt", "b.txt"));
+        assert_eq!((from.as_str(), to.as_str(), files), ("a.txt", "b.txt", None));
     }
 
     #[test]
     fn renames_a_directory_with_its_contents() {
         let (scope, root, _) = fixture("mv-dir");
         write(&root, "old/deep/a.txt", "body\n");
+        write(&root, "old/b.txt", "body\n");
+        std::fs::create_dir_all(root.join("old/empty")).unwrap();
 
-        move_path(&scope, &args("old", "new"), &mut ReadFiles::default()).expect("moves");
+        let result = move_path(&scope, &args("old", "new"), &mut ReadFiles::default()).expect("moves");
 
+        assert!(matches!(result, ToolResult::Moved { files: Some(2), .. }), "{result:?}");
         assert!(!root.join("old").exists());
         assert_eq!(
             std::fs::read_to_string(root.join("new/deep/a.txt")).unwrap(),

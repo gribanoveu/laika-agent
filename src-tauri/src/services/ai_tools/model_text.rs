@@ -15,13 +15,15 @@ use std::collections::BTreeMap;
 use crate::domain::background::ProcessOutput;
 use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
-use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
+use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::text_diff::render_for_model;
 
 pub fn for_model(result: &ToolResult) -> String {
     match result {
-        ToolResult::File { content, start_line, end_line, total_lines } => file(content, *start_line, *end_line, *total_lines),
+        ToolResult::File { content, start_line, end_line, total_lines, clamped } => {
+            file(content, *start_line, *end_line, *total_lines, *clamped)
+        }
         ToolResult::FileOutline { path, entries, total_lines } => outline(path, entries, *total_lines),
         ToolResult::GrepResults { matches, truncated } => grep(matches, *truncated),
         ToolResult::FileList { entries, .. } if entries.is_empty() => "No files found.".to_string(),
@@ -32,10 +34,13 @@ pub fn for_model(result: &ToolResult) -> String {
         ToolResult::FileDeleted { path, diff } => render_for_model("Deleted", path, diff, false),
         ToolResult::DirectoryCreated { path } => format!("Created directory {path}"),
         ToolResult::DirectoryDeleted { path } => format!("Deleted directory {path}"),
-        ToolResult::Moved { from, to } => format!("Moved {from} → {to}"),
+        ToolResult::Moved { from, to, files: None } => format!("Moved {from} → {to}"),
+        ToolResult::Moved { from, to, files: Some(n) } => {
+            format!("Moved directory {from} → {to} with {n} {}", if *n == 1 { "file" } else { "files" })
+        }
         ToolResult::Todo { tasks } => todo(tasks),
-        ToolResult::GitStatus { branch, staged, unstaged, conflicted, truncated } => {
-            git_status(branch.as_deref(), staged, unstaged, conflicted, *truncated)
+        ToolResult::GitStatus { branch, upstream, staged, unstaged, conflicted, truncated } => {
+            git_status(branch.as_deref(), upstream.as_ref(), staged, unstaged, conflicted, *truncated)
         }
         ToolResult::GitDiff { path, label, is_binary: true, .. } => format!("{path} is a binary file — no text diff ({label})"),
         ToolResult::GitDiff { path, label, diff, .. } => render_for_model(&format!("Diff ({label}):"), path, diff, true),
@@ -61,16 +66,14 @@ pub fn for_model(result: &ToolResult) -> String {
 
 /// The range comes first: whether this is the whole file is the one thing the
 /// content alone does not say.
-fn file(content: &str, start: u32, end: u32, total: u32) -> String {
+fn file(content: &str, start: u32, end: u32, total: u32, clamped: bool) -> String {
     if total == 0 {
         return "The file is empty.".to_string();
     }
-    let head = if start == 1 && end == total {
-        format!("All {total} lines:")
-    } else {
-        format!("Lines {start}-{end} of {total}:")
-    };
-    format!("{head}\n{content}")
+    let head = if start == 1 && end == total { format!("All {total} lines") } else { format!("Lines {start}-{end} of {total}") };
+    // Said, or "All 92 lines" reads as the range that was asked for.
+    let cut = if clamped { " (the range asked for was cut to fit the file)" } else { "" };
+    format!("{head}{cut}:\n{content}")
 }
 
 fn outline(path: &str, entries: &[OutlineEntry], total: u32) -> String {
@@ -157,6 +160,7 @@ fn todo(tasks: &[Task]) -> String {
 
 fn git_status(
     branch: Option<&str>,
+    upstream: Option<&GitUpstream>,
     staged: &[GitFileStatus],
     unstaged: &[GitFileStatus],
     conflicted: &[GitFileStatus],
@@ -166,6 +170,10 @@ fn git_status(
         Some(b) => format!("On branch {b}"),
         None => "No branch (detached HEAD or no commits yet)".to_string(),
     };
+    if let Some(GitUpstream { name, ahead, behind }) = upstream {
+        let apart = if ahead + behind == 0 { "up to date with".to_string() } else { format!("{ahead} ahead and {behind} behind") };
+        out.push_str(&format!(", {apart} {name} as of the last fetch"));
+    }
     if staged.is_empty() && unstaged.is_empty() && conflicted.is_empty() {
         out.push_str("\nNothing changed.");
     }
@@ -181,8 +189,20 @@ fn git_status(
     if truncated {
         out.push_str("\n[more paths not shown]");
     }
+    // Only the letters that are there: a legend of six for one `M` is noise.
+    let present: Vec<&str> = STATUS_LETTERS
+        .iter()
+        .filter(|(letter, _)| [conflicted, staged, unstaged].iter().any(|files| files.iter().any(|f| f.status == *letter)))
+        .map(|(_, meaning)| *meaning)
+        .collect();
+    if !present.is_empty() {
+        out.push_str(&format!("\n({})", present.join(", ")));
+    }
     out
 }
+
+const STATUS_LETTERS: [(&str, &str); 6] =
+    [("M", "M modified"), ("A", "A added"), ("D", "D deleted"), ("R", "R renamed"), ("U", "U conflicted"), ("?", "? untracked")];
 
 /// A directory's change: the totals, then each file the way a single-file
 /// diff reads. A file left without its text says how to get it.
@@ -316,18 +336,28 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_directory_says_how_much_went_with_it() {
+        let moved = |files| for_model(&ToolResult::Moved { from: "a".into(), to: "b".into(), files });
+        assert_eq!(moved(None), "Moved a → b");
+        assert_eq!(moved(Some(1)), "Moved directory a → b with 1 file");
+        assert_eq!(moved(Some(0)), "Moved directory a → b with 0 files");
+    }
+
+    #[test]
     fn an_empty_listing_says_so_instead_of_drawing_a_bare_root() {
         assert_eq!(for_model(&ToolResult::FileList { entries: vec![], truncated: false }), "No files found.");
     }
 
     #[test]
     fn a_file_says_whether_it_is_whole() {
-        let whole = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2 });
+        let whole = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: false });
         assert_eq!(whole, "All 2 lines:\na\nb\n");
-        let part = for_model(&ToolResult::File { content: "b\n".into(), start_line: 2, end_line: 2, total_lines: 9 });
+        let part = for_model(&ToolResult::File { content: "b\n".into(), start_line: 2, end_line: 2, total_lines: 9, clamped: false });
         assert_eq!(part, "Lines 2-2 of 9:\nb\n");
-        let empty = for_model(&ToolResult::File { content: String::new(), start_line: 0, end_line: 0, total_lines: 0 });
+        let empty = for_model(&ToolResult::File { content: String::new(), start_line: 0, end_line: 0, total_lines: 0, clamped: false });
         assert_eq!(empty, "The file is empty.");
+        let cut = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: true });
+        assert_eq!(cut, "All 2 lines (the range asked for was cut to fit the file):\na\nb\n");
     }
 
     #[test]
@@ -461,14 +491,45 @@ mod tests {
         let f = |status: &str, path: &str| GitFileStatus { status: status.into(), path: path.into() };
         let shown = for_model(&ToolResult::GitStatus {
             branch: Some("main".into()),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0 }),
             staged: vec![f("R", "b.rs")],
             unstaged: vec![f("M", "a.rs"), f("?", "new.rs")],
             conflicted: vec![],
             truncated: false,
         });
-        assert_eq!(shown, "On branch main\nStaged:\n  R b.rs\nNot staged:\n  M a.rs\n  ? new.rs");
-        let clean = for_model(&ToolResult::GitStatus { branch: None, staged: vec![], unstaged: vec![], conflicted: vec![], truncated: false });
+        assert_eq!(
+            shown,
+            "On branch main, 2 ahead and 0 behind origin/main as of the last fetch\n\
+             Staged:\n  R b.rs\nNot staged:\n  M a.rs\n  ? new.rs\n\
+             (M modified, R renamed, ? untracked)"
+        );
+        let clean = for_model(&ToolResult::GitStatus {
+            branch: None,
+            upstream: None,
+            staged: vec![],
+            unstaged: vec![],
+            conflicted: vec![],
+            truncated: false,
+        });
         assert!(clean.ends_with("\nNothing changed."), "{clean}");
+        let even = for_model(&ToolResult::GitStatus {
+            branch: Some("main".into()),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 0 }),
+            staged: vec![],
+            unstaged: vec![],
+            conflicted: vec![f("U", "c.rs")],
+            truncated: false,
+        });
+        assert_eq!(even, "On branch main, up to date with origin/main as of the last fetch\nConflicted:\n  U c.rs\n(U conflicted)");
+        let behind = for_model(&ToolResult::GitStatus {
+            branch: Some("main".into()),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 3 }),
+            staged: vec![],
+            unstaged: vec![],
+            conflicted: vec![],
+            truncated: false,
+        });
+        assert!(behind.starts_with("On branch main, 0 ahead and 3 behind origin/main"), "{behind}");
     }
 
     #[test]
