@@ -55,6 +55,7 @@ fn base_tools() -> HashSet<ToolName> {
         ToolName::GitStatus,
         ToolName::GitDiff,
         ToolName::GitBlame,
+        ToolName::GitLog,
         ToolName::SemanticSearch,
         ToolName::Skill,
         // A process's output is something to look at; one may still run
@@ -165,6 +166,7 @@ mod tests {
                 ToolName::GitStatus,
                 ToolName::GitDiff,
                 ToolName::GitBlame,
+                ToolName::GitLog,
                 ToolName::SemanticSearch,
             ] {
                 assert!(offers(mode, tool), "{mode:?} cannot use {}", tool.wire_name());

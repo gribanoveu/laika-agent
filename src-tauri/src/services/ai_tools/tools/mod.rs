@@ -55,6 +55,7 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::GitStatus, git::status_definition),
     (ToolName::GitDiff, git::diff_definition),
     (ToolName::GitBlame, git::blame_definition),
+    (ToolName::GitLog, git::log_definition),
     (ToolName::WriteFile, write_file::definition),
     (ToolName::EditFile, edit_file::definition),
     (ToolName::CreateDirectory, create_directory::definition),
@@ -102,6 +103,7 @@ pub fn execute_tool(
         ToolCall::GitStatus => git::git_status(scope),
         ToolCall::GitDiff(args) => git::git_diff(scope, args),
         ToolCall::GitBlame(args) => git::git_blame(scope, args),
+        ToolCall::GitLog(args) => git::git_log(scope, args),
         ToolCall::RunCommand(request) => run_command::run_command(scope, request, deps),
         ToolCall::SemanticSearch(args) => semantic_search::semantic_search(args, deps),
         ToolCall::Skill(args) => skill::skill(args, deps),
@@ -117,7 +119,7 @@ mod definition_tests {
     use super::*;
     use crate::domain::llm::LlmToolCall;
     use crate::domain::tools::{
-        DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs,
+        DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs, GitLogArgs,
         GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, WritePlanArgs, TodoUpdateStatus,
         WriteFileArgs,
         CreateDirectoryArgs, ProcessArgs,
@@ -298,6 +300,14 @@ mod definition_tests {
                     path: path(),
                     start_line: Some(1),
                     end_line: Some(9),
+                })],
+            ),
+            ToolName::GitLog => (
+                r#"{"path":"a.rs","limit":5,"query":"fix"}"#,
+                vec![ToolCall::GitLog(GitLogArgs {
+                    path: Some(path()),
+                    limit: Some(5),
+                    query: Some("fix".to_string()),
                 })],
             ),
             ToolName::ReadOutput => (r#"{"id":1}"#, vec![ToolCall::ReadOutput(ProcessArgs { id: Some(1) })]),

@@ -259,6 +259,7 @@ mod tests {
                 ToolResult::GitDiff { path: path(), label: "index → working tree".into(), diff: diff(), is_binary: false },
             ),
             ToolName::GitBlame => (None, ToolResult::GitBlame { path: path(), hunks: vec![], truncated: false }),
+            ToolName::GitLog => (None, ToolResult::GitLog { path: path(), commits: vec![], truncated: false }),
             ToolName::RunCommand => (
                 Some(ToolCall::RunCommand(CommandRequest { command: "cargo test".into(), cwd: None, timeout_seconds: None, background: None })),
                 ToolResult::CommandRan(CommandOutput {

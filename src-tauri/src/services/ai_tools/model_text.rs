@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use crate::domain::background::ProcessOutput;
 use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
-use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
+use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, LogCommit, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::text_diff::render_for_model;
 
@@ -46,6 +46,7 @@ pub fn for_model(result: &ToolResult) -> String {
         ToolResult::GitDiff { path, label, diff, .. } => render_for_model(&format!("Diff ({label}):"), path, diff, true),
         ToolResult::GitDiffFiles { path, label, files, truncated } => diff_files(path, label, files, *truncated),
         ToolResult::GitBlame { path, hunks, truncated } => blame(path, hunks, *truncated),
+        ToolResult::GitLog { path, commits, truncated } => log(path, commits, *truncated),
         ToolResult::CommandRan(output) => command(output),
         // The folder before the command: last, a `.` folder ran into the
         // sentence's own full stop.
@@ -231,6 +232,23 @@ fn diff_files(path: &str, label: &str, files: &[GitFileDiff], truncated: bool) -
         out.push_str("\n\n[more changed files not shown — ask for a narrower path]");
     }
     out
+}
+
+/// One commit a line, in the order `gitDiff` takes them back.
+fn log(path: &str, commits: &[LogCommit], truncated: bool) -> String {
+    if commits.is_empty() {
+        return if path == "." { "No commits match.".to_string() } else { format!("No commits changed {path}.") };
+    }
+    let rows: Vec<String> = commits
+        .iter()
+        .map(|c| {
+            let files = if c.files == 1 { "1 file".to_string() } else { format!("{} files", c.files) };
+            format!("{} {} {}  {} ({files})", c.commit, c.date, c.author, c.summary)
+        })
+        .collect();
+    let more = if truncated { "\n[more commits not shown — raise limit, or narrow by path or query]" } else { "" };
+    let scope = if path == "." { String::new() } else { format!(" of {path}") };
+    format!("History{scope}, newest first (commit, date, author, message):\n{}{more}", rows.join("\n"))
 }
 
 fn blame(path: &str, hunks: &[BlameHunk], truncated: bool) -> String {
@@ -530,6 +548,30 @@ mod tests {
             truncated: false,
         });
         assert!(behind.starts_with("On branch main, 0 ahead and 3 behind origin/main"), "{behind}");
+    }
+
+    #[test]
+    fn a_log_is_one_line_per_commit() {
+        let c = |commit: &str, files| LogCommit {
+            commit: commit.into(),
+            date: "2026-09-01".into(),
+            author: "Ann".into(),
+            summary: "fix it".into(),
+            files,
+        };
+        let shown = for_model(&ToolResult::GitLog { path: "src".into(), commits: vec![c("abc12345", 2), c("def67890", 1)], truncated: true });
+        assert_eq!(
+            shown,
+            "History of src, newest first (commit, date, author, message):\n\
+             abc12345 2026-09-01 Ann  fix it (2 files)\n\
+             def67890 2026-09-01 Ann  fix it (1 file)\n\
+             [more commits not shown — raise limit, or narrow by path or query]"
+        );
+        let whole = for_model(&ToolResult::GitLog { path: ".".into(), commits: vec![c("abc12345", 2)], truncated: false });
+        assert!(whole.starts_with("History, newest first"), "{whole}");
+        let none = |path: &str| for_model(&ToolResult::GitLog { path: path.into(), commits: vec![], truncated: false });
+        assert_eq!(none("src"), "No commits changed src.");
+        assert_eq!(none("."), "No commits match.");
     }
 
     #[test]

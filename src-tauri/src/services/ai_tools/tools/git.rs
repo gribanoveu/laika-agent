@@ -1,4 +1,4 @@
-//! `gitStatus`, `gitDiff`, `gitBlame` — read-only history.
+//! `gitStatus`, `gitDiff`, `gitBlame`, `gitLog` — read-only history.
 //!
 //! Written against `git2` directly rather than ported. Alfa Atlas's tool is
 //! 461 lines over a git layer of 4,400 more (clone, credentials, branches,
@@ -19,12 +19,13 @@ use chrono::{Local, TimeZone};
 use git2::{BlameOptions, Repository, Status, StatusOptions};
 
 use crate::domain::tools::{
-    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileDiff, GitFileStatus, GitUpstream, ToolError,
+    BlameHunk, FileDiffStats, GitBlameArgs, GitDiffArgs, GitFileDiff, GitFileStatus, GitLogArgs, GitUpstream,
+    LogCommit, ToolError,
     ToolResult, ToolScope,
 };
 use crate::services::text_diff;
 
-use super::super::resolve::{relative_to_root, resolve_existing};
+use super::super::resolve::{relative_to_root, resolve_existing, resolve_writable};
 
 /// Cap on the lines one blame may cover. Past this the answer is a file dump
 /// with commit hashes attached.
@@ -36,6 +37,13 @@ const MAX_STATUS_ENTRIES: usize = 200;
 /// A file past the text budget still shows its counts.
 const MAX_DIFF_FILES: usize = 50;
 const MAX_DIFF_CHARS: usize = 20_000;
+/// `gitLog` commits by default, and at most.
+const DEFAULT_LOG_COMMITS: u32 = 20;
+const MAX_LOG_COMMITS: u32 = 100;
+/// Commits looked at before a filtered log gives up looking for more.
+// ponytail: a diff per commit; a rare path in a long history stops here —
+// an index of paths by commit if that shows up.
+const MAX_LOG_SCANNED: usize = 5_000;
 
 /// The working tree's changed paths.
 ///
@@ -321,6 +329,70 @@ pub fn git_blame(scope: &ToolScope, args: &GitBlameArgs) -> Result<ToolResult, T
     })
 }
 
+pub fn git_log(scope: &ToolScope, args: &GitLogArgs) -> Result<ToolResult, ToolError> {
+    let repo = open(scope)?;
+    // Resolved for containment only: a deleted file has a history too.
+    let (shown, relative) = match args.path.as_deref() {
+        Some(path) => {
+            let relative = relative_to_root(scope, &resolve_writable(scope, path)?)?;
+            (relative.clone(), if relative == "." { String::new() } else { relative })
+        }
+        None => (".".to_string(), String::new()),
+    };
+    // A folder inside the repository sees its own history, not the rest.
+    let under = format!("{}{relative}", scope_prefix(scope, &repo)?);
+    let under = under.trim_end_matches('/');
+    let limit = args.limit.unwrap_or(DEFAULT_LOG_COMMITS).clamp(1, MAX_LOG_COMMITS) as usize;
+    let query = args.query.as_deref().map(str::to_lowercase).filter(|q| !q.is_empty());
+
+    let mut walk = repo.revwalk().map_err(git_error)?;
+    if walk.push_head().is_err() {
+        // No commit yet: an empty history, not an error.
+        return Ok(ToolResult::GitLog { path: shown, commits: Vec::new(), truncated: false });
+    }
+    // Topological first: commits made within one second still come child
+    // before parent.
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME).map_err(git_error)?;
+
+    let mut commits = Vec::new();
+    let mut truncated = false;
+    for id in walk.take(MAX_LOG_SCANNED) {
+        let commit = repo.find_commit(id.map_err(git_error)?).map_err(git_error)?;
+        let message = commit.message().unwrap_or_default();
+        if query.as_ref().is_some_and(|q| !message.to_lowercase().contains(q)) {
+            continue;
+        }
+        // A merge's changes are the commits it brought in, listed on their
+        // own; against its first parent it would repeat them under a path.
+        if !under.is_empty() && commit.parent_count() > 1 {
+            continue;
+        }
+        let parent = commit.parent(0).ok().and_then(|p| p.tree().ok());
+        let mut options = git2::DiffOptions::new();
+        if !under.is_empty() {
+            options.pathspec(under);
+        }
+        let tree = commit.tree().map_err(git_error)?;
+        let diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut options)).map_err(git_error)?;
+        let files = diff.deltas().len() as u32;
+        if files == 0 && !under.is_empty() {
+            continue;
+        }
+        if commits.len() == limit {
+            truncated = true;
+            break;
+        }
+        commits.push(LogCommit {
+            commit: short(&commit.id().to_string()),
+            date: format_time(commit.time().seconds()),
+            author: commit.author().name().ok().map(String::from).unwrap_or_else(|| "unknown".to_string()),
+            summary: commit.summary().ok().flatten().unwrap_or_default().to_string(),
+            files,
+        });
+    }
+    Ok(ToolResult::GitLog { path: shown, commits, truncated })
+}
+
 /// Clamps the requested range to `MAX_BLAME_LINES`, reporting when it did.
 fn blame_range(start: u32, end: Option<u32>, total: u32) -> (u32, bool) {
     let capped = start + MAX_BLAME_LINES - 1;
@@ -513,6 +585,34 @@ pub(super) fn diff_definition() -> LlmToolDefinition {
     }
 }
 
+/// What the model is told `gitLog` is for.
+pub(super) fn log_definition() -> LlmToolDefinition {
+    LlmToolDefinition {
+        name: "gitLog".to_string(),
+        description: format!("Commit history, newest first: hash, date, author, the message's first line and how many files each changed. Read-only. Narrow it to a file or directory to see what changed there and when, or by words in the message. Read a commit's change with gitDiff and its `commit`. Renames are not followed: for a file that was moved, ask again with its old path. {DEFAULT_LOG_COMMITS} commits unless `limit` says otherwise, at most {MAX_LOG_COMMITS}."),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": ["string", "null"],
+                    "description": "File or directory relative to the workspace root; only commits that changed something under it. It may be one that no longer exists. Omit for the whole workspace."
+                },
+                "limit": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": MAX_LOG_COMMITS,
+                    "description": "How many commits to return."
+                },
+                "query": {
+                    "type": ["string", "null"],
+                    "description": "Only commits whose message contains this, ignoring case — a ticket number, a word from the change."
+                }
+            },
+            "required": []
+        }),
+    }
+}
+
 /// What the model is told `gitBlame` is for.
 pub(super) fn blame_definition() -> LlmToolDefinition {
     LlmToolDefinition {
@@ -662,6 +762,126 @@ mod tests {
 
         assert_eq!(entries(&staged), [("tracked.txt → moved.txt", "R")]);
         assert!(unstaged.is_empty(), "{unstaged:?}");
+    }
+
+    fn log(scope: &ToolScope, args: GitLogArgs) -> (Vec<(String, u32)>, bool) {
+        let ToolResult::GitLog { commits, truncated, .. } = git_log(scope, &args).expect("log runs") else {
+            panic!("expected a log")
+        };
+        (commits.into_iter().map(|c| (c.summary, c.files)).collect(), truncated)
+    }
+
+    fn logged(summaries: &[(&str, u32)]) -> Vec<(String, u32)> {
+        summaries.iter().map(|(s, n)| (s.to_string(), *n)).collect()
+    }
+
+    /// Newest first, each with how many files it changed; the limit says
+    /// when it cut.
+    #[test]
+    fn log_lists_commits_newest_first_and_says_when_it_cut() {
+        let (scope, root, repo) = repo_fixture("git-log");
+        write(&root, "a.rs", "a\n");
+        write(&root, "b.rs", "b\n");
+        commit(&repo, "add two\n\nwith a body");
+
+        let (commits, truncated) = log(&scope, GitLogArgs::default());
+        assert_eq!(commits, logged(&[("add two", 2), ("initial commit", 1)]));
+        assert!(!truncated);
+
+        let (commits, truncated) = log(&scope, GitLogArgs { limit: Some(1), ..GitLogArgs::default() });
+        assert_eq!(commits, logged(&[("add two", 2)]));
+        assert!(truncated);
+        let (_, truncated) = log(&scope, GitLogArgs { limit: Some(2), ..GitLogArgs::default() });
+        assert!(!truncated, "exactly the limit is not a cut");
+        let (commits, _) = log(&scope, GitLogArgs { limit: Some(0), ..GitLogArgs::default() });
+        assert_eq!(commits.len(), 1, "a limit of nothing is one");
+    }
+
+    /// A clock set back makes a child older than its parent; it is still
+    /// the newer change.
+    #[test]
+    fn log_puts_a_child_before_its_parent_whatever_the_clock_says() {
+        let (scope, root, repo) = repo_fixture("git-log-skew");
+        write(&root, "a.rs", "a\n");
+        stage_all(&repo);
+        let tree = repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let past = Signature::new("Test Person", "test@example.com", &git2::Time::new(1_000, 0)).unwrap();
+        repo.commit(Some("HEAD"), &past, &past, "from a skewed clock", &tree, &[&parent]).unwrap();
+
+        assert_eq!(log(&scope, GitLogArgs::default()).0, logged(&[("from a skewed clock", 1), ("initial commit", 1)]));
+    }
+
+    /// A path keeps the commits that changed it — a deleted file included —
+    /// and counts only its own files; a query keeps the messages that say it.
+    #[test]
+    fn log_narrows_by_path_and_by_message() {
+        let (scope, root, repo) = repo_fixture("git-log-path");
+        write(&root, "src/a.rs", "a\n");
+        write(&root, "b.rs", "b\n");
+        commit(&repo, "Fix TICKET-7 in both");
+        write(&root, "b.rs", "b2\n");
+        commit(&repo, "only b");
+        std::fs::remove_file(root.join("src/a.rs")).unwrap();
+        let mut index = repo.index().unwrap();
+        index.remove_path(Path::new("src/a.rs")).unwrap();
+        index.write().unwrap();
+        commit(&repo, "drop a");
+
+        let under = |path: &str| log(&scope, GitLogArgs { path: Some(path.into()), ..GitLogArgs::default() }).0;
+        assert_eq!(under("src"), logged(&[("drop a", 1), ("Fix TICKET-7 in both", 1)]));
+        assert_eq!(under("src/a.rs"), under("src"), "a file that is gone has a history");
+        assert_eq!(under("."), log(&scope, GitLogArgs::default()).0);
+
+        let (commits, _) = log(&scope, GitLogArgs { query: Some("Ticket-7".into()), ..GitLogArgs::default() });
+        assert_eq!(commits, logged(&[("Fix TICKET-7 in both", 2)]));
+        assert!(git_log(&scope, &GitLogArgs { path: Some("../x".into()), ..GitLogArgs::default() }).is_err());
+    }
+
+    /// A workspace inside a repository has the history of its own files.
+    #[test]
+    fn log_of_a_subfolder_is_its_own_history() {
+        let dir = temp_dir("git-log-sub");
+        let repo = Repository::init(&dir).expect("repository");
+        write(&dir, "docs/guide.md", "hello\n");
+        commit(&repo, "guide");
+        write(&dir, "outside.txt", "x\n");
+        commit(&repo, "outside");
+        let scope = ToolScope::new(&dir.join("docs")).expect("root resolves");
+
+        assert_eq!(log(&scope, GitLogArgs::default()).0, logged(&[("guide", 1)]));
+        let ToolResult::GitLog { path, .. } =
+            git_log(&scope, &GitLogArgs { path: Some("guide.md".into()), ..GitLogArgs::default() }).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(path, "guide.md", "relative to the workspace, not the repository");
+    }
+
+    /// Under a path a merge would repeat what its branch already listed.
+    #[test]
+    fn log_under_a_path_leaves_merges_out() {
+        let (scope, root, repo) = repo_fixture("git-log-merge");
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        write(&root, "b.rs", "b\n");
+        stage_all(&repo);
+        let tree = repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap();
+        let who = Signature::now("Test Person", "test@example.com").unwrap();
+        let side = repo.find_commit(repo.commit(None, &who, &who, "side", &tree, &[&base]).unwrap()).unwrap();
+        repo.commit(Some("HEAD"), &who, &who, "merge side", &tree, &[&base, &side]).unwrap();
+
+        let under = log(&scope, GitLogArgs { path: Some("b.rs".into()), ..GitLogArgs::default() }).0;
+        assert_eq!(under, logged(&[("side", 1)]));
+        let all = log(&scope, GitLogArgs::default()).0;
+        assert_eq!(all[0], ("merge side".to_string(), 1), "the whole log keeps it");
+    }
+
+    #[test]
+    fn log_of_a_repository_with_no_commits_is_empty() {
+        let dir = temp_dir("git-log-empty");
+        Repository::init(&dir).unwrap();
+        let scope = ToolScope::new(&dir).unwrap();
+        assert_eq!(log(&scope, GitLogArgs::default()), (vec![], false));
     }
 
     /// Counted against the remote-tracking branch as it is locally; a branch

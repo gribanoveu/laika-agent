@@ -259,6 +259,23 @@ describe("what each call shows", () => {
     expect(even.meta).toBe("clean");
   });
 
+  test("a log is one line per commit, with what it was narrowed by", () => {
+    const shown = describeTool(
+      tool({
+        name: "gitLog",
+        arguments: '{"path":"src","query":"fix"}',
+        result: {
+          path: "src",
+          commits: [{ commit: "abc12345", date: "2026-09-01", author: "Ann", summary: "fix it", files: 2 }],
+          truncated: true,
+        },
+      }),
+    );
+    expect(shown).toMatchObject({ name: "Log", arg: 'src "fix"', meta: "1+ commits", detail: "abc12345  2026-09-01  Ann  fix it" });
+    const whole = describeTool(tool({ name: "gitLog", arguments: "{}", result: { path: ".", commits: [], truncated: false } }));
+    expect(whole).toMatchObject({ arg: "", meta: "0 commits", detail: "" });
+  });
+
   test("blame is one line per run of lines, not JSON", () => {
     const shown = describeTool(
       tool({

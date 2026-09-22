@@ -37,6 +37,7 @@ pub enum ToolName {
     Todo,
     GitDiff,
     GitBlame,
+    GitLog,
     RunCommand,
     GitStatus,
     SemanticSearch,
@@ -72,6 +73,7 @@ impl ToolName {
         ToolName::Todo,
         ToolName::GitDiff,
         ToolName::GitBlame,
+        ToolName::GitLog,
         ToolName::GitStatus,
         ToolName::RunCommand,
         ToolName::SemanticSearch,
@@ -98,6 +100,7 @@ impl ToolName {
             ToolName::Todo => "todo",
             ToolName::GitDiff => "gitDiff",
             ToolName::GitBlame => "gitBlame",
+            ToolName::GitLog => "gitLog",
             ToolName::RunCommand => "runCommand",
             ToolName::GitStatus => "gitStatus",
             ToolName::SemanticSearch => "semanticSearch",
@@ -172,6 +175,8 @@ impl ToolName {
             ToolName::Grep => 3,
             // Local git2 I/O plus diff/blame compaction.
             ToolName::GitDiff | ToolName::GitBlame => 2,
+            // A walk of the history with a tree diff per commit.
+            ToolName::GitLog => 2,
             // One walk of the working tree, no per-file blob reads.
             ToolName::GitStatus => 1,
             // Indexed lookups and a scan of the vectors; the first search
@@ -302,7 +307,7 @@ mod tests {
     fn all_is_complete() {
         assert_eq!(
             ToolName::ALL.len(),
-            20,
+            21,
             "a variant was added or removed — update ALL and this count together"
         );
         let unique: HashSet<_> = ToolName::ALL.iter().collect();
@@ -821,6 +826,7 @@ pub enum ToolCall {
     GitStatus,
     GitDiff(GitDiffArgs),
     GitBlame(GitBlameArgs),
+    GitLog(GitLogArgs),
     RunCommand(crate::domain::command_exec::CommandRequest),
     SemanticSearch(SemanticSearchArgs),
     Skill(SkillArgs),
@@ -846,6 +852,7 @@ impl ToolCall {
             ToolCall::GitStatus => ToolName::GitStatus,
             ToolCall::GitDiff(_) => ToolName::GitDiff,
             ToolCall::GitBlame(_) => ToolName::GitBlame,
+            ToolCall::GitLog(_) => ToolName::GitLog,
             ToolCall::SemanticSearch(_) => ToolName::SemanticSearch,
             ToolCall::RunCommand(_) => ToolName::RunCommand,
             ToolCall::Skill(_) => ToolName::Skill,
@@ -983,6 +990,13 @@ pub enum ToolResult {
     GitBlame {
         path: String,
         hunks: Vec<BlameHunk>,
+        truncated: bool,
+    },
+    /// Newest first. `truncated` when more commits matched than were kept.
+    #[serde(rename_all = "camelCase")]
+    GitLog {
+        path: String,
+        commits: Vec<LogCommit>,
         truncated: bool,
     },
     /// A command that ran. "Ran" is not "succeeded": the exit code is the
@@ -1467,6 +1481,36 @@ pub struct GitBlameArgs {
     pub start_line: Option<u32>,
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
     pub end_line: Option<u32>,
+}
+
+/// `gitLog` arguments: every filter narrows, none is required.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogArgs {
+    /// A file or directory; only commits that changed something under it.
+    /// It need not exist any more — the history of a deleted file is asked
+    /// for too.
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_u32")]
+    pub limit: Option<u32>,
+    /// Kept when the message contains it, ignoring case.
+    #[serde(default)]
+    pub query: Option<String>,
+}
+
+/// One line of `gitLog`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogCommit {
+    /// Short hash, as `gitDiff`'s `commit` takes it.
+    pub commit: String,
+    pub date: String,
+    pub author: String,
+    /// The message's first line.
+    pub summary: String,
+    /// Files it changed — under `path`, when one was given.
+    pub files: u32,
 }
 
 /// As far as the last fetch knows: nothing here talks to the remote.

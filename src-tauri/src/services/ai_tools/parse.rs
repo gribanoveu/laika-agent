@@ -40,6 +40,7 @@ pub fn parse_tool_call(call: &LlmToolCall) -> Result<ToolCall, ToolError> {
         "todo" => ToolCall::Todo(args(call)?),
         "gitDiff" => ToolCall::GitDiff(args(call)?),
         "gitBlame" => ToolCall::GitBlame(args(call)?),
+        "gitLog" => ToolCall::GitLog(args(call)?),
         "runCommand" => ToolCall::RunCommand(args(call)?),
         "semanticSearch" => ToolCall::SemanticSearch(args(call)?),
         "skill" => ToolCall::Skill(args(call)?),
@@ -207,6 +208,7 @@ mod tests {
             ("todo", r#"{"op": "write", "tasks": ["x"]}"#),
             ("gitDiff", r#"{"path": "a"}"#),
             ("gitBlame", r#"{"path": "a"}"#),
+            ("gitLog", "{}"),
             ("gitStatus", ""),
         ];
         for (name, arguments) in cases {

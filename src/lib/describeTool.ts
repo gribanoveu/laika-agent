@@ -39,6 +39,7 @@ export const LABELS: Record<string, string> = {
   gitStatus: "Status",
   gitDiff: "Diff",
   gitBlame: "Blame",
+  gitLog: "Log",
   runCommand: "Bash",
   semanticSearch: "Search",
   skill: "Skill",
@@ -224,6 +225,18 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         detail: lists
           .filter(([, files]) => files.length)
           .map(([title, files]) => [`${title}:`, ...files.map((f) => `  ${str(f.status)} ${str(f.path)}`)].join("\n"))
+          .join("\n"),
+      };
+    }
+
+    case "gitLog": {
+      const commits = Array.isArray(result.commits) ? (result.commits as Json[]) : [];
+      return {
+        name,
+        arg: [str(args.path), str(args.query) && `"${str(args.query)}"`].filter(Boolean).join(" "),
+        meta: block.result === undefined ? undefined : `${commits.length}${result.truncated ? "+" : ""} commits`,
+        detail: commits
+          .map((c) => `${str(c.commit)}  ${str(c.date)}  ${str(c.author)}  ${str(c.summary)}`)
           .join("\n"),
       };
     }
