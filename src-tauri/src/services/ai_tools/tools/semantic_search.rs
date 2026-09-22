@@ -6,7 +6,7 @@ use crate::domain::llm::LlmToolDefinition;
 use crate::domain::code_search::SearchFilter;
 use crate::domain::search_query::PathFilter;
 use crate::domain::tools::{SemanticSearchArgs, ToolDeps, ToolError, ToolResult};
-use crate::services::code_search::{DEFAULT_TOP_K, MAX_TOP_K};
+use crate::services::code_search::{DEFAULT_TOP_K, MAX_QUERIES, MAX_TOP_K};
 
 /// Text per match by default. The result lands in the model's context, and
 /// ten whole chunks are thousands of tokens spent on text it re-reads with
@@ -26,7 +26,9 @@ pub fn semantic_search(args: &SemanticSearchArgs, deps: &ToolDeps) -> Result<Too
         include_docs: args.include_docs == Some(true),
         paths: PathFilter::new(args.glob.as_deref(), args.exclude.as_deref()).map_err(ToolError::InvalidPattern)?,
     };
-    let result = search(&args.query, args.fts.as_deref(), args.top_k.unwrap_or(DEFAULT_TOP_K), &filter)
+    let wordings: Vec<&str> =
+        std::iter::once(args.query.as_str()).chain(args.queries.iter().flatten().map(String::as_str)).collect();
+    let result = search(&wordings, args.fts.as_deref(), args.top_k.unwrap_or(DEFAULT_TOP_K), &filter)
         .map_err(ToolError::SearchUnavailable)?;
     let limit = if args.preview == Some(true) { PREVIEW_CHARS } else { TEXT_CHARS };
     let matches = result
@@ -57,6 +59,8 @@ Each match gives the path, the line range readFile takes, the enclosing declarat
 Write the query as a sentence about the behaviour, and include any function, type or file names you know or can justify from the user's words. \
 Write it in the language the code is written in — usually English — even when the user asked in another: \
 a Russian question about English code matches far worse than the same question in English. \
+When a question is not in the code's language, or you are unsure how the code puts it, add other wordings in queries: \
+they are searched in the same call, which finds more than any one of them and costs less than a search each. \
 Searching documentation written in another language, write the query in that language. \
 Put the identifiers you expect the code to use in fts (sendNotification, RetryPolicy), not the words of the question. \
 It can help to phrase the query the way the code you expect would read. \
@@ -78,6 +82,12 @@ Returns at most {MAX_TOP_K} matches."
                     "type": ["array", "null"],
                     "items": { "type": "string" },
                     "description": "Words that must match as text, when they are not just the query's own — identifiers, error messages, config keys. Leave out filler and guesses: a wrong word here costs ranking."
+                },
+                "queries": {
+                    "type": ["array", "null"],
+                    "items": { "type": "string" },
+                    "maxItems": MAX_QUERIES - 1,
+                    "description": format!("Up to {} more wordings of the same question, searched together with query — the English of a question asked in another language, or the way the code might phrase it.", MAX_QUERIES - 1)
                 },
                 "topK": {
                     "type": ["integer", "null"],
@@ -121,8 +131,8 @@ mod tests {
         let record = Arc::clone(&asked);
         let text = text.to_string();
         let deps = ToolDeps {
-            search: Some(Arc::new(move |query: &str, fts: Option<&[String]>, top_k: usize, filter: &SearchFilter| {
-                record.lock().unwrap().push((query.to_string(), fts.map(<[String]>::to_vec), top_k, filter.include_docs));
+            search: Some(Arc::new(move |queries: &[&str], fts: Option<&[String]>, top_k: usize, filter: &SearchFilter| {
+                record.lock().unwrap().push((queries.join(" | "), fts.map(<[String]>::to_vec), top_k, filter.include_docs));
                 Ok(CodeSearchResult {
                     matches: vec![CodeMatch {
                         path: "a.rs".into(),
@@ -166,6 +176,18 @@ mod tests {
         assert!(description.contains("identifiers you expect the code to use in fts"), "{description}");
     }
 
+    /// The other wordings go to the search with the query, first in line.
+    #[test]
+    fn other_wordings_are_searched_in_the_same_call() {
+        let (deps, asked) = deps_answering("fn a() {}");
+        let args = SemanticSearchArgs { queries: Some(vec!["send the pack".into()]), ..args("отправить пакет") };
+        semantic_search(&args, &deps).unwrap();
+        assert_eq!(asked.lock().unwrap()[0].0, "отправить пакет | send the pack");
+
+        let parsed: SemanticSearchArgs = serde_json::from_str(r#"{"query": "q", "queries": "one more"}"#).unwrap();
+        assert_eq!(parsed.queries, Some(vec!["one more".to_string()]), "a lone string is one wording");
+    }
+
     #[test]
     fn a_glob_that_does_not_compile_is_refused_before_searching() {
         let (deps, asked) = deps_answering("fn a() {}");
@@ -176,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_failed_search_is_reported_as_unavailable() {
-        let deps = ToolDeps { search: Some(Arc::new(|_: &str, _: Option<&[String]>, _: usize, _: &SearchFilter| Err("disk".into()))), ..ToolDeps::default() };
+        let deps = ToolDeps { search: Some(Arc::new(|_: &[&str], _: Option<&[String]>, _: usize, _: &SearchFilter| Err("disk".into()))), ..ToolDeps::default() };
         let error = semantic_search(&args("x"), &deps).unwrap_err();
         assert!(matches!(&error, ToolError::SearchUnavailable(reason) if reason == "disk"), "{error}");
     }

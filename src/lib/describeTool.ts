@@ -138,11 +138,14 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
       });
       // The hint is what the model was told to do next; the reader should see it too.
       const hint = str(meta.hint);
+      // The other wordings searched with it: without them the matches can
+      // look unrelated to the one query shown.
+      const also = (Array.isArray(args.queries) ? args.queries : []).filter((q): q is string => typeof q === "string");
       return {
         name,
         arg: str(args.query) ?? "",
         meta: block.result === undefined ? undefined : `${matches.length} matches`,
-        detail: [...lines, ...(hint ? ["", hint] : [])].join("\n"),
+        detail: [...also.map((q) => `also: ${q}`), ...(also.length ? [""] : []), ...lines, ...(hint ? ["", hint] : [])].join("\n"),
       };
     }
 

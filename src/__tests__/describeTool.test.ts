@@ -156,6 +156,15 @@ describe("what each call shows", () => {
       "",
       "Name a function.",
     ]);
+
+    const reworded = describeTool(
+      tool({
+        name: "semanticSearch",
+        arguments: '{"query":"где синхронизируется индекс","queries":["where the index syncs"]}',
+        result: { matches: [{ path: "a.rs", startLine: 1, endLine: 2, name: null }], meta: {} },
+      }),
+    );
+    expect(reworded.detail.split("\n")).toEqual(["also: where the index syncs", "", "a.rs:1-2"]);
   });
 
   test("a loaded skill shows its instructions and the files beside them", () => {

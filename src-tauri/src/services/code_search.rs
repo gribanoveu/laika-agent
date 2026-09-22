@@ -29,6 +29,8 @@ use crate::services::index_sync::RepoIndexer;
 
 pub const DEFAULT_TOP_K: usize = 10;
 pub const MAX_TOP_K: usize = 50;
+/// Wordings one search takes: the question and up to three rewordings.
+pub const MAX_QUERIES: usize = 4;
 
 /// How many candidates each ranking contributes per match wanted. A chunk
 /// whose file changed since it was indexed is dropped when its text is read;
@@ -93,13 +95,41 @@ pub fn search(
     top_k: usize,
     filter: &SearchFilter,
 ) -> Result<CodeSearchResult, IndexStoreError> {
+    search_many(indexer, &[query], fts, top_k, filter)
+}
+
+/// [`search`] for several wordings of one question at once — a Russian
+/// question and its English rewording, say. Each wording is ranked by meaning
+/// and by words, and every ranking goes into one fusion: a passage only one
+/// wording finds still gets in, one both find rises. Names from any wording
+/// are looked up. `fts` stands in for the first wording's words, and git
+/// history is asked with the first wording only. Past [`MAX_QUERIES`] the
+/// rest are dropped.
+pub fn search_many(
+    indexer: &RepoIndexer,
+    queries: &[&str],
+    fts: Option<&[String]>,
+    top_k: usize,
+    filter: &SearchFilter,
+) -> Result<CodeSearchResult, IndexStoreError> {
+    let queries: Vec<&str> = queries.iter().copied().filter(|q| !q.trim().is_empty()).take(MAX_QUERIES).collect();
+    let first = queries.first().copied().unwrap_or_default();
+    let all = queries.join(" ");
     let include_docs = filter.include_docs;
     let top_k = top_k.clamp(1, MAX_TOP_K);
     let store = indexer.store();
-    let tokens = extract_search_tokens(query);
+    let tokens = extract_search_tokens(&all);
     let mut ranked: Vec<(ChunkMetadata, MatchSource)> = Vec::new();
 
-    for name in names_in(query, &tokens) {
+    let mut names: Vec<String> = Vec::new();
+    for query in &queries {
+        for name in names_in(query, &extract_search_tokens(query)) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    for name in names {
         for id in store.chunks_declaring(&name, top_k)? {
             ranked.extend(store.load_chunk(&id)?.map(|chunk| (chunk, MatchSource::Symbol)));
         }
@@ -107,32 +137,37 @@ pub fn search(
 
     let filtered = !include_docs || !filter.paths.is_empty();
     let candidates = top_k * CANDIDATES_PER_MATCH * if filtered { FILTERED_SLACK } else { 1 };
-    let lexical = match fts.and_then(|terms| fts5_query(&terms.join(" "))).or_else(|| fts5_query(query)) {
-        Some(fts) => store.search_bm25(&fts, candidates)?.into_iter().map(|(id, _)| id).collect(),
-        None => Vec::new(),
-    };
     let mut tiers_used = vec![MatchSource::Symbol, MatchSource::Lexical];
     let mut unavailable = None;
-    let semantic = match indexer.search_meaning(query, candidates) {
-        Ok(hits) => hits.into_iter().map(|(id, _)| id).collect(),
-        Err(error) => {
-            unavailable = Some(error.to_string());
-            Vec::new()
-        }
-    };
-    if !semantic.is_empty() {
+    // Semantic first within each wording: a chunk both found is labelled by
+    // the more telling one.
+    let mut lists = Vec::new();
+    for (i, query) in queries.iter().enumerate() {
+        let semantic: Vec<ChunkId> = match indexer.search_meaning(query, candidates) {
+            Ok(hits) => hits.into_iter().map(|(id, _)| id).collect(),
+            Err(error) => {
+                unavailable = Some(error.to_string());
+                Vec::new()
+            }
+        };
+        let own = if i == 0 { fts.and_then(|terms| fts5_query(&terms.join(" "))) } else { None };
+        let lexical: Vec<ChunkId> = match own.or_else(|| fts5_query(query)) {
+            Some(fts) => store.search_bm25(&fts, candidates)?.into_iter().map(|(id, _)| id).collect(),
+            None => Vec::new(),
+        };
+        lists.push((semantic, MatchSource::Semantic, 1.0));
+        lists.push((lexical, MatchSource::Lexical, LEXICAL_WEIGHT));
+    }
+    if lists.iter().any(|(list, source, _)| *source == MatchSource::Semantic && !list.is_empty()) {
         tiers_used.push(MatchSource::Semantic);
     } else if unavailable.is_none() {
         // Nothing embedded, and not for want of time: the last sync could not
         // load the model. Worth the same warning as a failed search.
         unavailable = indexer.status().embedding_error;
     }
-    let by_history = indexer.files_by_history(query);
-    // Semantic first: a chunk both found is labelled by the more telling one.
+    let by_history = indexer.files_by_history(first);
     let mut fused = Vec::new();
-    for (id, score, source) in
-        fuse_rrf([(semantic, MatchSource::Semantic, 1.0), (lexical, MatchSource::Lexical, LEXICAL_WEIGHT)])
-    {
+    for (id, score, source) in fuse_rrf(lists) {
         if let Some(chunk) = store.load_chunk(&id)? {
             let score = score * weight(&chunk, &tokens, &by_history);
             fused.push((chunk, score, source));
@@ -195,8 +230,23 @@ pub fn search(
         extracted_tokens: &tokens,
     });
     // A declaration the query named is found, whatever else it asks about.
-    let unknown = if matches.is_empty() || symbol_hits > 0 { Vec::new() } else { unknown_words(indexer, query)? };
-    let (weak, hint) = if absent_from_workspace(unknown.len(), query_words(query).len()) {
+    // Absent only when every wording is: a question in another language
+    // lacks the code's words by itself, and its rewording has them.
+    let mut unknown: Vec<&str> = Vec::new();
+    let mut absent = !matches.is_empty() && symbol_hits == 0 && !queries.is_empty();
+    for query in &queries {
+        if !absent {
+            break;
+        }
+        let missing = unknown_words(indexer, query)?;
+        absent = absent_from_workspace(missing.len(), query_words(query).len());
+        for word in missing {
+            if !unknown.contains(&word) {
+                unknown.push(word);
+            }
+        }
+    }
+    let (weak, hint) = if absent {
         let words = unknown.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(", ");
         (
             true,
@@ -285,7 +335,7 @@ fn weight(chunk: &ChunkMetadata, tokens: &[String], by_history: &HashSet<String>
 /// Rank, not score: cosine similarity and BM25 measure incomparable things,
 /// and no fixed factor makes them commensurable across queries. A chunk keeps
 /// the source of the first list it is in; ties go to the earlier list.
-fn fuse_rrf<const N: usize>(lists: [(Vec<ChunkId>, MatchSource, f32); N]) -> Vec<(ChunkId, f32, MatchSource)> {
+fn fuse_rrf(lists: impl IntoIterator<Item = (Vec<ChunkId>, MatchSource, f32)>) -> Vec<(ChunkId, f32, MatchSource)> {
     let mut fused: HashMap<ChunkId, (f32, (usize, usize), MatchSource)> = HashMap::new();
     for (order, (list, source, weight)) in lists.into_iter().enumerate() {
         for (rank, id) in list.into_iter().enumerate() {
@@ -574,10 +624,54 @@ mod tests {
         // A declaration the query names is found, whatever else it asks about.
         let named = search(&indexer, "kubernetes helm deploy_service", None, 5, &all()).unwrap();
         assert!(!named.meta.hint.unwrap_or_default().contains("No indexed file"));
+        // Words another wording has count: a question in another language
+        // with its rewording in the code's own is not about something absent.
+        let reworded = search_many(&indexer, &["kubernetes helm", "deploy the service"], None, 5, &all()).unwrap();
+        assert!(!reworded.meta.hint.unwrap_or_default().contains("No indexed file"));
+        let both = search_many(&indexer, &["kubernetes helm", "terraform ansible"], None, 5, &all()).unwrap();
+        let hint = both.meta.hint.unwrap_or_default();
+        assert!(hint.starts_with("No indexed file has the words `kubernetes`, `helm`, `terraform`, `ansible`:"), "{hint}");
         // Not the verdict: the ordinary ones still come through.
         let wordless = search(&indexer, "как это работает", None, 5, &all()).unwrap();
         assert!(wordless.meta.weak, "{:?}", wordless.meta);
         assert!(wordless.meta.hint.unwrap().contains("no names from code"));
+    }
+
+    /// What only a later wording finds still gets in — here a name only it
+    /// spells; wordings past the limit are not searched at all.
+    #[test]
+    fn every_wording_is_searched_up_to_the_limit() {
+        let indexer = indexed(
+            "search-wordings",
+            &[("drive.rs", "fn start_car() {}\n"), ("other.rs", "fn unrelated_fn() {}\n")],
+            Arc::default(),
+        );
+        let symbols = |result: &CodeSearchResult| {
+            result.matches.iter().filter(|m| m.source == MatchSource::Symbol).filter_map(|m| m.name.clone()).collect::<Vec<_>>()
+        };
+
+        let one = search_many(&indexer, &["машина", "start_car"], None, 5, &all()).unwrap();
+        assert_eq!(symbols(&one), ["start_car"]);
+
+        let mut many = vec!["машина"; MAX_QUERIES];
+        many.push("unrelated_fn");
+        let cut = search_many(&indexer, &many, None, 5, &all()).unwrap();
+        assert!(symbols(&cut).is_empty(), "the one past the limit was dropped: {:?}", symbols(&cut));
+        let blanks = search_many(&indexer, &["", " ", "", "", "start_car"], None, 5, &all()).unwrap();
+        assert_eq!(symbols(&blanks), ["start_car"], "an empty wording takes no place under the limit");
+    }
+
+    /// `fts` is the first wording's words; a later one is ranked by its own.
+    #[test]
+    fn each_later_wording_is_ranked_by_its_own_words() {
+        let model = Arc::new(FakeModel { fail: AtomicBool::new(true) });
+        let indexer = indexed("search-wording-words", &[("a.rs", "fn a() { gizmo }\n"), ("b.rs", "fn b() { widget }\n")], model);
+
+        let result = search_many(&indexer, &["nothing here", "the widget"], Some(&["gizmo".to_string()]), 5, &all()).unwrap();
+
+        let mut paths: Vec<&str> = result.matches.iter().map(|m| m.path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, ["a.rs", "b.rs"]);
     }
 
     #[test]

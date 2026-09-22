@@ -1484,6 +1484,10 @@ pub struct SemanticSearchArgs {
     /// and the model knows which those are better than a tokenizer does.
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_string_list")]
     pub fts: Option<Vec<String>>,
+    /// Other wordings of the same question, searched in the same call — the
+    /// English of a Russian question, say.
+    #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_string_list")]
+    pub queries: Option<Vec<String>>,
     #[serde(default, deserialize_with = "crate::domain::flexible_args::opt_usize")]
     pub top_k: Option<usize>,
     /// Longer text per match. Off by default: the result goes into the
@@ -1507,8 +1511,8 @@ pub struct SemanticSearchArgs {
 /// port, because the tools live below the service that owns the index.
 /// `None` in [`ToolDeps`] when no folder's index is open.
 pub type CodeSearchFn = std::sync::Arc<
-    // Query, `fts`, how many, and what may be returned.
-    dyn Fn(&str, Option<&[String]>, usize, &crate::domain::code_search::SearchFilter)
+    // The wordings (the query first), `fts`, how many, and what may be returned.
+    dyn Fn(&[&str], Option<&[String]>, usize, &crate::domain::code_search::SearchFilter)
             -> Result<crate::domain::code_search::CodeSearchResult, String>
         + Send
         + Sync,

@@ -276,6 +276,7 @@ mod definition_tests {
                 vec![ToolCall::SemanticSearch(SemanticSearchArgs {
                     query: "where the index is kept current".to_string(),
                     fts: Some(vec!["sync".to_string()]),
+                    queries: Some(vec!["how the index stays in step with the files".to_string()]),
                     top_k: Some(5),
                     preview: Some(true),
                     include_docs: Some(true),

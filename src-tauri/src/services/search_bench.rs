@@ -148,15 +148,25 @@ fn open(repo: &Repo, root: &Path, model: &str, provider: Arc<dyn EmbeddingProvid
 /// ranking alone (with the cosine of its first hit and of its top result),
 /// how long the tool's search took, and whether it called its result weak.
 fn ask(indexer: &RepoIndexer, query: &Query) -> (Rank, Rank, Option<(Rank, f32, Option<f32>)>, Duration, bool) {
+    ask_as(indexer, query, &[&query.q])
+}
+
+/// [`ask`] with the question put as `wordings` — several in one call, as a
+/// model sending `queries` would.
+fn ask_as(
+    indexer: &RepoIndexer,
+    query: &Query,
+    wordings: &[&str],
+) -> (Rank, Rank, Option<(Rank, f32, Option<f32>)>, Duration, bool) {
     // Timed as the tool calls it; ranked from a longer list, so that the
     // bench's own files, dropped below, do not take a place.
     let started = Instant::now();
     // Documentation is searched when the answer is documentation — what a
     // model asking that question sets `includeDocs` for.
     let filter = SearchFilter { include_docs: query.answer == "docs", ..SearchFilter::default() };
-    code_search::search(indexer, &query.q, None, code_search::DEFAULT_TOP_K, &filter).unwrap();
+    code_search::search_many(indexer, wordings, None, code_search::DEFAULT_TOP_K, &filter).unwrap();
     let spent = started.elapsed();
-    let mut result = code_search::search(indexer, &query.q, None, 20, &filter).unwrap();
+    let mut result = code_search::search_many(indexer, wordings, None, 20, &filter).unwrap();
     let weak = result.meta.weak;
     result.matches.retain(|m| !is_bench(&m.path));
     result.matches.truncate(10);
@@ -258,6 +268,15 @@ fn search_bench() {
                 }
                 if paired.contains(&answer_of(query)) {
                     by_lang.entry(format!("pairs: {}", query.lang)).or_default().add(file, decl);
+                    // The Russian question with its English counterpart in one
+                    // call: what `queries` buys over the Russian alone.
+                    if query.lang == "ru" {
+                        let english = repo.queries.iter().find(|q| q.lang == "en" && answer_of(q) == answer_of(query));
+                        if let Some(english) = english {
+                            let (file, decl, ..) = ask_as(&indexer, query, &[&query.q, &english.q]);
+                            by_lang.entry("pairs: ru+en in one call".to_string()).or_default().add(file, decl);
+                        }
+                    }
                 }
                 let show = |r: Rank| r.map_or("-".to_string(), |r| r.to_string());
                 let meaning = meaning.map_or(String::new(), |(rank, top, hit)| {
