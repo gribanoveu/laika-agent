@@ -41,7 +41,9 @@ pub fn for_model(result: &ToolResult) -> String {
         ToolResult::FileWritten { path, diff } => render_for_model("Wrote", path, diff, true),
         ToolResult::FileEdited { path, diff } => render_for_model("Edited", path, diff, true),
         // How much went, not the whole file read back.
-        ToolResult::FileDeleted { path, diff } => render_for_model("Deleted", path, diff, false),
+        // With what went: the read it needed is gone after compaction, and
+        // this is the only trace of an irreversible change.
+        ToolResult::FileDeleted { path, diff } => render_for_model("Deleted", path, diff, true),
         ToolResult::DirectoryCreated { path } => format!("Created directory {path}"),
         ToolResult::DirectoryDeleted { path, files: 0 } => format!("Deleted empty directory {path}"),
         ToolResult::DirectoryDeleted { path, files } => {
@@ -373,6 +375,14 @@ mod tests {
             before: before.iter().map(|s| s.to_string()).collect(),
             after: after.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn a_deleted_file_shows_what_went() {
+        let diff = crate::services::text_diff::diff_stats("one\ntwo\n", "");
+        let shown = for_model(&ToolResult::FileDeleted { path: "a.txt".into(), diff });
+        assert!(shown.starts_with("Deleted a.txt (+0 -2 lines)\n```diff\n"), "{shown}");
+        assert!(shown.contains("-one\n-two"), "{shown}");
     }
 
     #[test]
