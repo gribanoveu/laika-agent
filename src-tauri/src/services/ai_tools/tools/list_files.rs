@@ -38,6 +38,15 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
 
     let scanned = workspace_scanner::scan_entries(&dir, args.depth.map(|d| d as usize))
         .map_err(ToolError::Io)?;
+    // A folder at the last level walked, with something in it, was not
+    // opened: what is below it is unknown, not absent.
+    let stopped_at = args.depth.filter(|&depth| {
+        scanned.iter().any(|entry| {
+            entry.is_dir
+                && entry.path.strip_prefix(&dir).is_ok_and(|rel| rel.components().count() == depth as usize)
+                && std::fs::read_dir(&entry.path).is_ok_and(|mut inside| inside.next().is_some())
+        })
+    });
 
     let mut entries: Vec<ToolFileEntry> = scanned
         .into_iter()
@@ -55,14 +64,11 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
         let matcher = globset::Glob::new(pattern)
             .map(|g| g.compile_matcher())
             .map_err(|e| ToolError::InvalidPattern(e.to_string()))?;
-        // Directories always survive: the pattern scopes which files come
-        // back, not the structure needed to navigate to them.
         entries.retain(|e| e.is_dir || matcher.is_match(basename(&e.path)));
-        // Kept for the way to what matched; with nothing matched, a tree of
-        // folders only reads as "found a lot".
-        if entries.iter().all(|e| e.is_dir) {
-            entries.clear();
-        }
+        // Only the folders on the way to a match: the rest are empty
+        // branches that read as if something were in them.
+        let files: Vec<String> = entries.iter().filter(|e| !e.is_dir).map(|e| e.path.clone()).collect();
+        entries.retain(|e| !e.is_dir || files.iter().any(|f| f.starts_with(&format!("{}/", e.path))));
     }
 
     // After the pattern, deliberately — narrowing the request is then a way
@@ -70,7 +76,7 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
     let truncated = entries.len() > MAX_ENTRIES;
     entries.truncate(MAX_ENTRIES);
 
-    Ok(ToolResult::FileList { entries, truncated })
+    Ok(ToolResult::FileList { entries, truncated, stopped_at })
 }
 
 /// The listing as the model sees it: an indented tree in the style of
@@ -161,14 +167,14 @@ pub(super) fn definition() -> LlmToolDefinition {
                         "null"
                     ],
                     "minimum": 0,
-                    "description": "Levels below `path`: `path` itself is 0, its direct children 1. Omit for unlimited. Start shallow on an unfamiliar repository."
+                    "description": "Levels below `path`: `path` itself is 0, its direct children 1. Omit for unlimited. Start shallow on an unfamiliar repository. With a pattern, prefer no depth: files below it are not searched, and the result says when folders were left unopened."
                 },
                 "pattern": {
                     "type": [
                         "string",
                         "null"
                     ],
-                    "description": "Glob over each entry's file *name*, never its full path, so \\\"*.rs\\\" matches at any depth. Directories are listed regardless — this narrows which files come back, not the structure you can navigate."
+                    "description": "Glob over each entry's file *name*, never its full path, so \\\"*.rs\\\" matches at any depth. Only the directories on the way to a matching file are kept."
                 }
             },
             "required": []
@@ -199,7 +205,7 @@ mod tests {
 
     fn run(scope: &ToolScope, args: &ListFilesArgs) -> (Vec<ToolFileEntry>, bool) {
         match list_files(scope, args).expect("listing runs") {
-            ToolResult::FileList { entries, truncated } => (entries, truncated),
+            ToolResult::FileList { entries, truncated, .. } => (entries, truncated),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -314,6 +320,38 @@ mod tests {
         );
 
         assert!(paths(&entries).contains(&"a/b/c/deep.rs"));
+    }
+
+    /// Folders left unopened at the depth limit are said, so an empty or
+    /// short listing is not read as "there is nothing there"; branches with
+    /// no match in them are left out.
+    #[test]
+    fn a_depth_limit_says_what_it_did_not_open_and_a_pattern_prunes_empty_branches() {
+        let (scope, root) = fixture("list-depth-stop");
+        write(&root, "src/main/java/App.java", "");
+        write(&root, "src/test/notes.md", "");
+        std::fs::create_dir_all(root.join("src/empty")).unwrap();
+        // A folder whose name starts another's path, with no match inside.
+        std::fs::create_dir_all(root.join("src/main/jav")).unwrap();
+        std::fs::create_dir_all(root.join("src/test/hollow")).unwrap();
+
+        let stopped = |depth: u32, pattern: Option<&str>| {
+            let args = ListFilesArgs { depth: Some(depth), pattern: pattern.map(str::to_string), ..ListFilesArgs::default() };
+            match list_files(&scope, &args).unwrap() {
+                ToolResult::FileList { entries, stopped_at, .. } => (paths(&entries).iter().map(|p| p.to_string()).collect::<Vec<_>>(), stopped_at),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(stopped(2, Some("*.java")), (vec![], Some(2)), "not found because not looked");
+        assert_eq!(stopped(4, Some("*.java")).1, None, "everything was opened");
+        assert_eq!(stopped(1, None).1, Some(1));
+        assert_eq!(stopped(2, None).1, Some(2), "src/main and src/test have more in them");
+        let inside_test = ListFilesArgs { path: Some("src/test".into()), depth: Some(1), ..ListFilesArgs::default() };
+        let ToolResult::FileList { stopped_at, .. } = list_files(&scope, &inside_test).unwrap() else { panic!() };
+        assert_eq!(stopped_at, None, "an empty folder at the edge hides nothing");
+
+        let (found, _) = run(&scope, &ListFilesArgs { pattern: Some("*.java".into()), ..ListFilesArgs::default() });
+        assert_eq!(paths(&found), ["src", "src/main", "src/main/java", "src/main/java/App.java"]);
     }
 
     #[test]

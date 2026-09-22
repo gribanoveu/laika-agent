@@ -233,7 +233,7 @@ mod tests {
                     truncated: false,
                 },
             ),
-            ToolName::ListFiles => (None, ToolResult::FileList { entries: vec![], truncated: false }),
+            ToolName::ListFiles => (None, ToolResult::FileList { entries: vec![], truncated: false, stopped_at: None }),
             ToolName::WriteFile => (
                 Some(ToolCall::WriteFile(WriteFileArgs { path: path(), content: LEAK.into() })),
                 ToolResult::FileWritten { path: path(), diff: diff() },
@@ -288,7 +288,7 @@ mod tests {
             ),
             ToolName::Skill => (
                 Some(ToolCall::Skill(SkillArgs { name: "release".into(), path: None })),
-                ToolResult::Skill { name: "release".into(), instructions: LEAK.into(), files: vec![] },
+                ToolResult::Skill { name: "release".into(), instructions: LEAK.into(), files: vec![], from: String::new() },
             ),
             ToolName::ReadOutput => (
                 Some(ToolCall::ReadOutput(crate::domain::tools::ProcessArgs { id: Some(1) })),

@@ -17,6 +17,7 @@ use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
 use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, LogCommit, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
+use crate::services::ai_tools::tools::git::MAX_DIFF_CHARS;
 use crate::services::text_diff::render_for_model;
 
 pub fn for_model(result: &ToolResult) -> String {
@@ -26,8 +27,17 @@ pub fn for_model(result: &ToolResult) -> String {
         }
         ToolResult::FileOutline { path, entries, total_lines } => outline(path, entries, *total_lines),
         ToolResult::GrepResults { matches, truncated } => grep(matches, *truncated),
+        ToolResult::FileList { entries, stopped_at: Some(depth), .. } if entries.is_empty() => format!(
+            "No files found within depth {depth} — folders at that depth were not opened. Ask again with a larger depth, or none."
+        ),
         ToolResult::FileList { entries, .. } if entries.is_empty() => "No files found.".to_string(),
-        ToolResult::FileList { entries, truncated } => render_file_tree(entries, *truncated),
+        ToolResult::FileList { entries, truncated, stopped_at } => {
+            let tree = render_file_tree(entries, *truncated);
+            match stopped_at {
+                Some(depth) => format!("{tree}\n[folders at depth {depth} were not opened — raise depth to see inside]"),
+                None => tree,
+            }
+        }
         ToolResult::FileWritten { path, diff } => render_for_model("Wrote", path, diff, true),
         ToolResult::FileEdited { path, diff } => render_for_model("Edited", path, diff, true),
         // How much went, not the whole file read back.
@@ -60,7 +70,7 @@ pub fn for_model(result: &ToolResult) -> String {
         ToolResult::ProcessOutput(output) => process_output(output),
         ToolResult::ProcessStopped(process) => process.describe(),
         ToolResult::SearchResults { matches, meta } => search(matches, meta),
-        ToolResult::Skill { name, instructions, files } => skill(name, instructions, files),
+        ToolResult::Skill { name, instructions, files, from } => skill(name, instructions, files, from),
         ToolResult::SkillFile { name, path, content } => format!("{name}/{path}:\n{content}"),
         ToolResult::PlanWritten { lines } => format!("Plan saved ({lines} lines). The user sees it in the Plan tab."),
         // Already the text the server meant for a model.
@@ -226,7 +236,10 @@ fn diff_files(path: &str, label: &str, files: &[GitFileDiff], truncated: bool) -
             out.push_str(&format!("{} is a binary file — no text diff", file.path));
         } else if file.diff.truncated && file.diff.unified_diff.is_empty() {
             out.push_str(&render_for_model("File", &file.path, &file.diff, false));
-            out.push_str(" — diff not shown here, ask gitDiff for this file");
+            // Why, or it reads as a choice nobody can explain.
+            out.push_str(&format!(
+                " — diff not shown: one call shows {MAX_DIFF_CHARS} characters of diff and this file did not fit; ask gitDiff for this file alone"
+            ));
         } else {
             out.push_str(&render_for_model("File", &file.path, &file.diff, true));
         }
@@ -332,8 +345,9 @@ fn search(matches: &[CodeMatch], meta: &SearchMeta) -> String {
     out
 }
 
-fn skill(name: &str, instructions: &str, files: &[String]) -> String {
-    let mut out = format!("Skill {name}:\n{}", instructions.trim_end());
+fn skill(name: &str, instructions: &str, files: &[String], from: &str) -> String {
+    let from = if from.is_empty() { String::new() } else { format!(" (from {from})") };
+    let mut out = format!("Skill {name}{from}:\n{}", instructions.trim_end());
     if !files.is_empty() {
         out.push_str(&format!("\n\nFiles in this skill (read one with skill and its path):\n- {}", files.join("\n- ")));
     }
@@ -374,7 +388,12 @@ mod tests {
 
     #[test]
     fn an_empty_listing_says_so_instead_of_drawing_a_bare_root() {
-        assert_eq!(for_model(&ToolResult::FileList { entries: vec![], truncated: false }), "No files found.");
+        assert_eq!(for_model(&ToolResult::FileList { entries: vec![], truncated: false, stopped_at: None }), "No files found.");
+        let unopened = for_model(&ToolResult::FileList { entries: vec![], truncated: false, stopped_at: Some(4) });
+        assert!(unopened.starts_with("No files found within depth 4 — folders at that depth were not opened."), "{unopened}");
+        let entry = crate::domain::tools::ToolFileEntry { path: "a".into(), is_dir: true };
+        let short = for_model(&ToolResult::FileList { entries: vec![entry], truncated: false, stopped_at: Some(1) });
+        assert!(short.ends_with("\n[folders at depth 1 were not opened — raise depth to see inside]"), "{short}");
     }
 
     #[test]
@@ -485,7 +504,7 @@ mod tests {
             shown,
             "Diff (index → working tree) under src: 3 files changed (+2 -1 lines)\n\n\
              File src/a.rs (+1 -1 lines)\n```diff\n@@ -1 +1 @@\n-one\n+two\n```\n\n\
-             File src/big.rs (+1 -0 lines) — diff not shown here, ask gitDiff for this file\n\n\
+             File src/big.rs (+1 -0 lines) — diff not shown: one call shows 20000 characters of diff and this file did not fit; ask gitDiff for this file alone\n\n\
              src/logo.png is a binary file — no text diff\n\n\
              [more changed files not shown — ask for a narrower path]"
         );
@@ -635,8 +654,16 @@ mod tests {
 
     #[test]
     fn a_skill_lists_its_files_after_the_instructions() {
-        let shown = for_model(&ToolResult::Skill { name: "tests".into(), instructions: "Do it.\n".into(), files: vec!["a.md".into()] });
-        assert_eq!(shown, "Skill tests:\nDo it.\n\nFiles in this skill (read one with skill and its path):\n- a.md");
+        let shown = for_model(&ToolResult::Skill {
+            name: "tests".into(),
+            instructions: "Do it.\n".into(),
+            files: vec!["a.md".into()],
+            from: ".agents/skills/tests — this repository's".into(),
+        });
+        assert_eq!(
+            shown,
+            "Skill tests (from .agents/skills/tests — this repository's):\nDo it.\n\nFiles in this skill (read one with skill and its path):\n- a.md"
+        );
     }
 
     #[test]

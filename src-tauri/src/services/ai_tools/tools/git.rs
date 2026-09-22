@@ -36,7 +36,7 @@ const MAX_STATUS_ENTRIES: usize = 200;
 /// Caps on a directory's diff: files, and the diff text across all of them.
 /// A file past the text budget still shows its counts.
 const MAX_DIFF_FILES: usize = 50;
-const MAX_DIFF_CHARS: usize = 20_000;
+pub(in crate::services::ai_tools) const MAX_DIFF_CHARS: usize = 20_000;
 /// `gitLog` commits by default, and at most.
 const DEFAULT_LOG_COMMITS: u32 = 20;
 const MAX_LOG_COMMITS: u32 = 100;

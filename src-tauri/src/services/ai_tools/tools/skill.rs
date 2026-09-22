@@ -26,13 +26,29 @@ pub fn skill(args: &SkillArgs, deps: &ToolDeps) -> Result<ToolResult, ToolError>
     match &args.path {
         None => {
             let (parsed, files) = skills_store::load(&listed.dir)?;
-            Ok(ToolResult::Skill { name: parsed.meta.name, instructions: parsed.body, files })
+            Ok(ToolResult::Skill { name: parsed.meta.name, instructions: parsed.body, files, from: provenance(&listed.dir) })
         }
         Some(path) => Ok(ToolResult::SkillFile {
             name: args.name.clone(),
             path: path.clone(),
             content: skills_store::read(&listed.dir, path)?,
         }),
+    }
+}
+
+/// A skill in one of the user's folders is theirs, shared by every project;
+/// anything else the catalog found in the repository. Said, because a
+/// user's skill may be about another stack than this one.
+fn provenance(dir: &std::path::Path) -> String {
+    const USER: [&str; 3] = ["Laika's skills folder", "~/.agents/skills", "~/.claude/skills"];
+    let user = skills_store::user_dirs().ok().and_then(|dirs| dirs.iter().position(|d| dir.starts_with(d)));
+    match user {
+        Some(i) => format!("{} — the user's own, shared by every project, not this repository's", USER[i]),
+        None => {
+            let tail: Vec<String> = dir.components().rev().take(3).map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            let shown: Vec<&str> = tail.iter().rev().map(String::as_str).collect();
+            format!("{} — this repository's", shown.join("/"))
+        }
     }
 }
 
@@ -104,6 +120,7 @@ mod tests {
                     name: "release".into(),
                     instructions: "Bump the version.\n".into(),
                     files: vec!["checklist.md".into()],
+                    from: "Laika's skills folder — the user's own, shared by every project, not this repository's".into(),
                 }
             );
             assert_eq!(
@@ -149,7 +166,8 @@ mod tests {
 
             assert!(matches!(
                 skill(&args("release", None), &deps).unwrap(),
-                ToolResult::Skill { instructions, .. } if instructions == "Their steps.\n"
+                ToolResult::Skill { instructions, from, .. }
+                    if instructions == "Their steps.\n" && from == ".claude/skills/release — this repository's"
             ));
             assert!(matches!(
                 skill(&args("release", Some("notes.md")), &deps).unwrap(),

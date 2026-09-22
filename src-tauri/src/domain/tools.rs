@@ -949,6 +949,10 @@ pub enum ToolResult {
     FileList {
         entries: Vec<ToolFileEntry>,
         truncated: bool,
+        /// The `depth` the walk stopped at, when folders there had more in
+        /// them: an empty or short listing is then "not looked", not "none".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stopped_at: Option<u32>,
     },
     #[serde(rename_all = "camelCase")]
     FileWritten {
@@ -1051,6 +1055,10 @@ pub enum ToolResult {
         name: String,
         instructions: String,
         files: Vec<String>,
+        /// Where it was found, said as the model should weigh it: the
+        /// repository's own, or the user's from a folder every project shares.
+        #[serde(default)]
+        from: String,
     },
     #[serde(rename_all = "camelCase")]
     SkillFile {
