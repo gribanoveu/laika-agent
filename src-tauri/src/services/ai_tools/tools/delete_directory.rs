@@ -35,13 +35,14 @@ pub fn delete_directory(
         return Err(ToolError::DirectoryNotEmpty(relative));
     }
 
+    let files = super::move_path::count_files(&path);
     if empty {
         fs::remove_dir(&path).map_err(ToolError::Io)?;
     } else {
         fs::remove_dir_all(&path).map_err(ToolError::Io)?;
     }
 
-    Ok(ToolResult::DirectoryDeleted { path: relative })
+    Ok(ToolResult::DirectoryDeleted { path: relative, files })
 }
 
 /// What the model is told `deleteDirectory` is for.
@@ -115,7 +116,7 @@ mod tests {
         .expect("removes");
 
         assert!(!root.join("empty").exists());
-        assert!(matches!(result, ToolResult::DirectoryDeleted { ref path } if path == "empty"));
+        assert!(matches!(result, ToolResult::DirectoryDeleted { ref path, files: 0 } if path == "empty"));
     }
 
     /// The default that makes an over-broad path cost one refusal instead of a
@@ -139,14 +140,16 @@ mod tests {
     fn recursive_removes_the_whole_subtree() {
         let (scope, root, _) = fixture("rmdir-recursive");
         write(&root, "full/deep/a.txt", "x");
+        write(&root, "full/b.txt", "x");
 
-        delete_directory(
+        let result = delete_directory(
             &scope,
             &DeleteDirectoryArgs { path: "full".into(), recursive: Some(true) },
         )
         .expect("removes");
 
         assert!(!root.join("full").exists());
+        assert!(matches!(result, ToolResult::DirectoryDeleted { files: 2, .. }), "{result:?}");
     }
 
     /// Nothing addresses the scope root but a mistake, and honouring it would

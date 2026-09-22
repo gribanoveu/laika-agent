@@ -123,14 +123,38 @@ fn find_unique(content: &str, old: &str) -> Result<(usize, usize), ToolError> {
     if count > 1 {
         return Err(ToolError::EditTextAmbiguous(old.to_string(), count));
     }
-    Ok((start, start + old.len()))
+    let end = start + old.len();
+    if let Some(word) = split_word(content, start, end) {
+        return Err(ToolError::EditInsideWord(old.to_string(), word));
+    }
+    Ok((start, end))
+}
+
+/// The word `start..end` cuts into, if an edge of it falls between two word
+/// characters. `id` in `userId` and `line on` in `line one` do; `middle` at
+/// the start of a line does not.
+fn split_word(content: &str, start: usize, end: usize) -> Option<String> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let before = content[..start].chars().next_back();
+    let first = content[start..end].chars().next();
+    let last = content[start..end].chars().next_back();
+    let after = content[end..].chars().next();
+    let cut_start = before.is_some_and(word) && first.is_some_and(word);
+    let cut_end = last.is_some_and(word) && after.is_some_and(word);
+    if !cut_start && !cut_end {
+        return None;
+    }
+    // The text between the nearest non-word characters on either side.
+    let from = content[..start].char_indices().rev().find(|(_, c)| !word(*c)).map_or(0, |(i, c)| i + c.len_utf8());
+    let to = content[end..].find(|c: char| !word(c)).map_or(content.len(), |i| end + i);
+    Some(content[from..to].chars().take(80).collect())
 }
 
 /// What the model is told `editFile` is for.
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "editFile".to_string(),
-        description: "Replace exact passages in an existing file. The preferred way to change code: it touches only what you name. Each edit's `old` must appear **exactly once** in the file as it is now — include the surrounding lines needed to make it unique. If any anchor is missing, ambiguous or overlaps another edit, the whole call is refused and nothing is written, so a failed edit never leaves the file half-changed. All edits are matched against the file's original content, so one edit's replacement can never become another's anchor. The file must already exist and have been read this turn."
+        description: "Replace exact passages in an existing file. The preferred way to change code: it touches only what you name. Each edit's `old` must appear **exactly once** in the file as it is now — include the surrounding lines needed to make it unique — and must begin and end on whole words: an anchor that starts or ends inside a name is refused. If any anchor is missing, ambiguous or overlaps another edit, the whole call is refused and nothing is written, so a failed edit never leaves the file half-changed. All edits are matched against the file's original content, so one edit's replacement can never become another's anchor. The file must already exist and have been read this turn."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -293,6 +317,27 @@ mod tests {
         assert!(matches!(err, ToolError::EditTextNotFound(_)), "{err}");
     }
 
+    /// A unique anchor inside a word would rewrite part of a name: `line on`
+    /// in `line one` made `ONEe`.
+    #[test]
+    fn an_anchor_cutting_into_a_word_is_refused_and_names_the_word() {
+        let (scope, root, mut reads) = fixture("edit-word", "line one\nlet aUserId = get();\nmiddle\nпривет мир\nmax_retry_count\n");
+
+        for (old, word) in [("line on", "line one"), ("serId", "aUserId"), ("aUser", "aUserId"), ("ивет", "привет"), ("retry_count", "max_retry_count")] {
+            let err = edit_file(&scope, &edits(&[(old, "X")]), &mut reads).expect_err(old);
+            assert!(matches!(&err, ToolError::EditInsideWord(o, w) if o == old && w == word), "{old}: {err}");
+        }
+        assert_eq!(on_disk(&root), "line one\nlet aUserId = get();\nmiddle\nпривет мир\nmax_retry_count\n", "left untouched");
+
+        // Whole words, and edges on punctuation or space, are fine.
+        let text = on_disk(&root);
+        for old in ["middle", "aUserId", "= get()", "();\nmiddle", "мир"] {
+            let start = text.find(old).unwrap();
+            assert_eq!(split_word(&text, start, start + old.len()), None, "{old}");
+        }
+        edit_file(&scope, &edits(&[("middle", "MIDDLE")]), &mut reads).expect("a whole line");
+    }
+
     /// The count is what tells the model the anchor was too short.
     #[test]
     fn an_ambiguous_anchor_reports_how_many_times_it_matched() {
@@ -310,13 +355,13 @@ mod tests {
     /// which was applied first, or corrupt one of them outright.
     #[test]
     fn overlapping_edits_reject_the_call() {
-        let (scope, root, mut reads) = fixture("edit-overlap", "abcdef\n");
+        let (scope, root, mut reads) = fixture("edit-overlap", "ab cd ef\n");
 
-        let err = edit_file(&scope, &edits(&[("abcd", "X"), ("cdef", "Y")]), &mut reads)
+        let err = edit_file(&scope, &edits(&[("ab cd", "X"), ("cd ef", "Y")]), &mut reads)
             .expect_err("regions overlap");
 
         assert!(matches!(err, ToolError::EditsOverlap));
-        assert_eq!(on_disk(&root), "abcdef\n", "left untouched");
+        assert_eq!(on_disk(&root), "ab cd ef\n", "left untouched");
     }
 
     /// All or nothing: one unusable edit in a batch must not leave the file

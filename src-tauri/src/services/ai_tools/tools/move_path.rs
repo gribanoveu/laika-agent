@@ -39,7 +39,7 @@ pub fn move_path(scope: &ToolScope, args: &MoveArgs, reads: &mut ReadFiles) -> R
 
 /// Files anywhere under `dir`, not following links: "moved 0 files" is how
 /// the model learns it moved an empty shell rather than the tree it meant.
-fn count_files(dir: &std::path::Path) -> usize {
+pub(super) fn count_files(dir: &std::path::Path) -> usize {
     let Ok(entries) = fs::read_dir(dir) else { return 0 };
     entries
         .flatten()

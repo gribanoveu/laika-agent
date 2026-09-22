@@ -33,7 +33,10 @@ pub fn for_model(result: &ToolResult) -> String {
         // How much went, not the whole file read back.
         ToolResult::FileDeleted { path, diff } => render_for_model("Deleted", path, diff, false),
         ToolResult::DirectoryCreated { path } => format!("Created directory {path}"),
-        ToolResult::DirectoryDeleted { path } => format!("Deleted directory {path}"),
+        ToolResult::DirectoryDeleted { path, files: 0 } => format!("Deleted empty directory {path}"),
+        ToolResult::DirectoryDeleted { path, files } => {
+            format!("Deleted directory {path} with {files} {}", if *files == 1 { "file" } else { "files" })
+        }
         ToolResult::Moved { from, to, files: None } => format!("Moved {from} → {to}"),
         ToolResult::Moved { from, to, files: Some(n) } => {
             format!("Moved directory {from} → {to} with {n} {}", if *n == 1 { "file" } else { "files" })
@@ -351,6 +354,14 @@ mod tests {
             before: before.iter().map(|s| s.to_string()).collect(),
             after: after.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn a_deleted_directory_says_how_much_went_with_it() {
+        let deleted = |files| for_model(&ToolResult::DirectoryDeleted { path: "a".into(), files });
+        assert_eq!(deleted(0), "Deleted empty directory a");
+        assert_eq!(deleted(1), "Deleted directory a with 1 file");
+        assert_eq!(deleted(3), "Deleted directory a with 3 files");
     }
 
     #[test]

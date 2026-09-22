@@ -283,6 +283,23 @@ mod tests {
     /// every JSON number is a double. What comes back must still vouch for
     /// the file it was taken from, or an approved edit is refused as stale.
     #[test]
+    fn a_slice_after_a_whole_read_still_counts_as_whole() {
+        let mut reads = ReadFiles::default();
+        reads.record("a.rs", "one\ntwo\n", true);
+        reads.record("a.rs", "one\ntwo\n", false);
+        assert_eq!(reads.check("a.rs", "one\ntwo\n", true), Ok(()));
+
+        // Two slices are not the whole, however they add up.
+        reads.record("b.rs", "one\ntwo\n", false);
+        reads.record("b.rs", "one\ntwo\n", false);
+        assert_eq!(reads.check("b.rs", "one\ntwo\n", true), Err(WriteBlocked::ReadInPart));
+
+        // Changed since: the slice is all it knows now.
+        reads.record("a.rs", "one\nTWO\n", false);
+        assert_eq!(reads.check("a.rs", "one\nTWO\n", true), Err(WriteBlocked::ReadInPart));
+    }
+
+    #[test]
     fn reads_survive_the_trip_through_javascript() {
         fn as_js(value: serde_json::Value) -> serde_json::Value {
             use serde_json::Value;
@@ -705,6 +722,11 @@ pub enum ToolError {
     /// match count, so the model learns how much more context to include.
     #[error("edit text is not unique — matched {1} times: {0}")]
     EditTextAmbiguous(String, usize),
+    /// The anchor starts or ends inside a word: `line on` in `line one`.
+    /// Applied, the edit would rewrite part of a name, and the diff would
+    /// look plausible enough to miss.
+    #[error("edit text starts or ends inside a word — it matched within `{1}`; anchor on whole words: {0}")]
+    EditInsideWord(String, String),
     /// Two edits in one call matched overlapping regions of the original
     /// content: applying both would be order-dependent or would corrupt one of
     /// them, so the whole call is rejected.
@@ -943,7 +965,13 @@ pub enum ToolResult {
         diff: FileDiffStats,
     },
     #[serde(rename_all = "camelCase")]
-    DirectoryDeleted { path: String },
+    DirectoryDeleted {
+        path: String,
+        /// Files that went with it — what `recursive` cost, since no read
+        /// stands guard over a tree.
+        #[serde(default)]
+        files: usize,
+    },
     #[serde(rename_all = "camelCase")]
     Moved {
         from: String,
@@ -1241,14 +1269,15 @@ pub enum WriteBlocked {
 impl ReadFiles {
     /// Records what a read saw. `content` is the whole file, whatever slice of
     /// it was returned.
+    ///
+    /// A slice of a file already read whole, and unchanged since, leaves it
+    /// read whole: the agent still knows all of it. Downgrading it stranded a
+    /// delete — "read it in full" — behind a full read that repeating would
+    /// not show again.
     pub fn record(&mut self, path: &str, content: &str, whole: bool) {
-        self.seen.insert(
-            path.to_string(),
-            FileRead {
-                hash: hash(content),
-                whole,
-            },
-        );
+        let hash = hash(content);
+        let known = self.seen.get(path).is_some_and(|seen| seen.whole && seen.hash == hash);
+        self.seen.insert(path.to_string(), FileRead { hash, whole: whole || known });
     }
 
     /// Whether the agent may write `current` at `path`, or why not.
