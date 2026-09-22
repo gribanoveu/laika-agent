@@ -229,11 +229,26 @@ pub fn search_many(
         only_lexical: matches.iter().all(|m| m.source == MatchSource::Lexical),
         extracted_tokens: &tokens,
     });
+    // No Latin words in any wording: a question in another language, and
+    // "add an identifier" alone does not say what went wrong. The bench
+    // measured what fixes it — the English wording beside it.
+    let foreign = tokens.is_empty() && all.chars().any(|c| c.is_alphabetic() && !c.is_ascii());
+    let hint = if foreign {
+        Some(
+            "The query is in another language than most code, and ranking across languages is weak. \
+             Search again with its English wording in queries — the question as the code would name it — \
+             and any identifier you can guess.",
+        )
+    } else {
+        hint
+    };
     // A declaration the query named is found, whatever else it asks about.
     // Absent only when every wording is: a question in another language
     // lacks the code's words by itself, and its rewording has them.
     let mut unknown: Vec<&str> = Vec::new();
-    let mut absent = !matches.is_empty() && symbol_hits == 0 && !queries.is_empty();
+    // Not for a question in another language: its words are missing for
+    // the language, and "may not be in this workspace" would be wrong.
+    let mut absent = !matches.is_empty() && symbol_hits == 0 && !queries.is_empty() && !foreign;
     for query in &queries {
         if !absent {
             break;
@@ -634,7 +649,7 @@ mod tests {
         // Not the verdict: the ordinary ones still come through.
         let wordless = search(&indexer, "как это работает", None, 5, &all()).unwrap();
         assert!(wordless.meta.weak, "{:?}", wordless.meta);
-        assert!(wordless.meta.hint.unwrap().contains("no names from code"));
+        assert!(wordless.meta.hint.unwrap().contains("English wording in queries"), "said what to do about the language");
     }
 
     /// What only a later wording finds still gets in — here a name only it
@@ -672,6 +687,27 @@ mod tests {
         let mut paths: Vec<&str> = result.matches.iter().map(|m| m.path.as_str()).collect();
         paths.sort_unstable();
         assert_eq!(paths, ["a.rs", "b.rs"]);
+    }
+
+    /// A question in another language is told the remedy the bench measured,
+    /// not only "add an identifier"; once reworded, it is not told again.
+    #[test]
+    fn a_question_in_another_language_is_told_to_add_its_english_wording() {
+        let indexer = indexed("search-foreign", &[("send.rs", "fn send_pack() {}\n")], Arc::default());
+
+        let alone = search(&indexer, "где отправляется пакет", None, 5, &all()).unwrap();
+        let hint = alone.meta.hint.unwrap_or_default();
+        assert!(hint.contains("English wording in queries") && !hint.contains("No indexed file"), "{hint}");
+        assert!(alone.meta.weak);
+
+        let reworded = search_many(&indexer, &["где отправляется пакет", "where the pack is sent"], None, 5, &all()).unwrap();
+        assert!(!reworded.meta.hint.unwrap_or_default().contains("English wording"));
+        let named = search(&indexer, "где вызывается send_pack", None, 5, &all()).unwrap();
+        assert!(!named.meta.hint.unwrap_or_default().contains("English wording"), "a name from the code is in it");
+        let short = search(&indexer, "is it on", None, 5, &all()).unwrap();
+        assert!(!short.meta.hint.unwrap_or_default().contains("English wording"), "no word of it is foreign");
+        let latin = search(&indexer, "where it is sent", None, 5, &all()).unwrap();
+        assert!(!latin.meta.hint.unwrap_or_default().contains("English wording"));
     }
 
     #[test]

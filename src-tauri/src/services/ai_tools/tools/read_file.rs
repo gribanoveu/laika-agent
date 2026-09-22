@@ -114,7 +114,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "readFile".to_string(),
-        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read. To read several files, call readFile for each in the same response — they run together, in one round."
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read in full, and an outline does not count. To read several files, call readFile for each in the same response — they run together, in one round."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
