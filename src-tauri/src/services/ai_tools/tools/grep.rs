@@ -32,6 +32,9 @@ const LINE_MAX_CHARS: usize = 300;
 /// Enough to see what a hit sits inside — a signature, the branch around it —
 /// without turning a search into a file dump nobody asked for.
 const MAX_CONTEXT_LINES: usize = 5;
+/// Hits counted past the cap before counting stops: enough to tell "a few
+/// more" from "narrow this down", without reading a vendored tree to the end.
+const MAX_COUNTED: usize = 10_000;
 
 pub fn grep(scope: &ToolScope, args: &GrepArgs) -> Result<ToolResult, ToolError> {
     let max_results = args
@@ -53,31 +56,36 @@ pub fn grep(scope: &ToolScope, args: &GrepArgs) -> Result<ToolResult, ToolError>
         max_results,
         context_lines,
         matches: Vec::new(),
+        total: 0,
+        files: std::collections::HashSet::new(),
+        skipped: Vec::new(),
     };
 
-    let truncated = match target(scope, args.path.as_deref())? {
+    match target(scope, args.path.as_deref())? {
         Target::File(path) => {
             let rel = relative_to_root(scope, &path)?;
-            search.file(&path, &rel)
+            search.file(&path, &rel);
         }
         Target::Dir(dir) => {
-            let mut truncated = false;
             for scanned in workspace_scanner::scan_files(&dir, None).map_err(ToolError::Io)? {
                 let Ok(rel) = relative_to_root(scope, &scanned.path) else {
                     continue;
                 };
-                if search.file(&scanned.path, &rel) {
-                    truncated = true;
+                search.file(&scanned.path, &rel);
+                if search.total >= MAX_COUNTED {
                     break;
                 }
             }
-            truncated
         }
-    };
+    }
 
     Ok(ToolResult::GrepResults {
+        truncated: search.total > search.matches.len(),
+        total: search.total,
+        total_files: search.files.len(),
+        total_is_floor: search.total >= MAX_COUNTED,
+        skipped: search.skipped,
         matches: search.matches,
-        truncated,
     })
 }
 
@@ -104,29 +112,36 @@ struct Search {
     max_results: usize,
     context_lines: usize,
     matches: Vec<GrepMatch>,
+    /// Every hit, kept or only counted.
+    total: usize,
+    files: std::collections::HashSet<String>,
+    skipped: Vec<String>,
 }
 
 impl Search {
-    /// Appends this file's hits. Returns whether the cap was reached with
-    /// matching still to do — which is what `truncated` reports.
-    fn file(&mut self, absolute: &Path, relative: &str) -> bool {
+    /// Keeps this file's hits up to the cap and counts the rest.
+    fn file(&mut self, absolute: &Path, relative: &str) {
         if !self.paths.allows(relative) {
-            return false;
+            return;
         }
         let Ok(meta) = fs::metadata(absolute) else {
-            return false;
+            return;
         };
         if meta.len() > MAX_FILE_BYTES {
-            return false;
+            self.skipped.push(relative.to_string());
+            return;
         }
         let Ok(bytes) = fs::read(absolute) else {
-            return false;
+            return;
         };
         if bytes[..BINARY_SNIFF_BYTES.min(bytes.len())].contains(&0) {
-            return false;
+            return;
         }
+        // Text in another encoding — cp1251 in an older Russian project —
+        // could hold the very line asked for; said, not dropped.
         let Ok(content) = String::from_utf8(bytes) else {
-            return false;
+            self.skipped.push(relative.to_string());
+            return;
         };
 
         // Collected up front so context can look backwards. The no-context
@@ -136,11 +151,15 @@ impl Search {
             if !self.pattern.is_match(line) {
                 continue;
             }
+            self.total += 1;
+            self.files.insert(relative.to_string());
+            if self.total >= MAX_COUNTED {
+                return;
+            }
             // The cap counts *hits*, not lines: context belongs to a hit, so
-            // asking for context never silently returns fewer results. Checked
-            // after the match so `true` means "there really is more".
+            // asking for context never silently returns fewer results.
             if self.matches.len() >= self.max_results {
-                return true;
+                continue;
             }
             let (before, after) = if self.context_lines == 0 {
                 (Vec::new(), Vec::new())
@@ -165,7 +184,6 @@ impl Search {
                 after,
             });
         }
-        false
     }
 }
 
@@ -183,7 +201,7 @@ fn truncate(line: &str) -> String {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "grep".to_string(),
-        description: "Search file contents by regular expression. Use it when you know what the code says; use listFiles when you know where it lives. Results carry the path and line number in the spelling readFile takes, so a hit can be read without editing the path."
+        description: "Search file contents by regular expression. Use it when you know what the code says; use listFiles when you know where it lives. Results carry the path and line number in the spelling readFile takes, so a hit can be read without editing the path. Past maxResults the rest are still counted, so the result says how many there are in all; files over 1 MB or not UTF-8 text are not searched and are named."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -266,7 +284,7 @@ mod tests {
 
     fn run(scope: &ToolScope, args: &GrepArgs) -> (Vec<GrepMatch>, bool) {
         match grep(scope, args).expect("search runs") {
-            ToolResult::GrepResults { matches, truncated } => (matches, truncated),
+            ToolResult::GrepResults { matches, truncated, .. } => (matches, truncated),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -407,6 +425,43 @@ mod tests {
 
         assert_eq!(matches.len(), 5);
         assert!(truncated, "there were more hits than the cap");
+    }
+
+    /// Past the cap hits are still counted, with their files; text that
+    /// could not be searched is named, binary is not.
+    #[test]
+    fn a_cut_says_how_much_it_cut_and_what_was_not_searched() {
+        let (scope, root) = fixture("grep-total");
+        write(&root, "a.txt", &"NEEDLE\n".repeat(20));
+        write(&root, "b.txt", "NEEDLE\n");
+        write(&root, "big.txt", &"NEEDLE\n".repeat(200_000));
+        std::fs::write(root.join("cp1251.txt"), [0xCF, 0xF0, 0xE8, b'\n']).unwrap();
+        std::fs::write(root.join("bin.dat"), [0u8, 1, 2]).unwrap();
+
+        let capped = GrepArgs { max_results: Some(5), ..args("NEEDLE") };
+        let ToolResult::GrepResults { matches, truncated, total, total_files, total_is_floor, mut skipped } =
+            grep(&scope, &capped).unwrap()
+        else {
+            panic!()
+        };
+
+        assert_eq!((matches.len(), truncated, total, total_files, total_is_floor), (5, true, 21, 2, false));
+        skipped.sort();
+        assert_eq!(skipped, ["big.txt", "cp1251.txt"]);
+    }
+
+    /// Counting stops somewhere, and says so.
+    #[test]
+    fn counting_stops_at_its_limit_and_says_the_total_is_a_floor() {
+        let (scope, root) = fixture("grep-floor");
+        write(&root, "a.txt", &"NEEDLE\n".repeat(MAX_COUNTED / 2));
+        write(&root, "b.txt", &"NEEDLE\n".repeat(MAX_COUNTED));
+        // Past the limit, the rest of the tree is not read.
+        write(&root, "c.txt", "NEEDLE\n");
+
+        let ToolResult::GrepResults { total, total_is_floor, .. } = grep(&scope, &args("NEEDLE")).unwrap() else { panic!() };
+
+        assert_eq!((total, total_is_floor), (MAX_COUNTED, true));
     }
 
     /// `truncated` must be false when the cap happens to equal the hit count —

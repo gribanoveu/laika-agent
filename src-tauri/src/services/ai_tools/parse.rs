@@ -352,6 +352,7 @@ mod tests {
         .expect_err("never read");
 
         assert!(matches!(err, ToolError::FileNotRead(_)));
+        assert!(err.to_string().ends_with("an outline is not a read"), "{err}");
 
         // A deletion is refused as one, read not at all or only in part.
         let delete = call("deleteFile", r#"{"path": "a.txt"}"#);

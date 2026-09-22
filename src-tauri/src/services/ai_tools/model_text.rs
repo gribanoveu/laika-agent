@@ -26,7 +26,9 @@ pub fn for_model(result: &ToolResult) -> String {
             file(content, *start_line, *end_line, *total_lines, *clamped)
         }
         ToolResult::FileOutline { path, entries, total_lines } => outline(path, entries, *total_lines),
-        ToolResult::GrepResults { matches, truncated } => grep(matches, *truncated),
+        ToolResult::GrepResults { matches, truncated, total, total_files, total_is_floor, skipped } => {
+            grep(matches, *truncated, *total, *total_files, *total_is_floor, skipped)
+        }
         ToolResult::FileList { entries, stopped_at: Some(depth), .. } if entries.is_empty() => format!(
             "No files found within depth {depth} — folders at that depth were not opened. Ask again with a larger depth, or none."
         ),
@@ -111,9 +113,21 @@ fn outline(path: &str, entries: &[OutlineEntry], total: u32) -> String {
 /// Each line is printed once. Two hits whose context windows overlap share
 /// their lines, and a line that is itself a hit is shown as one even when it
 /// also falls in another hit's context.
-fn grep(matches: &[GrepMatch], truncated: bool) -> String {
+fn grep(matches: &[GrepMatch], truncated: bool, total: usize, total_files: usize, floor: bool, skipped: &[String]) -> String {
+    let not_searched = if skipped.is_empty() {
+        String::new()
+    } else {
+        let shown: Vec<&str> = skipped.iter().take(5).map(String::as_str).collect();
+        let more = if skipped.len() > shown.len() { format!(" and {} more", skipped.len() - shown.len()) } else { String::new() };
+        format!(
+            "\n\n[not searched: {} {} over 1 MB or not UTF-8 text — {}{more}; use runCommand for them]",
+            skipped.len(),
+            if skipped.len() == 1 { "file" } else { "files" },
+            shown.join(", ")
+        )
+    };
     if matches.is_empty() {
-        return "No matches. Git-ignored paths (build output, dependencies) are not searched — use runCommand to search them.".to_string();
+        return format!("No matches. Git-ignored paths (build output, dependencies) are not searched — use runCommand to search them.{not_searched}");
     }
     // Files in the order they came, each with its lines by number.
     let mut files: Vec<(&str, BTreeMap<u32, (bool, &str)>)> = Vec::new();
@@ -146,16 +160,24 @@ fn grep(matches: &[GrepMatch], truncated: bool) -> String {
     }
     let hits = matches.len();
     let files_count = blocks.len();
-    let head = format!(
-        "{}{hits} {} in {files_count} {}:",
-        if truncated { "At least " } else { "" },
-        if hits == 1 { "match" } else { "matches" },
-        if files_count == 1 { "file" } else { "files" },
-    );
+    let head = if !truncated {
+        format!(
+            "{hits} {} in {files_count} {}:",
+            if hits == 1 { "match" } else { "matches" },
+            if files_count == 1 { "file" } else { "files" },
+        )
+    } else if total == 0 {
+        // Saved before the total was counted.
+        format!("At least {hits} matches in {files_count} files:")
+    } else {
+        let over = if floor { "more than " } else { "" };
+        format!("{hits} of {over}{total} matches shown, from {files_count} of {over}{total_files} files:")
+    };
     let mut out = format!("{head}\n{}", blocks.join("\n\n"));
     if truncated {
-        out.push_str("\n\n[more matches not shown — narrow the pattern or the glob]");
+        out.push_str("\n\n[more matches not shown — narrow the pattern or the glob, or raise maxResults]");
     }
+    out.push_str(&not_searched);
     out
 }
 
@@ -191,9 +213,10 @@ fn git_status(
         Some(b) => format!("On branch {b}"),
         None => "No branch (detached HEAD or no commits yet)".to_string(),
     };
-    if let Some(GitUpstream { name, ahead, behind }) = upstream {
+    if let Some(GitUpstream { name, ahead, behind, fetched }) = upstream {
         let apart = if ahead + behind == 0 { "up to date with".to_string() } else { format!("{ahead} ahead and {behind} behind") };
-        out.push_str(&format!(", {apart} {name} as of the last fetch"));
+        let when = fetched.as_deref().map_or_else(|| " (no fetch recorded)".to_string(), |at| format!(" ({at})"));
+        out.push_str(&format!(", {apart} {name} as of the last fetch{when}"));
     }
     if staged.is_empty() && unstaged.is_empty() && conflicted.is_empty() {
         out.push_str("\nNothing changed.");
@@ -245,7 +268,7 @@ fn diff_files(path: &str, label: &str, files: &[GitFileDiff], truncated: bool) -
             out.push_str(&render_for_model("File", &file.path, &file.diff, false));
             // Why, or it reads as a choice nobody can explain.
             out.push_str(&format!(
-                " — diff not shown: one call shows {MAX_DIFF_CHARS} characters of diff and this file did not fit; ask gitDiff for this file alone"
+                " — diff not shown: one call shows {MAX_DIFF_CHARS} characters of diff, filled file by file in path order, and this file did not fit in what was left; ask gitDiff for this file alone"
             ));
         } else {
             out.push_str(&render_for_model("File", &file.path, &file.diff, true));
@@ -434,13 +457,47 @@ mod tests {
                 hit("b.rs", 1, "use a;", &[], &[]),
             ],
             truncated: true,
+            total: 347,
+            total_files: 58,
+            total_is_floor: false,
+            skipped: vec![],
         });
         assert_eq!(
             shown,
-            "At least 4 matches in 2 files:\na.rs\n2-// one\n3:fn one()\n4-}\n5:fn two()\n--\n20:fn far()\n\nb.rs\n1:use a;\n\n[more matches not shown — narrow the pattern or the glob]"
+            "4 of 347 matches shown, from 2 of 58 files:\na.rs\n2-// one\n3:fn one()\n4-}\n5:fn two()\n--\n20:fn far()\n\nb.rs\n1:use a;\n\n[more matches not shown — narrow the pattern or the glob, or raise maxResults]"
         );
-        let none = for_model(&ToolResult::GrepResults { matches: vec![], truncated: false });
+        let none = for_model(&ToolResult::GrepResults { matches: vec![], truncated: false, total: 0, total_files: 0, total_is_floor: false, skipped: vec![] });
         assert!(none.starts_with("No matches. Git-ignored paths"), "{none}");
+    }
+
+    /// A count that stopped says it is a floor; files not searched are named,
+    /// found or not.
+    #[test]
+    fn grep_says_what_it_did_not_count_or_search() {
+        let floor = for_model(&ToolResult::GrepResults {
+            matches: vec![hit("a.rs", 1, "x", &[], &[])],
+            truncated: true,
+            total: 10_000,
+            total_files: 900,
+            total_is_floor: true,
+            skipped: vec![],
+        });
+        assert!(floor.starts_with("1 of more than 10000 matches shown, from 1 of more than 900 files:"), "{floor}");
+        let skipped: Vec<String> = (1..=7).map(|i| format!("f{i}.log")).collect();
+        let none = for_model(&ToolResult::GrepResults { matches: vec![], truncated: false, total: 0, total_files: 0, total_is_floor: false, skipped });
+        assert!(
+            none.ends_with("[not searched: 7 files over 1 MB or not UTF-8 text — f1.log, f2.log, f3.log, f4.log, f5.log and 2 more; use runCommand for them]"),
+            "{none}"
+        );
+        let legacy = for_model(&ToolResult::GrepResults {
+            matches: vec![hit("a.rs", 1, "x", &[], &[])],
+            truncated: true,
+            total: 0,
+            total_files: 0,
+            total_is_floor: false,
+            skipped: vec![],
+        });
+        assert!(legacy.starts_with("At least 1 matches in 1 files:"), "{legacy}");
     }
 
     /// Hits on 118 and 120 with two lines of context: 120 is both the first
@@ -453,6 +510,10 @@ mod tests {
                 hit("t.java", 120, "retry()", &["retry()", "c"], &["d", "e"]),
             ],
             truncated: false,
+            total: 2,
+            total_files: 1,
+            total_is_floor: false,
+            skipped: vec![],
         });
         assert_eq!(shown, "2 matches in 1 file:\nt.java\n116-a\n117-b\n118:retry()\n119-c\n120:retry()\n121-d\n122-e");
     }
@@ -531,7 +592,7 @@ mod tests {
             shown,
             "Diff (index → working tree) under src: 3 files changed (+2 -1 lines)\n\n\
              File src/a.rs (+1 -1 lines)\n```diff\n@@ -1 +1 @@\n-one\n+two\n```\n\n\
-             File src/big.rs (+1 -0 lines) — diff not shown: one call shows 20000 characters of diff and this file did not fit; ask gitDiff for this file alone\n\n\
+             File src/big.rs (+1 -0 lines) — diff not shown: one call shows 20000 characters of diff, filled file by file in path order, and this file did not fit in what was left; ask gitDiff for this file alone\n\n\
              src/logo.png is a binary file — no text diff\n\n\
              [more changed files not shown — ask for a narrower path]"
         );
@@ -566,7 +627,7 @@ mod tests {
         let f = |status: &str, path: &str| GitFileStatus { status: status.into(), path: path.into() };
         let shown = for_model(&ToolResult::GitStatus {
             branch: Some("main".into()),
-            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0 }),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0, fetched: Some("2026-09-20 14:03".into()) }),
             staged: vec![f("R", "b.rs")],
             unstaged: vec![f("M", "a.rs"), f("?", "new.rs")],
             conflicted: vec![],
@@ -574,7 +635,7 @@ mod tests {
         });
         assert_eq!(
             shown,
-            "On branch main, 2 ahead and 0 behind origin/main as of the last fetch\n\
+            "On branch main, 2 ahead and 0 behind origin/main as of the last fetch (2026-09-20 14:03)\n\
              Staged:\n  R b.rs\nNot staged:\n  M a.rs\n  ? new.rs\n\
              (M modified, R renamed, ? untracked)"
         );
@@ -589,16 +650,16 @@ mod tests {
         assert!(clean.ends_with("\nNothing changed."), "{clean}");
         let even = for_model(&ToolResult::GitStatus {
             branch: Some("main".into()),
-            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 0 }),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 0, fetched: None }),
             staged: vec![],
             unstaged: vec![],
             conflicted: vec![f("U", "c.rs")],
             truncated: false,
         });
-        assert_eq!(even, "On branch main, up to date with origin/main as of the last fetch\nConflicted:\n  U c.rs\n(U conflicted)");
+        assert_eq!(even, "On branch main, up to date with origin/main as of the last fetch (no fetch recorded)\nConflicted:\n  U c.rs\n(U conflicted)");
         let behind = for_model(&ToolResult::GitStatus {
             branch: Some("main".into()),
-            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 3 }),
+            upstream: Some(GitUpstream { name: "origin/main".into(), ahead: 0, behind: 3, fetched: None }),
             staged: vec![],
             unstaged: vec![],
             conflicted: vec![],

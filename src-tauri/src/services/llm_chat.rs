@@ -1392,10 +1392,7 @@ mod tests {
     }
 
     fn grep() -> ToolResult {
-        ToolResult::GrepResults {
-            matches: vec![],
-            truncated: false,
-        }
+        ToolResult::GrepResults { matches: vec![], truncated: false, total: 0, total_files: 0, total_is_floor: false, skipped: vec![] }
     }
 
     #[test]

@@ -100,6 +100,16 @@ describe("what each call shows", () => {
     );
 
     expect(shown.meta).toBe("3 matches · 2 files");
+    const cut = (totalIsFloor: boolean) =>
+      describeTool(
+        tool({
+          name: "grep",
+          arguments: '{"pattern":"x"}',
+          result: { matches: [{ path: "a.java", line: 1, text: "x" }], truncated: true, total: 347, totalFiles: 58, totalIsFloor },
+        }),
+      ).meta;
+    expect(cut(false)).toBe("1 of 347 matches · 58 files");
+    expect(cut(true)).toBe("1 of 347+ matches · 58 files");
     // Grouped by file, as grep prints it, with the lines around a hit.
     expect(shown.detail).toBe("a.java\n1: getIncome()\n--\n7- // why\n8- // because\n9: getIncome()\n10- }\n\nb.java\n4: getIncome()");
   });

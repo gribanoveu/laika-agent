@@ -122,8 +122,12 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
       return {
         name,
         arg: str(args.pattern) ?? "",
+        // "5 of 347" when the backend counted past the cap; "5+" for results
+        // saved before it did.
         meta: matches.length
-          ? `${matches.length}${result.truncated ? "+" : ""} matches · ${files.size} files`
+          ? result.truncated && num(result.total)
+            ? `${matches.length} of ${num(result.total)}${result.totalIsFloor ? "+" : ""} matches · ${num(result.totalFiles)} files`
+            : `${matches.length}${result.truncated ? "+" : ""} matches · ${files.size} files`
           : undefined,
         detail: grepDetail(matches),
       };

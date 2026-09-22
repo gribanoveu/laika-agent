@@ -483,7 +483,12 @@ fn upstream(repo: &Repository) -> Option<GitUpstream> {
     let tracked = git2::Branch::wrap(head).upstream().ok()?;
     let name = tracked.name().ok()??.to_string();
     let (ahead, behind) = repo.graph_ahead_behind(local, tracked.get().target()?).ok()?;
-    Some(GitUpstream { name, ahead, behind })
+    // git rewrites FETCH_HEAD on every fetch; a clone that never fetched has none.
+    let fetched = fs::metadata(repo.path().join("FETCH_HEAD"))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .map(|time| chrono::DateTime::<Local>::from(time).format("%Y-%m-%d %H:%M").to_string());
+    Some(GitUpstream { name, ahead, behind, fetched })
 }
 
 fn index_letter(status: Status) -> Option<&'static str> {
@@ -902,7 +907,11 @@ mod tests {
         commit(&repo, "and another");
 
         let ToolResult::GitStatus { upstream, .. } = git_status(&scope).unwrap() else { panic!() };
-        assert_eq!(upstream, Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0 }));
+        assert_eq!(upstream, Some(GitUpstream { name: "origin/main".into(), ahead: 2, behind: 0, fetched: None }));
+        std::fs::write(repo.path().join("FETCH_HEAD"), "").unwrap();
+        let ToolResult::GitStatus { upstream, .. } = git_status(&scope).unwrap() else { panic!() };
+        let fetched = upstream.and_then(|u| u.fetched).expect("a fetch recorded");
+        assert!(fetched.starts_with(&Local::now().format("%Y-%m-%d").to_string()), "{fetched}");
     }
 
     #[test]

@@ -786,7 +786,7 @@ pub enum ToolError {
     /// A write to a file the agent never read. Not pedantry: replacing a file
     /// whose contents were never seen destroys work nobody looked at, and the
     /// model has no way to know what it just lost.
-    #[error("read {0} before writing to it — a file you have not read may not be what you expect")]
+    #[error("read {0} before writing to it — a file you have not read may not be what you expect; an outline is not a read")]
     FileNotRead(String),
     /// A wholesale replacement of a file the agent has only read part of.
     #[error("you have only read part of {0} — read it in full before replacing it, or use editFile to change just the part you know")]
@@ -794,7 +794,7 @@ pub enum ToolError {
     /// `deleteFile` of a file the agent has not read whole: what it removes
     /// comes back in the result, and that is only worth something when the
     /// agent has seen it.
-    #[error("read {0} in full before deleting it — a file you have not read may not be what you expect")]
+    #[error("read {0} in full before deleting it — a file you have not read may not be what you expect; an outline is not a read")]
     DeleteNotReadInFull(String),
     /// The file moved under the agent between the read and the write. The
     /// classic loss: the agent read, a person edited in their own editor, the
@@ -940,6 +940,20 @@ pub enum ToolResult {
     GrepResults {
         matches: Vec<GrepMatch>,
         truncated: bool,
+        /// Every hit, shown or not, and the files they are in — counted on
+        /// past the cap, so a cut says how much it cut. `0` in results saved
+        /// before it was counted.
+        #[serde(default)]
+        total: usize,
+        #[serde(default)]
+        total_files: usize,
+        /// Counting stopped at its own limit: `total` is a floor.
+        #[serde(default)]
+        total_is_floor: bool,
+        /// Text files not searched — too big, or not UTF-8 — by path. Binary
+        /// files are not listed: nothing in them was ever text to find.
+        #[serde(default)]
+        skipped: Vec<String>,
     },
     /// `truncated` carries the same "there is more here than you are seeing"
     /// contract as `GrepResults`. It matters most on a vendored tree: a real
@@ -1569,6 +1583,10 @@ pub struct GitUpstream {
     pub ahead: usize,
     /// Upstream commits the branch does not have.
     pub behind: usize,
+    /// When the remote was last fetched, local time — how old "up to date"
+    /// is. `None` when no fetch was ever recorded.
+    #[serde(default)]
+    pub fetched: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
