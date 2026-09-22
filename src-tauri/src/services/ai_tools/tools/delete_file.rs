@@ -30,8 +30,7 @@ pub fn delete_file(
     reads
         .check(&relative, &old, true)
         .map_err(|blocked| match blocked {
-            WriteBlocked::NeverRead => ToolError::FileNotRead(relative.clone()),
-            WriteBlocked::ReadInPart => ToolError::FileReadInPart(relative.clone()),
+            WriteBlocked::NeverRead | WriteBlocked::ReadInPart => ToolError::DeleteNotReadInFull(relative.clone()),
             WriteBlocked::ChangedSinceRead => ToolError::FileChangedSinceRead(relative.clone()),
         })?;
 
@@ -125,7 +124,8 @@ mod tests {
         let err = delete_file(&scope, &DeleteFileArgs { path: "a.txt".into() }, &mut reads)
             .expect_err("never read");
 
-        assert!(matches!(err, ToolError::FileNotRead(_)));
+        assert!(matches!(err, ToolError::DeleteNotReadInFull(_)));
+        assert!(err.to_string().contains("before deleting it"), "{err}");
         assert!(root.join("a.txt").exists(), "left in place");
     }
 
@@ -140,7 +140,7 @@ mod tests {
 
         assert!(matches!(
             delete_file(&scope, &DeleteFileArgs { path: "big.txt".into() }, &mut reads),
-            Err(ToolError::FileReadInPart(_))
+            Err(ToolError::DeleteNotReadInFull(_))
         ));
         assert!(root.join("big.txt").exists(), "left in place");
     }

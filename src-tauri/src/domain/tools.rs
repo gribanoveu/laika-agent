@@ -766,7 +766,7 @@ pub enum ToolError {
     /// A `todo write` whose new titles would push the list past its maximum —
     /// rejected outright rather than silently truncated, so the model decides
     /// what to drop or split instead of discovering later that it was cut.
-    #[error("todo list already has {current} task(s); adding {adding} more would exceed the {max} maximum")]
+    #[error("todo list already has {current} open or unfinished task(s); adding {adding} more would exceed the {max} maximum — complete or cancel the ones left, and once none is open the next write starts a new list")]
     TooManyTasks {
         current: usize,
         adding: usize,
@@ -791,6 +791,11 @@ pub enum ToolError {
     /// A wholesale replacement of a file the agent has only read part of.
     #[error("you have only read part of {0} — read it in full before replacing it, or use editFile to change just the part you know")]
     FileReadInPart(String),
+    /// `deleteFile` of a file the agent has not read whole: what it removes
+    /// comes back in the result, and that is only worth something when the
+    /// agent has seen it.
+    #[error("read {0} in full before deleting it — a file you have not read may not be what you expect")]
+    DeleteNotReadInFull(String),
     /// The file moved under the agent between the read and the write. The
     /// classic loss: the agent read, a person edited in their own editor, the
     /// agent wrote its stale copy over the top.

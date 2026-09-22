@@ -105,6 +105,7 @@ pub fn preflight_tool_call(
 
     // "You have not read this file" is knowable without touching the disk and
     // without asking anyone, so asking would be pure ceremony.
+    let deleting = matches!(parsed, ToolCall::DeleteFile(_));
     if let Some((path, whole)) = match &parsed {
         ToolCall::WriteFile(a) => Some((a.path.as_str(), true)),
         ToolCall::DeleteFile(a) => Some((a.path.as_str(), true)),
@@ -117,6 +118,11 @@ pub fn preflight_tool_call(
             reads
                 .check(&relative, &current, whole)
                 .map_err(|blocked| match blocked {
+                    // Said as a deletion: "before writing to it" sends the
+                    // model looking for a write it never asked for.
+                    WriteBlocked::NeverRead | WriteBlocked::ReadInPart if deleting => {
+                        ToolError::DeleteNotReadInFull(relative.clone())
+                    }
                     WriteBlocked::NeverRead => ToolError::FileNotRead(relative.clone()),
                     WriteBlocked::ReadInPart => ToolError::FileReadInPart(relative.clone()),
                     WriteBlocked::ChangedSinceRead => ToolError::FileChangedSinceRead(relative),
@@ -346,6 +352,15 @@ mod tests {
         .expect_err("never read");
 
         assert!(matches!(err, ToolError::FileNotRead(_)));
+
+        // A deletion is refused as one, read not at all or only in part.
+        let delete = call("deleteFile", r#"{"path": "a.txt"}"#);
+        let err = preflight_tool_call(&scope, ConversationMode::Agent, &reads, &delete).expect_err("never read");
+        assert!(matches!(err, ToolError::DeleteNotReadInFull(_)), "{err}");
+        let mut part = reads.clone();
+        part.record("a.txt", "precious\n", false);
+        let err = preflight_tool_call(&scope, ConversationMode::Agent, &part, &delete).expect_err("read in part");
+        assert!(matches!(err, ToolError::DeleteNotReadInFull(_)), "{err}");
     }
 
     /// Creating a file is not a write over anything, so it must reach approval.
