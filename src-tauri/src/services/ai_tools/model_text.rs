@@ -68,7 +68,12 @@ pub fn for_model(result: &ToolResult) -> String {
             process.id, process.cwd, process.command
         ),
         ToolResult::ProcessOutput(output) => process_output(output),
-        ToolResult::ProcessStopped(process) => process.describe(),
+        // Ended by itself before the call: saying only "exited with code 0"
+        // leaves open whether this call stopped it.
+        ToolResult::ProcessStopped(process) if process.state != crate::domain::background::ProcessState::Stopped => {
+            format!("{} on its own before this call — nothing was stopped.", process.describe())
+        }
+        ToolResult::ProcessStopped(process) => format!("{}, with everything it started.", process.describe()),
         ToolResult::SearchResults { matches, meta } => search(matches, meta),
         ToolResult::Skill { name, instructions, files, from } => skill(name, instructions, files, from),
         ToolResult::SkillFile { name, path, content } => format!("{name}/{path}:\n{content}"),
@@ -479,6 +484,18 @@ mod tests {
             for_model(&ToolResult::ProcessStarted(process)),
             "Started background process #1 in `.`: `npm run dev`. Read what it writes with readOutput."
         );
+    }
+
+    /// Stopped now, or already over: the answer has to tell them apart.
+    #[test]
+    fn a_stop_says_whether_it_stopped_anything() {
+        let stopped = |state| for_model(&ToolResult::ProcessStopped(ProcessInfo { id: 1, command: "sleep 4".into(), cwd: ".".into(), state }));
+        assert_eq!(stopped(ProcessState::Stopped), "#1 `sleep 4` was stopped, with everything it started.");
+        assert_eq!(
+            stopped(ProcessState::Exited { code: Some(0) }),
+            "#1 `sleep 4` exited with code 0 on its own before this call — nothing was stopped."
+        );
+        assert!(stopped(ProcessState::Exited { code: None }).ends_with("nothing was stopped."));
     }
 
     /// Totals first, then each file as a single-file diff reads; a file whose

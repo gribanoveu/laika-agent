@@ -181,18 +181,27 @@ pub fn truncate_output(text: &str, max_chars: usize) -> (String, bool) {
     // Half the budget each way, less a little for the marker itself.
     let half = max_chars / 2;
 
-    let mut head: Vec<&str> = Vec::new();
+    // Whole lines while they fit; then, if the one that did not is long, as
+    // much of it as fits. Without that a log of a few very long lines loses
+    // every line but the first and the last.
+    let mut head: Vec<String> = Vec::new();
     let mut head_chars = 0;
     for line in &lines {
         let cost = line.chars().count() + 1;
         if head_chars + cost > half {
+            let room = half - head_chars;
+            if room >= PARTIAL_LINE_MIN {
+                let kept: String = line.chars().take(room).collect();
+                head_chars += room;
+                head.push(format!("{kept}…"));
+            }
             break;
         }
-        head.push(line);
+        head.push(line.to_string());
         head_chars += cost;
     }
 
-    let mut tail: Vec<&str> = Vec::new();
+    let mut tail: Vec<String> = Vec::new();
     let mut tail_chars = 0;
     for line in lines.iter().rev() {
         if tail.len() + head.len() >= lines.len() {
@@ -200,22 +209,39 @@ pub fn truncate_output(text: &str, max_chars: usize) -> (String, bool) {
         }
         let cost = line.chars().count() + 1;
         if tail_chars + cost > half {
+            let room = half - tail_chars;
+            if room >= PARTIAL_LINE_MIN {
+                let skip = line.chars().count() - room;
+                let kept: String = line.chars().skip(skip).collect();
+                tail_chars += room;
+                tail.push(format!("…{kept}"));
+            }
             break;
         }
-        tail.push(line);
+        tail.push(line.to_string());
         tail_chars += cost;
     }
     tail.reverse();
 
     let dropped = lines.len() - head.len() - tail.len();
+    let partial = head.last().is_some_and(|l| l.ends_with('…')) || tail.first().is_some_and(|l| l.starts_with('…'));
     let mut out = head.join("\n");
     if !out.is_empty() {
         out.push('\n');
     }
-    out.push_str(&format!("[... {dropped} lines omitted ...]\n"));
+    if partial {
+        let omitted = text.chars().count().saturating_sub(head_chars + tail_chars);
+        out.push_str(&format!("[... {omitted} characters omitted, {dropped} whole lines among them ...]\n"));
+    } else {
+        out.push_str(&format!("[... {dropped} lines omitted ...]\n"));
+    }
     out.push_str(&tail.join("\n"));
     (out, true)
 }
+
+/// Below this, the end of a line is not worth keeping: a fragment that short
+/// says nothing and reads as garbage.
+const PARTIAL_LINE_MIN: usize = 80;
 
 #[cfg(test)]
 mod tests {
@@ -337,6 +363,27 @@ mod tests {
 
     /// One line longer than the whole budget still has to come back as
     /// something, and still has to say that it was cut.
+    /// A few long lines — a minified bundle, a JSON dump — keep what fits
+    /// of the lines at the cut instead of losing all of them.
+    #[test]
+    fn long_lines_at_the_cut_keep_what_fits_of_them() {
+        let text = ["A", "B", "C", "D"].map(|c| c.repeat(9_000)).join("\n");
+
+        let (out, truncated) = truncate_output(&text, 30_000);
+
+        assert!(truncated);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 5, "A, part of B, the mark, part of C, D");
+        assert!(lines[1].starts_with('B') && lines[1].ends_with('…'), "{}", &lines[1][..20]);
+        assert!(lines[3].starts_with('…') && lines[3].ends_with('C'));
+        assert!(lines[2].starts_with("[... ") && lines[2].contains("characters omitted, 0 whole lines among them"), "{}", lines[2]);
+        let omitted: usize = lines[2].split_whitespace().nth(1).unwrap().parse().unwrap();
+        let kept: usize = [0, 1, 3, 4].iter().map(|&i| lines[i].trim_matches('…').chars().count()).sum();
+        // Two newlines kept (after A, before D); the one between B and C went.
+        assert_eq!(kept + omitted + 2, text.chars().count(), "every character kept or counted");
+        assert!(out.chars().count() <= 30_000 + 100);
+    }
+
     #[test]
     fn a_single_enormous_line_is_still_reported_as_cut() {
         let text = "x".repeat(10_000);

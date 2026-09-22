@@ -253,7 +253,9 @@ impl LanguageIndexer for Markdown {
     fn index(&self, content: &str) -> Vec<Symbol> {
         let parser = MarkdownParser::new_ext(
             content,
-            Options::ENABLE_TABLES | Options::ENABLE_HEADING_ATTRIBUTES,
+            // Front matter too: without it the closing `---` of a SKILL.md's
+            // YAML makes the keys above it one setext heading.
+            Options::ENABLE_TABLES | Options::ENABLE_HEADING_ATTRIBUTES | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS,
         );
         let mut symbols = Vec::new();
         let mut open: Option<(usize, String)> = None;
@@ -266,6 +268,12 @@ impl LanguageIndexer for Markdown {
                 Event::Text(text) | Event::Code(text) => {
                     if let Some((_, name)) = open.as_mut() {
                         name.push_str(&text);
+                    }
+                }
+                // A heading over two lines is still words apart.
+                Event::SoftBreak | Event::HardBreak => {
+                    if let Some((_, name)) = open.as_mut() {
+                        name.push(' ');
                     }
                 }
                 Event::End(TagEnd::Heading(_)) => {
@@ -609,6 +617,14 @@ public class UserService {
     fn a_hash_inside_a_code_fence_is_not_a_heading() {
         let source = "# Setup\n\n```bash\n# install deps\nbun install\n```\n";
         assert_eq!(names(Language::Markdown, source), ["Setup"]);
+    }
+
+    /// A skill's YAML is metadata, not a heading made of its keys.
+    #[test]
+    fn front_matter_is_not_a_heading() {
+        let source = "---\nname: writing-tests\ndescription: >-\n  How to test.\n---\n\n# Writing tests\n";
+        assert_eq!(names(Language::Markdown, source), ["Writing tests"]);
+        assert_eq!(names(Language::Markdown, "Two\nlines\n---\n"), ["Two lines"], "a line break keeps words apart");
     }
 
     #[test]
