@@ -633,6 +633,15 @@ export async function onGitChanged(handler: (root: string) => void): Promise<Unl
   return listen<{ root: string }>(GIT_EVENT, ({ payload }) => handler(payload.root));
 }
 
+/** Mirrors `domain::git_changes::ChangeTotals`: the open folder against the last commit. */
+export type ChangeTotals = { files: number; add: number; del: number };
+
+/** `null` outside a repository, and outside the desktop app. */
+export async function gitTotals(): Promise<ChangeTotals | null> {
+  if (!inTauri()) return null;
+  return invoke<ChangeTotals | null>("git_totals");
+}
+
 export async function gitChanges(): Promise<WorkingChanges> {
   requireBackend();
   return invoke<WorkingChanges>("git_changes");

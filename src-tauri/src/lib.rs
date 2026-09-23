@@ -94,6 +94,7 @@ pub fn run() {
             commands::chat::workspace_current,
             commands::chat::workspace_branch,
             commands::git::git_changes,
+            commands::git::git_totals,
             commands::git::git_stage,
             commands::git::git_unstage,
             commands::git::git_commit,

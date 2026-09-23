@@ -9,7 +9,7 @@ use std::path::{Component, Path};
 
 use git2::{Diff, DiffOptions, ErrorCode, Repository, Signature};
 
-use crate::domain::git_changes::{ChangedFile, GitChangesError, WorkingChanges};
+use crate::domain::git_changes::{ChangeTotals, ChangedFile, GitChangesError, WorkingChanges};
 
 pub fn changes(root: &Path) -> Result<WorkingChanges, GitChangesError> {
     let repo = open(root)?;
@@ -27,6 +27,27 @@ pub fn changes(root: &Path) -> Result<WorkingChanges, GitChangesError> {
         staged: files(&staged)?,
         unstaged: files(&unstaged)?,
     })
+}
+
+/// What the working tree holds against HEAD, the index in between — so an
+/// edit staged and then edited again counts once — new files included. Only
+/// the open folder: a subfolder of a repository counts its own changes.
+pub fn totals(root: &Path) -> Result<ChangeTotals, GitChangesError> {
+    let repo = open(root)?;
+    let head = head_tree(&repo)?;
+    let mut options = DiffOptions::new();
+    options.show_untracked_content(true).recurse_untracked_dirs(true);
+    let workdir = repo.workdir().ok_or(GitChangesError::NotARepository)?;
+    let inside = root.canonicalize().ok().and_then(|root| {
+        let workdir = workdir.canonicalize().ok()?;
+        Some(root.strip_prefix(workdir).ok()?.to_path_buf())
+    });
+    if let Some(folder) = inside.filter(|folder| !folder.as_os_str().is_empty()) {
+        options.pathspec(folder);
+    }
+    let diff = repo.diff_tree_to_workdir_with_index(head.as_ref(), Some(&mut options)).map_err(git)?;
+    let stats = diff.stats().map_err(git)?;
+    Ok(ChangeTotals { files: stats.files_changed(), add: stats.insertions(), del: stats.deletions() })
 }
 
 /// A path that is gone from disk stages its deletion.
@@ -223,6 +244,34 @@ mod tests {
         let back = changes(&dir).unwrap();
         assert!(back.staged.is_empty());
         assert_eq!(back.unstaged, vec![file("a.txt", 3, 1)]);
+    }
+
+    #[test]
+    fn totals_count_staged_and_unstaged_once_new_files_too_within_the_folder() {
+        let (dir, _repo) = repo();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        fs::write(dir.join("sub/b.txt"), "b\n").unwrap();
+        stage(&dir, &["a.txt".into(), "sub/b.txt".into()]).unwrap();
+        commit(&dir, "first").unwrap();
+        assert_eq!(totals(&dir).unwrap(), ChangeTotals { files: 0, add: 0, del: 0 });
+
+        // Staged, then edited again: one change against HEAD, not two.
+        fs::write(dir.join("a.txt"), "one\n2\n").unwrap();
+        stage(&dir, &["a.txt".into()]).unwrap();
+        fs::write(dir.join("a.txt"), "one\n2\n3\n").unwrap();
+        fs::write(dir.join("sub/new.txt"), "x\ny\n").unwrap();
+        fs::remove_file(dir.join("sub/b.txt")).unwrap();
+        assert_eq!(totals(&dir).unwrap(), ChangeTotals { files: 3, add: 4, del: 2 });
+        // The subfolder alone: its new file and its deletion.
+        assert_eq!(totals(&dir.join("sub")).unwrap(), ChangeTotals { files: 2, add: 2, del: 1 });
+
+        // An ignored file added anyway goes into the next commit, so it counts:
+        // on disk alone it is ignored, and only the index says otherwise.
+        fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(dir.join("keep.log"), "l\n").unwrap();
+        stage(&dir, &["keep.log".into()]).unwrap();
+        assert_eq!(totals(&dir).unwrap(), ChangeTotals { files: 5, add: 6, del: 2 });
     }
 
     #[test]

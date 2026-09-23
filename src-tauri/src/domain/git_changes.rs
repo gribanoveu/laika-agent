@@ -23,6 +23,16 @@ pub struct WorkingChanges {
     pub unstaged: Vec<ChangedFile>,
 }
 
+/// Everything changed since the last commit, staged or not, added up — what
+/// the chat header shows beside the branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeTotals {
+    pub files: usize,
+    pub add: usize,
+    pub del: usize,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GitChangesError {
     #[error("the open folder is not in a git repository")]

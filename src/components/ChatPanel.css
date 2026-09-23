@@ -51,6 +51,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* What the folder holds against its last commit; opens Changes. */
+.head-changes {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.head-changes:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--text-faint);
+}
 .head-right {
   flex: none;
   display: flex;

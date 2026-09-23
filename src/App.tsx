@@ -25,6 +25,7 @@ import { usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
 import { useChatFontSize } from "./hooks/useChatFontSize";
 import { useGitBranch } from "./hooks/useGitBranch";
+import { useChangeTotals } from "./hooks/useChangeTotals";
 import { useToast } from "./hooks/useToast";
 import { nativeFrame, startWindowDrag, toggleMaximizeWindow } from "./lib/window";
 import { pickSavePath } from "./lib/dialog";
@@ -107,6 +108,7 @@ export default function App() {
     toast.show("Auto is on here — the agent will change files without asking"),
   );
   const branch = useGitBranch(workspace.path, agent.turn.status);
+  const changeTotals = useChangeTotals(workspace.path);
   useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
@@ -312,6 +314,7 @@ export default function App() {
             branch={branch}
             workspace={workspace.path}
             index={index}
+            changes={changeTotals}
             turn={agent.turn}
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}

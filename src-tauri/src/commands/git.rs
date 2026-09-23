@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::chat::AgentState;
-use crate::domain::git_changes::{GitChangesError, WorkingChanges};
+use crate::domain::git_changes::{ChangeTotals, GitChangesError, WorkingChanges};
 use crate::infra::file_watcher::FileWatcher;
 use crate::infra::git_changes;
 
@@ -62,6 +62,17 @@ async fn in_repo<T: Send + 'static>(
 #[tauri::command]
 pub async fn git_changes(state: State<'_, Arc<AgentState>>) -> Result<WorkingChanges, String> {
     in_repo(&state, |root| git_changes::changes(&root)).await
+}
+
+/// `None` outside a repository: an ordinary folder has nothing to count, and
+/// the header shows nothing rather than an error.
+#[tauri::command]
+pub async fn git_totals(state: State<'_, Arc<AgentState>>) -> Result<Option<ChangeTotals>, String> {
+    in_repo(&state, |root| match git_changes::totals(&root) {
+        Err(GitChangesError::NotARepository) => Ok(None),
+        other => other.map(Some),
+    })
+    .await
 }
 
 #[tauri::command]

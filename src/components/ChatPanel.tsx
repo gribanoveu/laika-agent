@@ -31,6 +31,7 @@ import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
+  type ChangeTotals,
   type ToolCallDecision,
   type ToolPreview,
 } from "../lib/chat";
@@ -405,6 +406,8 @@ type Props = {
   branch?: string | null;
   /** The open folder's index; `null` until anything is known about it. */
   index?: IndexState | null;
+  /** Lines added and removed since the last commit; `null` outside a repository. */
+  changes?: ChangeTotals | null;
   workspace: string | null;
   turn: TurnState;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
@@ -433,6 +436,7 @@ export function ChatPanel({
   workspace,
   turn,
   index,
+  changes = null,
   onDecide,
   onOpenRepo,
   onNewChat,
@@ -498,6 +502,17 @@ export function ChatPanel({
                 <span>{branch ?? name}</span>
               </span>
               {index && <IndexBadge state={index} />}
+              {changes && changes.files > 0 && (
+                <button
+                  type="button"
+                  className="head-changes"
+                  title={`${changes.files} ${changes.files === 1 ? "file" : "files"} changed since the last commit`}
+                  onClick={() => onOpenPanel?.("changes")}
+                >
+                  <span className="add">+{changes.add}</span>
+                  <span className="del">−{changes.del}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
