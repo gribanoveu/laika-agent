@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { changesShown, openPane, toggleChanges, type Docks } from "../lib/docks";
+import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "../lib/docks";
 
 const docks = (top: Docks["top"], topHidden: boolean, bottom: Docks["bottom"] = null): Docks => ({ top, topHidden, bottom });
 
@@ -39,5 +39,13 @@ describe("a pane from the menu", () => {
     const state = docks("plan", false, "changes");
     expect(openPane(state, "changes", "right")).toBe(state);
     expect(openPane(state, "plan", "right")).toBe(state);
+  });
+});
+
+describe("the Terminal button", () => {
+  test("opens Terminal under whatever is on top, and closes only it", () => {
+    expect(toggleTerminal(docks("plan", false, "changes"))).toEqual(docks("plan", false, "terminal"));
+    expect(toggleTerminal(docks("plan", true))).toEqual(docks("plan", true, "terminal"));
+    expect(toggleTerminal(docks("plan", false, "terminal"))).toEqual(docks("plan", false, null));
   });
 });

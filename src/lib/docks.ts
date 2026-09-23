@@ -24,3 +24,7 @@ export function toggleChanges(docks: Docks): Docks {
 
 export const changesShown = (docks: Docks) =>
   docks.bottom === "changes" || (docks.top === "changes" && !docks.topHidden);
+
+/** The header's Terminal button: Terminal only ever sits in the bottom dock. */
+export const toggleTerminal = (docks: Docks): Docks =>
+  docks.bottom === "terminal" ? { ...docks, bottom: null } : openPane(docks, "terminal", "bottom");

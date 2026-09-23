@@ -396,6 +396,29 @@ describe("the header", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  test("Terminal has its own header button, and leaves the … menu", () => {
+    let toggled = 0;
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onOpenPanel={() => {}}
+        terminalOpen
+        onToggleTerminal={() => toggled++}
+      />,
+    );
+    const button = screen.getByTitle("Hide terminal");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(button);
+    expect(toggled).toBe(1);
+
+    fireEvent.click(screen.getByTitle("More"));
+    expect(screen.queryByRole("menuitem", { name: "Terminal" })).toBeNull();
+  });
+
   test("the … menu offers the export, and closes once it is picked", () => {
     let exported = 0;
     render(

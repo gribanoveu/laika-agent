@@ -35,7 +35,7 @@ import { isBoolean, useStoredState } from "./hooks/useStoredState";
 import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
-import { changesShown, openPane, toggleChanges, type Docks } from "./lib/docks";
+import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "./lib/docks";
 import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import "./App.css";
@@ -314,6 +314,8 @@ export default function App() {
             onNewChat={newChat}
             asideOpen={changesShown(docks)}
             onToggleAside={() => setDocks(toggleChanges(docks))}
+            terminalOpen={bottomTab === "terminal"}
+            onToggleTerminal={() => setDocks(toggleTerminal(docks))}
             onOpenPanel={openTab}
             onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}

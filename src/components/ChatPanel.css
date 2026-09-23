@@ -62,9 +62,10 @@
   height: 28px;
   border-radius: 7px;
 }
+/* An open pane: a faint fill, one step off the header, not the full active one. */
 .aside-button.on {
   color: var(--text);
-  background: var(--bg-active);
+  background: var(--bg-panel-soft);
 }
 .head-time {
   font-size: var(--fs-xs);

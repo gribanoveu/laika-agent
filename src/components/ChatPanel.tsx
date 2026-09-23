@@ -378,6 +378,9 @@ type Props = {
   /** Writes the conversation out as a file. One entry of the header's "…" menu. */
   onExport?: () => void;
   onToggleAside?: () => void;
+  /** Whether Terminal is showing; its own header button, beside Changes', shows and hides it. */
+  terminalOpen?: boolean;
+  onToggleTerminal?: () => void;
   /** Shows the side panel on one particular panel — the rest of that menu. */
   onOpenPanel?: (tab: AsideTab) => void;
   /** The open chat's title; `null` for one not saved yet. */
@@ -404,6 +407,8 @@ export function ChatPanel({
   asideOpen = false,
   onExport,
   onToggleAside,
+  terminalOpen = false,
+  onToggleTerminal,
   onOpenPanel,
   title = null,
   branch = null,
@@ -439,7 +444,7 @@ export function ChatPanel({
   // can be done to the conversation itself.
   const menu: ChatMenuItem[] = [
     ...(onOpenPanel
-      ? PANES.map(({ id, label, icon: Icon }) => ({
+      ? PANES.filter((p) => !(onToggleTerminal && p.id === "terminal")).map(({ id, label, icon: Icon }) => ({
           id,
           label,
           icon: <Icon size={14} />,
@@ -485,6 +490,17 @@ export function ChatPanel({
             </span>
           )}
           {menu.length > 0 && <ChatMenu items={menu} />}
+          {onToggleTerminal && (
+            <button
+              type="button"
+              className={`iconbtn aside-button${terminalOpen ? " on" : ""}`}
+              title={terminalOpen ? "Hide terminal" : "Show terminal"}
+              aria-pressed={terminalOpen}
+              onClick={onToggleTerminal}
+            >
+              <TerminalSquare size={15} />
+            </button>
+          )}
           {onToggleAside && (
             <button
               type="button"
