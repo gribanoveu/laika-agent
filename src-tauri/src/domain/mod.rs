@@ -24,3 +24,4 @@ pub mod hooks;
 pub mod background;
 pub mod command_risk;
 pub mod git_changes;
+pub mod file_tree;

@@ -98,6 +98,7 @@ pub fn run() {
             commands::git::git_stage,
             commands::git::git_unstage,
             commands::git::git_commit,
+            commands::files::workspace_list,
             commands::chat::workspace_recent,
             commands::chat::workspace_index_status,
             commands::chat::chat_start,

@@ -16,3 +16,4 @@ pub mod mcp;
 pub mod hooks;
 pub mod processes;
 pub mod git;
+pub mod files;
