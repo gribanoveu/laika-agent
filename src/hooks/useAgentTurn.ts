@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { writtenPlan } from "../lib/plan";
+import { writtenChecklist, writtenPlan } from "../lib/plan";
 import { branchAt, branchPoints } from "../lib/branch";
 import {
   cancelChat,
@@ -100,6 +100,14 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       subscribed.current = null;
     }
   }, [keepTodos]);
+
+  // The checklist while the turn works: the turn hands its list back only when
+  // it ends, so until then the Plan tab follows the `todo` calls themselves.
+  useEffect(() => {
+    if (turn.status !== "running" && turn.status !== "awaitingApproval") return;
+    const live = writtenChecklist(turn.blocks.slice(turnStart.current));
+    if (live) setChecklist(live);
+  }, [turn.status, turn.blocks]);
 
   // Saved once the turn has come to rest, from the render that has the last
   // block in it — which is why this is an effect and not the tail of `finish`,

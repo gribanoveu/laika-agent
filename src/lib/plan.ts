@@ -1,3 +1,4 @@
+import type { Task } from "./chat";
 import type { Block } from "./chatTurnReducer";
 
 /**
@@ -18,6 +19,21 @@ export function writtenPlan(blocks: Block[]): string | null {
     } catch {
       // A call whose arguments did not parse never ran, so it is not "done".
     }
+  }
+  return null;
+}
+
+/**
+ * The checklist as the last `todo` call in `blocks` left it, or `null` if none
+ * did. The turn's own copy only reaches the frontend when the turn ends; this
+ * is what the Plan tab shows until then. Every call returns the whole list.
+ */
+export function writtenChecklist(blocks: Block[]): Task[] | null {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.kind !== "tool" || block.name !== "todo" || block.status !== "done") continue;
+    const tasks = (block.result as { tasks?: unknown } | undefined)?.tasks;
+    if (Array.isArray(tasks)) return tasks as Task[];
   }
   return null;
 }

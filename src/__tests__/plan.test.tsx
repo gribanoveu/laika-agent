@@ -14,13 +14,15 @@ let emit: (event: TurnEvent) => void = () => {};
 /** What the next `chat_start` "does" before it returns: the events it emits. */
 let during: TurnEvent[] = [];
 let record: unknown = null;
+/** When set, `chat_start` stays running until it resolves. */
+let hold: Promise<void> | null = null;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
     if (command === "chat_start") {
       for (const event of during) emit({ ...event, turnId: args.turnId as string });
-      return Promise.resolve({ status: "done", value: { text: "", truncated: false, todos: [], history: args.messages } });
+      return (hold ?? Promise.resolve()).then(() => ({ status: "done", value: { text: "", truncated: false, todos: [], history: args.messages } }));
     }
     if (command === "chat_load") return Promise.resolve(record);
     return Promise.resolve(null);
@@ -39,7 +41,7 @@ afterAll(() => {
 });
 
 const { useAgentTurn } = await import("../hooks/useAgentTurn");
-const { writtenPlan } = await import("../lib/plan");
+const { writtenChecklist, writtenPlan } = await import("../lib/plan");
 const { PlanPanel } = await import("../components/PlanPanel");
 const { describeTool } = await import("../lib/describeTool");
 
@@ -47,6 +49,7 @@ afterEach(() => {
   calls.length = 0;
   during = [];
   record = null;
+  hold = null;
 });
 
 const tool = (id: string, name: string, args: unknown, status: "done" | "failed" = "done"): Block => ({
@@ -86,7 +89,46 @@ describe("writtenPlan", () => {
   });
 });
 
+describe("writtenChecklist", () => {
+  const todo = (id: string, tasks: unknown, status: "done" | "failed" = "done"): Block => ({
+    ...(tool(id, "todo", { op: "write" }, status) as Extract<Block, { kind: "tool" }>),
+    result: { result: "todo", tasks },
+  });
+
+  test("the list the last todo call that ran returned", () => {
+    const one = [{ id: "t1", title: "Read", status: "inProgress" }];
+    const two = [{ id: "t1", title: "Read", status: "completed" }];
+    expect(writtenChecklist([todo("a", one), todo("b", two), todo("c", [], "failed")])).toEqual(two as never);
+  });
+
+  test("no todo call is none", () => {
+    expect(writtenChecklist([tool("a", "readFile", { path: "a.rs" })])).toBeNull();
+  });
+});
+
 describe("the plan through a conversation", () => {
+  test("the checklist reaches the tab while the turn still runs", async () => {
+    let release = () => {};
+    hold = new Promise((resolve) => (release = resolve));
+    const tasks = [{ id: "t1", title: "Read the parser", status: "inProgress" }];
+    during = [
+      { turnId: "", seq: 1, round: 1, type: "toolCall", payload: { id: "d1", name: "todo", arguments: '{"op":"write"}' } },
+      { turnId: "", seq: 2, round: 1, type: "toolResult", payload: { id: "d1", result: { result: "todo", tasks } } },
+    ];
+    const { result } = renderHook(() => useAgentTurn());
+    let sent: Promise<void> = Promise.resolve();
+    await act(async () => {
+      sent = result.current.send("do it");
+    });
+
+    expect(result.current.turn.status).toBe("running");
+    expect(result.current.checklist).toEqual(tasks as never);
+    await act(async () => {
+      release();
+      await sent;
+    });
+  });
+
   test("a plan the agent wrote reaches the tab, the saved chat and the next turn", async () => {
     const { result } = renderHook(() => useAgentTurn());
     during = writes("# Fix the parser");
