@@ -40,6 +40,8 @@ import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSn
 import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "./lib/docks";
 import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
+import { useFolderSwitch } from "./hooks/useFolderSwitch";
+import { FolderSwitchDialog } from "./components/FolderSwitchDialog";
 import "./App.css";
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
@@ -190,25 +192,16 @@ export default function App() {
     if (workspace.error) toast.show(workspace.error);
   }, [workspace.error]);
 
-  // The turn runs in the folder it started in; switching under it would
-  // save its chat somewhere else and stop its processes.
-  const switchable = () => {
-    if (agent.turn.status !== "running") return true;
-    toast.show("Stop the agent before switching folders");
-    return false;
-  };
-
-  const openFolder = async (path: string) => {
-    if (switchable()) await workspace.open(path);
-  };
-
-  const chooseFolder = async () => switchable() && workspace.pick();
+  // Leaving the folder ends what runs in it: the user is told first.
+  const folderSwitch = useFolderSwitch(agent.turn.status === "running");
+  const openFolder = (path: string) => folderSwitch.guard(() => void workspace.open(path));
+  const chooseFolder = () => folderSwitch.guard(() => void workspace.pick());
 
   // Asking before the first message rather than refusing it — and then sending
   // it: the composer has already cleared the box, so anything not sent here is
   // typed twice.
   const send = async (text: string) => {
-    if (!workspace.path && !(await chooseFolder())) return;
+    if (!workspace.path && !(await workspace.pick())) return;
     agent.send(text);
   };
 
@@ -404,6 +397,13 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <FolderSwitchDialog
+        blocked={folderSwitch.blocked}
+        folder={workspace.path}
+        onStopAgent={agent.cancel}
+        onClose={folderSwitch.close}
+      />
 
       <Modal title="Settings" wide open={settingsOpen} onClose={() => setSettingsOpen(false)}>
         <Settings
