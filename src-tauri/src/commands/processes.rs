@@ -1,12 +1,23 @@
-//! The Terminal tab: the background processes, and the user's Stop.
+//! The Terminal tab: the background processes, and the user's Stop. The tab
+//! reads the list again when [`PROCESS_EVENT`] says one of them changed.
 
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, Runtime, State};
 
-use crate::domain::background::{BackgroundProcesses, ProcessInfo};
+use crate::domain::background::{BackgroundProcesses, ProcessChanged, ProcessEventSink, ProcessInfo};
 use crate::infra::background::Processes;
+
+/// A background process started, wrote, ended or was stopped.
+pub const PROCESS_EVENT: &str = "processes:changed";
+
+pub fn process_event_sink<R: Runtime>(app: &AppHandle<R>) -> ProcessEventSink {
+    let app = app.clone();
+    Arc::new(move |event: ProcessChanged| {
+        let _ = app.emit(PROCESS_EVENT, event);
+    })
+}
 
 /// How much of each process's output the tab shows: its last screenfuls.
 const TAIL_BYTES: usize = 8 * 1024;
@@ -29,8 +40,7 @@ fn views(processes: &Processes) -> Vec<ProcessView> {
         .collect()
 }
 
-/// Asked for once a second while the tab is open — cheap, and simpler than
-/// an event per line of a chatty server.
+/// Read when the tab opens and on each [`PROCESS_EVENT`].
 #[tauri::command]
 pub fn processes_list(processes: State<'_, Arc<Processes>>) -> Vec<ProcessView> {
     views(&processes)
@@ -51,6 +61,27 @@ fn stop(processes: &Processes, id: u32) -> Result<Vec<ProcessView>, String> {
 mod tests {
     use super::*;
     use crate::domain::command_exec::Shell;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use tauri::Listener;
+
+    /// `src/lib/chat.ts` listens on this name.
+    #[test]
+    fn the_channel_name_is_pinned() {
+        assert_eq!(PROCESS_EVENT, "processes:changed");
+    }
+
+    #[test]
+    fn a_process_is_reported_on_the_channel_by_id() {
+        let app = tauri::test::mock_app();
+        let (tx, rx) = mpsc::channel();
+        app.handle().listen(PROCESS_EVENT, move |event| {
+            let _ = tx.send(event.payload().to_string());
+        });
+        let processes = Processes::new(process_event_sink(app.handle()));
+        processes.start(&Shell::default(), "sleep 30", &crate::testing::temp_dir("cmd-processes-event"), ".").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), r#"{"id":1}"#);
+    }
 
     #[test]
     fn the_tab_lists_newest_first_with_what_each_wrote() {

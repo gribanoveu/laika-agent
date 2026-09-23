@@ -11,6 +11,7 @@
 //! `ToolDeps` carries it and `domain` does not reach into `infra`.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -77,6 +78,18 @@ pub struct ProcessOutput {
     pub truncated: bool,
 }
 
+/// Something about process `id` changed: it started, wrote, ended or was
+/// stopped. A signal to read the list again, not the change itself — the
+/// Terminal tab re-reads, so a chatty process's output is signalled at a
+/// steady rate rather than once per chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessChanged {
+    pub id: u32,
+}
+
+pub type ProcessEventSink = Arc<dyn Fn(ProcessChanged) + Send + Sync>;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BackgroundError {
     #[error("{MAX_RUNNING} background processes are already running ({0}). Stop one with stopProcess before starting another.")]
@@ -129,6 +142,12 @@ pub struct OutputBuffer {
 }
 
 impl OutputBuffer {
+    /// Everything ever written, in bytes — grows with every push, so a change
+    /// in it is new output, whatever the buffer dropped.
+    pub fn written(&self) -> usize {
+        self.start + self.text.len()
+    }
+
     pub fn push(&mut self, chunk: &str) {
         self.text.push_str(chunk);
         if self.text.len() > MAX_BUFFER_BYTES {

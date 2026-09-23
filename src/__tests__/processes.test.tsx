@@ -22,6 +22,16 @@ mock.module("@tauri-apps/api/core", () => ({
   transformCallback: (callback: unknown) => callback,
 }));
 
+/** Who is listening for `processes:changed`, to say it to them. */
+const listeners = new Set<(message: { payload: unknown }) => void>();
+const changed = (id: number) => listeners.forEach((handler) => handler({ payload: { id } }));
+mock.module("@tauri-apps/api/event", () => ({
+  listen: (channel: string, handler: (message: { payload: unknown }) => void) => {
+    if (channel === "processes:changed") listeners.add(handler);
+    return Promise.resolve(() => listeners.delete(handler));
+  },
+}));
+
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 afterAll(() => {
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
@@ -40,18 +50,28 @@ beforeEach(() => {
 });
 
 describe("useProcesses", () => {
-  test("asks while the tab is open, again a second later, and not once it closes", async () => {
+  test("asks when the tab opens and when a process changes, not on a timer, and not once it closes", async () => {
     const { result, rerender } = renderHook(({ visible }) => useProcesses(visible), { initialProps: { visible: false } });
+    const asked = () => calls.filter((c) => c.command === "processes_list").length;
     await settle();
     expect(calls).toEqual([]);
     rerender({ visible: true });
     await settle();
     expect(result.current.processes.map((p) => p.id)).toEqual([2, 1]);
     await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
-    expect(calls.filter((c) => c.command === "processes_list").length).toBe(2);
+    expect(asked()).toBe(1);
+
+    listed = [{ ...listed[0], tail: "ready on :5173\nGET /\n" }, listed[1]];
+    act(() => changed(2));
+    await settle();
+    expect(asked()).toBe(2);
+    expect(result.current.processes[0].tail).toContain("GET /");
+
     rerender({ visible: false });
-    await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
-    expect(calls.filter((c) => c.command === "processes_list").length).toBe(2);
+    await settle();
+    act(() => changed(2));
+    await settle();
+    expect(asked()).toBe(2);
   });
 
   test("a stop is settled by what the backend says", async () => {

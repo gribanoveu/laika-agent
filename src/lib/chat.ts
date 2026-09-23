@@ -582,6 +582,17 @@ export type ProcessInfo = { id: number; command: string; cwd: string; state: Pro
 /** A row of the Terminal tab: the process and the end of what it wrote. */
 export type ProcessView = ProcessInfo & { tail: string };
 
+/**
+ * A background process started, wrote, ended or was stopped. Pinned on the
+ * Rust side in `commands/processes.rs`.
+ */
+export const PROCESS_EVENT = "processes:changed";
+
+export async function onProcessChanged(handler: (id: number) => void): Promise<UnlistenFn> {
+  if (!inTauri()) return () => {};
+  return listen<{ id: number }>(PROCESS_EVENT, ({ payload }) => handler(payload.id));
+}
+
 export async function processesList(): Promise<ProcessView[]> {
   if (!inTauri()) return [];
   return invoke<ProcessView[]>("processes_list");

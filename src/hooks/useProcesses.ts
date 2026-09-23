@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { processesList, stopProcess, type ProcessView } from "../lib/chat";
+import { onProcessChanged, processesList, stopProcess, type ProcessView } from "../lib/chat";
 
-/** How often the open tab asks again: a server's output should look live, not be. */
-const POLL_MS = 1000;
-
-/** The background processes, asked for while the Terminal tab is open and not otherwise. */
+/**
+ * The background processes, read while the Terminal tab is open: when it
+ * opens, and each time the backend says one of them changed — at most once a
+ * tick per process however much it writes.
+ */
 export function useProcesses(visible: boolean) {
   const [processes, setProcesses] = useState<ProcessView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -22,10 +23,11 @@ export function useProcesses(visible: boolean) {
         (e) => live && setError(String(e)),
       );
     load();
-    const timer = setInterval(load, POLL_MS);
+    let unlisten: (() => void) | undefined;
+    onProcessChanged(() => void load()).then((off) => (live ? (unlisten = off) : off()));
     return () => {
       live = false;
-      clearInterval(timer);
+      unlisten?.();
     };
   }, [visible]);
 

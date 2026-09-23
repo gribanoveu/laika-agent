@@ -43,8 +43,6 @@ pub fn run() {
         // reach a turn while it runs. `Arc` because a turn runs on a blocking
         // thread that outlives the command call that started it.
         .manage(std::sync::Arc::new(commands::chat::AgentState::default()))
-        // Background processes the agent started; they outlive turns.
-        .manage(std::sync::Arc::new(infra::background::Processes::default()))
         .manage(commands::git::GitWatch::default())
         // The MCP servers, kept running between turns.
         .manage(std::sync::Arc::new(services::mcp_servers::McpServers::new(std::sync::Arc::new(
@@ -58,6 +56,11 @@ pub fn run() {
         // Tauri's to know: the resource directory of the installed app.
         .setup(|app| {
             use tauri::Manager;
+            // Background processes the agent started; they outlive turns.
+            // Here because what they report goes out through the app.
+            app.manage(std::sync::Arc::new(infra::background::Processes::new(
+                commands::processes::process_event_sink(app.handle()),
+            )));
             let resources = app.path().resource_dir().ok();
             let model = infra::local_embeddings::LocalEmbeddings::new(
                 infra::local_embeddings::bundled_model_dir(resources.as_deref()),

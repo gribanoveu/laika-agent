@@ -15,19 +15,29 @@ use std::thread;
 use std::time::Duration;
 
 use crate::domain::background::{
-    BackgroundError, BackgroundProcesses, OutputBuffer, ProcessInfo, ProcessOutput, ProcessState, MAX_FINISHED,
-    MAX_RUNNING,
+    BackgroundError, BackgroundProcesses, OutputBuffer, ProcessChanged, ProcessEventSink, ProcessInfo, ProcessOutput,
+    ProcessState, MAX_FINISHED, MAX_RUNNING,
 };
 use crate::domain::command_exec::{truncate_output, Shell, MAX_OUTPUT_CHARS};
 
 use super::process_runner::{kill_tree, set_process_group};
 
-/// How often an exit is looked for.
+/// How often an exit is looked for — and new output, which is signalled at
+/// most this often: a server writing a line per millisecond is one signal a
+/// tick, not a thousand.
 const POLL: Duration = Duration::from_millis(100);
 
-#[derive(Default)]
 pub struct Processes {
     registry: Arc<Mutex<Registry>>,
+    /// Told of every start, output, end and stop.
+    changed: ProcessEventSink,
+}
+
+/// Nobody listening — tests, and anything built before the window is.
+impl Default for Processes {
+    fn default() -> Self {
+        Self::new(Arc::new(|_| {}))
+    }
 }
 
 #[derive(Default)]
@@ -41,6 +51,9 @@ struct Entry {
     /// `Some` while it runs.
     child: Option<Child>,
     buffer: OutputBuffer,
+    /// Pipes still being read. Output can arrive after the exit — the pipes
+    /// drain once the process is gone — so its watch lasts until this is 0.
+    streams: usize,
     /// Its end has been told to the model, or needs no telling.
     reported: bool,
 }
@@ -56,6 +69,10 @@ fn lock(registry: &Mutex<Registry>) -> MutexGuard<'_, Registry> {
 }
 
 impl Processes {
+    pub fn new(changed: ProcessEventSink) -> Self {
+        Self { registry: Arc::default(), changed }
+    }
+
     /// Stops one the user asked to stop, from the Terminal tab. Unlike the
     /// model's own `stopProcess`, the model is told at its next round.
     pub fn stop_by_user(&self, id: u32) -> Result<ProcessInfo, BackgroundError> {
@@ -71,25 +88,42 @@ impl Processes {
     /// The workspace changed or the app is quitting. Nothing is reported:
     /// there is no conversation left that these belong to.
     pub fn stop_all(&self) {
-        let mut registry = lock(&self.registry);
-        for entry in registry.entries.iter_mut() {
-            if let Some(mut child) = entry.child.take() {
-                end(&mut child);
-                entry.info.state = ProcessState::Stopped;
+        let mut stopped = Vec::new();
+        {
+            let mut registry = lock(&self.registry);
+            for entry in registry.entries.iter_mut() {
+                if let Some(mut child) = entry.child.take() {
+                    end(&mut child);
+                    entry.info.state = ProcessState::Stopped;
+                    stopped.push(entry.info.id);
+                }
+                entry.reported = true;
             }
-            entry.reported = true;
+        }
+        for id in stopped {
+            (self.changed)(ProcessChanged { id });
         }
     }
 
     fn stop_inner(&self, id: u32, reported: bool) -> Result<ProcessInfo, BackgroundError> {
-        let mut registry = lock(&self.registry);
-        let entry = registry.entry(id)?;
-        if let Some(mut child) = entry.child.take() {
-            end(&mut child);
-            entry.info.state = ProcessState::Stopped;
-            entry.reported = reported;
+        let (info, stopped) = {
+            let mut registry = lock(&self.registry);
+            let entry = registry.entry(id)?;
+            let stopped = match entry.child.take() {
+                Some(mut child) => {
+                    end(&mut child);
+                    entry.info.state = ProcessState::Stopped;
+                    entry.reported = reported;
+                    true
+                }
+                None => false,
+            };
+            (entry.info.clone(), stopped)
+        };
+        if stopped {
+            (self.changed)(ProcessChanged { id });
         }
-        Ok(entry.info.clone())
+        Ok(info)
     }
 }
 
@@ -128,11 +162,17 @@ impl BackgroundProcesses for Processes {
 
         registry.next_id += 1;
         let id = registry.next_id;
-        read_into(&self.registry, id, child.stdout.take());
-        read_into(&self.registry, id, child.stderr.take());
+        let streams = usize::from(read_into(&self.registry, id, child.stdout.take()))
+            + usize::from(read_into(&self.registry, id, child.stderr.take()));
         let info = ProcessInfo { id, command: command.to_string(), cwd: shown_cwd.to_string(), state: ProcessState::Running };
-        registry.entries.push(Entry { info: info.clone(), child: Some(child), buffer: OutputBuffer::default(), reported: false });
-        watch(&self.registry, id);
+        registry.entries.push(Entry {
+            info: info.clone(),
+            child: Some(child),
+            buffer: OutputBuffer::default(),
+            streams,
+            reported: false,
+        });
+        watch(&self.registry, &self.changed, id);
 
         // Forget the oldest finished ones past the limit.
         let finished = registry.entries.iter().filter(|e| !e.info.running()).count();
@@ -144,6 +184,8 @@ impl BackgroundProcesses for Processes {
             }
             !drop
         });
+        drop(registry);
+        (self.changed)(ProcessChanged { id });
         Ok(info)
     }
 
@@ -178,9 +220,10 @@ impl BackgroundProcesses for Processes {
 }
 
 /// Lossy on a chunk boundary, like `process_runner`'s reader: one broken
-/// character is better than a lost stream.
-fn read_into(registry: &Arc<Mutex<Registry>>, id: u32, pipe: Option<impl Read + Send + 'static>) {
-    let Some(mut pipe) = pipe else { return };
+/// character is better than a lost stream. Whether a reader was started —
+/// there is none without a pipe. Signalling is `watch`'s, on its tick.
+fn read_into(registry: &Arc<Mutex<Registry>>, id: u32, pipe: Option<impl Read + Send + 'static>) -> bool {
+    let Some(mut pipe) = pipe else { return false };
     let registry = Arc::clone(registry);
     thread::spawn(move || {
         let mut chunk = [0u8; 8192];
@@ -191,34 +234,61 @@ fn read_into(registry: &Arc<Mutex<Registry>>, id: u32, pipe: Option<impl Read + 
                     let text = String::from_utf8_lossy(&chunk[..n]);
                     match lock(&registry).entry(id) {
                         Ok(entry) => entry.buffer.push(&text),
-                        Err(_) => break,
+                        Err(_) => return,
                     }
                 }
             }
         }
+        if let Ok(entry) = lock(&registry).entry(id) {
+            entry.streams -= 1;
+        }
     });
+    true
 }
 
-fn watch(registry: &Arc<Mutex<Registry>>, id: u32) {
+/// Each tick: has it exited, and has it written anything since the last one.
+/// Either is one signal. After the exit it keeps ticking until the pipes are
+/// drained, so the last of the output is signalled too. A stop ends it
+/// without a signal — the stop sends its own.
+fn watch(registry: &Arc<Mutex<Registry>>, changed: &ProcessEventSink, id: u32) {
     let registry = Arc::clone(registry);
+    let changed = Arc::clone(changed);
+    let mut seen = 0;
     thread::spawn(move || loop {
         thread::sleep(POLL);
-        let mut registry = lock(&registry);
-        let Ok(entry) = registry.entry(id) else { return };
-        let Some(child) = entry.child.as_mut() else { return };
-        match child.try_wait() {
-            Ok(None) => {}
-            Ok(Some(status)) => {
-                kill_tree(child);
-                entry.child = None;
-                entry.info.state = ProcessState::Exited { code: status.code() };
+        let (signal, done) = {
+            let mut registry = lock(&registry);
+            let Ok(entry) = registry.entry(id) else { return };
+            if entry.info.state == ProcessState::Stopped {
                 return;
             }
-            Err(_) => {
-                entry.child = None;
-                entry.info.state = ProcessState::Exited { code: None };
-                return;
+            let written = entry.buffer.written();
+            let wrote = written != seen;
+            seen = written;
+            let mut exited = false;
+            if let Some(child) = entry.child.as_mut() {
+                match child.try_wait() {
+                    Ok(None) => {}
+                    Ok(Some(status)) => {
+                        kill_tree(child);
+                        entry.child = None;
+                        entry.info.state = ProcessState::Exited { code: status.code() };
+                        exited = true;
+                    }
+                    Err(_) => {
+                        entry.child = None;
+                        entry.info.state = ProcessState::Exited { code: None };
+                        exited = true;
+                    }
+                }
             }
+            (wrote || exited, entry.child.is_none() && entry.streams == 0)
+        };
+        if signal {
+            changed(ProcessChanged { id });
+        }
+        if done {
+            return;
         }
     });
 }
@@ -346,5 +416,101 @@ mod tests {
         until("output", || processes.tail(info.id, 100).unwrap().contains("ready"));
         assert_eq!(processes.tail(info.id, 3).unwrap(), "dy\n");
         assert!(processes.read(info.id).unwrap().output.contains("ready"));
+    }
+
+    /// A `Processes` whose signals land in the returned list.
+    fn watched() -> (Processes, Arc<Mutex<Vec<u32>>>) {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&heard);
+        (Processes::new(Arc::new(move |event: ProcessChanged| sink.lock().unwrap().push(event.id))), heard)
+    }
+
+    #[test]
+    fn output_after_the_exit_is_signalled_until_the_pipes_are_drained() {
+        // An exited process whose stdout is still being read.
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        lock(&registry).entries.push(Entry {
+            info: ProcessInfo { id: 1, command: "x".into(), cwd: ".".into(), state: ProcessState::Exited { code: Some(0) } },
+            child: None,
+            buffer: OutputBuffer::default(),
+            streams: 1,
+            reported: false,
+        });
+        let heard = Arc::new(Mutex::new(0));
+        let count = Arc::clone(&heard);
+        watch(&registry, &(Arc::new(move |_| *count.lock().unwrap() += 1) as ProcessEventSink), 1);
+
+        thread::sleep(POLL * 2);
+        assert_eq!(*heard.lock().unwrap(), 0, "nothing new, nothing said");
+        lock(&registry).entry(1).unwrap().buffer.push("late\n");
+        until("the late output", || *heard.lock().unwrap() == 1);
+
+        {
+            let mut registry = lock(&registry);
+            let entry = registry.entry(1).unwrap();
+            entry.buffer.push("last\n");
+            entry.streams = 0;
+        }
+        until("the last of it", || *heard.lock().unwrap() == 2);
+        lock(&registry).entry(1).unwrap().buffer.push("after the watch\n");
+        thread::sleep(POLL * 3);
+        assert_eq!(*heard.lock().unwrap(), 2, "drained, the watch is over");
+    }
+
+    #[test]
+    fn a_silent_exit_is_signalled_and_ends_the_watch() {
+        let (processes, heard) = watched();
+        let info = start(&processes, "sleep 0.2");
+        until("the exit's signal", || heard.lock().unwrap().len() == 2);
+        until("the exit", || !processes.list()[0].running());
+        // Drained and exited, nobody watches it any more: new text is not news.
+        thread::sleep(POLL * 3);
+        lock(&processes.registry).entry(info.id).unwrap().buffer.push("x");
+        thread::sleep(POLL * 3);
+        assert_eq!(heard.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_start_output_and_exit_are_each_signalled() {
+        let (processes, heard) = watched();
+        let first = start(&processes, "sleep 0.3; echo done");
+        assert_eq!(*heard.lock().unwrap(), [first.id], "the start, at once");
+        until("the exit", || !processes.list()[0].running());
+        until("the output and the exit", || heard.lock().unwrap().len() >= 2);
+        assert!(heard.lock().unwrap().iter().all(|&id| id == first.id));
+    }
+
+    #[test]
+    fn a_chatty_process_is_signalled_per_tick_not_per_line() {
+        let (processes, heard) = watched();
+        start(&processes, "i=0; while [ $i -lt 20000 ]; do echo line $i; i=$((i+1)); done; sleep 30");
+        until("all the output", || processes.tail(1, 64).map(|t| t.contains("19999")).unwrap_or(false));
+        thread::sleep(POLL * 3);
+        let signals = heard.lock().unwrap().len();
+        // One for the start, then at most one a tick while it wrote.
+        assert!(signals < 60, "{signals} signals for 20000 lines");
+        thread::sleep(POLL * 3);
+        assert_eq!(heard.lock().unwrap().len(), signals, "and none once it is quiet");
+    }
+
+    #[test]
+    fn a_stop_is_signalled_once_and_a_second_stop_not_at_all() {
+        let (processes, heard) = watched();
+        let info = start(&processes, "sleep 30");
+        processes.stop(info.id).unwrap();
+        processes.stop(info.id).unwrap();
+        thread::sleep(POLL * 3);
+        assert_eq!(*heard.lock().unwrap(), [info.id, info.id], "the start and the one stop");
+    }
+
+    #[test]
+    fn stopping_everything_signals_each_that_ran() {
+        let (processes, heard) = watched();
+        let a = start(&processes, "sleep 30");
+        let b = start(&processes, "sleep 30");
+        heard.lock().unwrap().clear();
+        processes.stop_all();
+        thread::sleep(POLL * 3);
+        assert_eq!(*heard.lock().unwrap(), [a.id, b.id]);
     }
 }
