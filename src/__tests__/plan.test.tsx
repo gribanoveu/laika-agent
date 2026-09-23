@@ -16,13 +16,15 @@ let during: TurnEvent[] = [];
 let record: unknown = null;
 /** When set, `chat_start` stays running until it resolves. */
 let hold: Promise<void> | null = null;
+/** When set, `chat_start` ends as a turn the user stopped. */
+let stopped = false;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
     if (command === "chat_start") {
       for (const event of during) emit({ ...event, turnId: args.turnId as string });
-      return (hold ?? Promise.resolve()).then(() => ({ status: "done", value: { text: "", truncated: false, todos: [], history: args.messages } }));
+      return (hold ?? Promise.resolve()).then(() => ({ status: stopped ? "cancelled" : "done", value: { text: "", truncated: false, todos: [], history: args.messages } }));
     }
     if (command === "chat_load") return Promise.resolve(record);
     return Promise.resolve(null);
@@ -50,6 +52,7 @@ afterEach(() => {
   during = [];
   record = null;
   hold = null;
+  stopped = false;
 });
 
 const tool = (id: string, name: string, args: unknown, status: "done" | "failed" = "done"): Block => ({
@@ -63,9 +66,9 @@ const tool = (id: string, name: string, args: unknown, status: "done" | "failed"
 });
 
 /** The events of a turn in which the model wrote `content` as the plan. */
-const writes = (content: string): TurnEvent[] => [
-  { turnId: "", seq: 1, round: 1, type: "toolCall", payload: { id: "p1", name: "writePlan", arguments: JSON.stringify({ content }) } },
-  { turnId: "", seq: 2, round: 1, type: "toolResult", payload: { id: "p1", result: { result: "planWritten", lines: 1 } } },
+const writes = (content: string, id = "p1"): TurnEvent[] => [
+  { turnId: "", seq: 1, round: 1, type: "toolCall", payload: { id, name: "writePlan", arguments: JSON.stringify({ content }) } },
+  { turnId: "", seq: 2, round: 1, type: "toolResult", payload: { id, result: { result: "planWritten", lines: 1 } } },
 ];
 
 const lastSave = () => calls.filter((c) => c.command === "chat_save").at(-1)?.args;
@@ -176,6 +179,35 @@ describe("the plan through a conversation", () => {
     act(() => result.current.reset());
     expect(result.current.plan).toBeNull();
     expect(result.current.checklist).toEqual([]);
+  });
+
+  /// The window opens the Plan tab on each count — once per plan, never for
+  /// a chat that is only being opened or a turn that was stopped.
+  test("a finished turn that wrote a plan is counted; opening, stopping and plain turns are not", async () => {
+    record = { id: "c1", messages: [], blocks: [tool("old", "writePlan", { content: "# Old" })], todos: [], plan: "# Old" };
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => result.current.open("c1"));
+    expect(result.current.planWritten).toBe(0);
+
+    during = writes("# One");
+    await act(async () => result.current.send("plan it"));
+    expect(result.current.planWritten).toBe(1);
+
+    during = [];
+    await act(async () => result.current.send("thanks"));
+    expect(result.current.planWritten).toBe(1);
+
+    during = writes("# Half", "p-half");
+    stopped = true;
+    await act(async () => result.current.send("stop midway"));
+    expect(result.current.turn.status).toBe("cancelled");
+    expect(result.current.planWritten).toBe(1);
+    stopped = false;
+
+    // A call id is unique across the conversation; a repeated one would be the first call again.
+    during = writes("# Two", "p2");
+    await act(async () => result.current.send("again"));
+    expect(result.current.planWritten).toBe(2);
   });
 
   test("a chat saved before plans existed opens without one", async () => {

@@ -153,6 +153,12 @@ export default function App() {
   const openTab = (next: AsideTab) =>
     setDocks(openPane(docks, next, PANES.find((p) => p.id === next)?.dock ?? "right"));
 
+  // A plan the agent has just finished writing is shown, once, when its turn
+  // ends — not mid-turn, while it is still filling in the checklist.
+  useEffect(() => {
+    if (agent.planWritten > 0) openTab("plan");
+  }, [agent.planWritten]);
+
   // The conversation just left is already on disk and stays in the sidebar;
   // this only stops pointing at it.
   const newChat = () => agent.reset();
