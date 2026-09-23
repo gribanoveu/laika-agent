@@ -1,25 +1,22 @@
-//! Saved conversations: one JSON file per chat under `<app dir>/chats`.
+//! Saved conversations: one row per chat in `<app dir>/chats.db`.
 //!
-//! A file rather than a database because of what this actually is — a folder
-//! of conversations, read when one is opened and written once at the end of a
-//! turn. SQLite would buy indexed listing, which starts to matter at a scale
-//! (thousands of chats in one project) this never reaches, and would cost a
-//! dependency, a schema and its migrations.
+//! The listing columns (`workspace`, `title`, `updated_at`, `branched_from`)
+//! are real columns, so the sidebar is one indexed query and never parses a
+//! transcript. The record itself is stored whole as JSON in `body`, in the
+//! `domain::chat_record` format — that file stays the contract.
 //!
-//! **Revisit when** listing is slow enough to notice, or a chat has to be
-//! searched by content rather than opened by name — both are index problems,
-//! and the index layer (stage 5) brings the dependency anyway.
-//!
-//! One file per chat also decides what damage costs. A single store is a
-//! single point of loss: upstream once refused to open a database written by
-//! a newer build and thereby hid a user's entire history behind one number.
-//! Here a chat this build cannot read is one row missing from the list, and
-//! the rest open normally.
+//! No database-wide version and no migrations. Upstream once refused to open
+//! a database written by a newer build and thereby hid a user's entire
+//! history behind one number. Here the version is per row: a chat this build
+//! cannot read is one row missing from the list, left untouched, and the rest
+//! open normally. A connection per call, as in `tool_call_log`: one write per
+//! turn is not a hot path.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::domain::chat_export;
@@ -30,15 +27,38 @@ use crate::domain::llm::LlmMessage;
 use crate::domain::tools::Task;
 use crate::infra::app_dir;
 
-const DIR: &str = "chats";
+const FILE: &str = "chats.db";
 
-fn dir() -> Result<PathBuf, ChatError> {
-    Ok(app_dir::dir().map_err(ChatError::AppDir)?.join(DIR))
+const SCHEMA: &str = "
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 3000;
+CREATE TABLE IF NOT EXISTS chats (
+  id             TEXT PRIMARY KEY,
+  workspace      TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  title          TEXT NOT NULL,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  branched_from  TEXT,
+  body           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chats_workspace ON chats(workspace, updated_at DESC);
+";
+
+fn store(e: rusqlite::Error) -> ChatError {
+    ChatError::Store(e.to_string())
 }
 
-fn path(id: &str) -> Result<PathBuf, ChatError> {
-    chat_record::check_id(id)?;
-    Ok(dir()?.join(format!("{id}.json")))
+fn open() -> Result<Connection, ChatError> {
+    let path = app_dir::ensure().map_err(ChatError::AppDir)?.join(FILE);
+    let conn = Connection::open(&path).map_err(store)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    conn.execute_batch(SCHEMA).map_err(store)?;
+    Ok(conn)
 }
 
 fn now() -> i64 {
@@ -49,49 +69,48 @@ fn now() -> i64 {
 }
 
 /// Chats belonging to one workspace, most recently updated first — the order
-/// the sidebar draws them in.
-///
-/// A file that cannot be read is skipped, not propagated. The list is how a
-/// user reaches every *other* conversation, and one damaged file must not be
-/// able to empty it.
+/// the sidebar draws them in. Ties broken by id so the order is stable: two
+/// chats saved in the same millisecond otherwise swap places between listings.
+/// Rows from a newer build are not listed.
 pub fn list(workspace: &str) -> Result<Vec<ChatSummary>, ChatError> {
-    let dir = dir()?;
-    let entries = match fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        // Nothing saved yet is an empty list, not a failure.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(ChatError::Read(e)),
-    };
-
-    let mut summaries: Vec<(ChatSummary, String)> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| chat_record::parse(&text).ok())
-        .filter(|record| record.workspace == workspace)
-        .map(|record| (ChatSummary::from(&record), record.id))
-        .collect();
-
-    // Ties broken by id so the order is stable: two chats saved in the same
-    // millisecond otherwise swap places between listings.
-    summaries.sort_by(|a, b| {
-        b.0.updated_at
-            .cmp(&a.0.updated_at)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    Ok(summaries.into_iter().map(|(summary, _)| summary).collect())
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, updated_at, branched_from FROM chats
+             WHERE workspace = ?1 AND schema_version <= ?2
+             ORDER BY updated_at DESC, id",
+        )
+        .map_err(store)?;
+    let rows = stmt
+        .query_map(params![workspace, CHAT_SCHEMA_VERSION], |row| {
+            Ok(ChatSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                updated_at: row.get(2)?,
+                branched_from: row.get(3)?,
+            })
+        })
+        .map_err(store)?;
+    rows.collect::<Result<_, _>>().map_err(store)
 }
 
 pub fn load(id: &str) -> Result<ChatRecord, ChatError> {
-    let path = path(id)?;
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(ChatError::NotFound(id.to_string()))
-        }
-        Err(e) => return Err(ChatError::Read(e)),
-    };
-    chat_record::parse(&text)
+    chat_record::check_id(id)?;
+    let body: Option<String> = open()?
+        .query_row("SELECT body FROM chats WHERE id = ?1", params![id], |row| row.get(0))
+        .optional()
+        .map_err(store)?;
+    chat_record::parse(&body.ok_or_else(|| ChatError::NotFound(id.to_string()))?)
+}
+
+/// Whether a chat with this id is stored, readable or not.
+pub fn exists(id: &str) -> Result<bool, ChatError> {
+    chat_record::check_id(id)?;
+    open()?
+        .query_row("SELECT 1 FROM chats WHERE id = ?1", params![id], |_| Ok(()))
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(store)
 }
 
 /// Writes the conversation whole, keeping the moment it started.
@@ -109,15 +128,19 @@ pub fn save(
     plan: Option<&str>,
     branched_from: Option<&str>,
 ) -> Result<ChatSummary, ChatError> {
-    let path = path(id)?;
-    let existing = load(id).ok();
+    chat_record::check_id(id)?;
+    let conn = open()?;
+    let created_at: Option<i64> = conn
+        .query_row("SELECT created_at FROM chats WHERE id = ?1", params![id], |row| row.get(0))
+        .optional()
+        .map_err(store)?;
 
     let record = ChatRecord {
         schema_version: CHAT_SCHEMA_VERSION,
         id: id.to_string(),
         workspace: workspace.to_string(),
         title: chat_record::derive_title(messages),
-        created_at: existing.as_ref().map_or_else(now, |old| old.created_at),
+        created_at: created_at.unwrap_or_else(now),
         updated_at: now(),
         messages: messages.to_vec(),
         blocks: blocks.clone(),
@@ -126,8 +149,23 @@ pub fn save(
         branched_from: branched_from.map(str::to_string),
     };
 
-    let text = serde_json::to_string(&record).map_err(ChatError::Parse)?;
-    app_dir::write_private(&path, text.as_bytes()).map_err(ChatError::Write)?;
+    let body = serde_json::to_string(&record).map_err(ChatError::Parse)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO chats
+           (id, workspace, schema_version, title, created_at, updated_at, branched_from, body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            record.id,
+            record.workspace,
+            record.schema_version,
+            record.title,
+            record.created_at,
+            record.updated_at,
+            record.branched_from,
+            body,
+        ],
+    )
+    .map_err(store)?;
     Ok(ChatSummary::from(&record))
 }
 
@@ -140,12 +178,10 @@ pub fn export(id: &str, path: &Path) -> Result<(), ChatError> {
 }
 
 pub fn delete(id: &str) -> Result<(), ChatError> {
-    match fs::remove_file(path(id)?) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(ChatError::NotFound(id.to_string()))
-        }
-        Err(e) => Err(ChatError::Read(e)),
+    chat_record::check_id(id)?;
+    match open()?.execute("DELETE FROM chats WHERE id = ?1", params![id]).map_err(store)? {
+        0 => Err(ChatError::NotFound(id.to_string())),
+        _ => Ok(()),
     }
 }
 
@@ -156,6 +192,10 @@ mod tests {
 
     fn blocks(text: &str) -> Value {
         serde_json::json!([{ "kind": "user", "id": "user:0", "text": text }])
+    }
+
+    fn body(id: &str) -> String {
+        open().unwrap().query_row("SELECT body FROM chats WHERE id = ?1", [id], |r| r.get(0)).unwrap()
     }
 
     fn save_one(id: &str, workspace: &str, said: &str) -> ChatSummary {
@@ -191,7 +231,7 @@ mod tests {
     fn a_chat_is_exported_as_markdown_where_it_was_asked_for() {
         with_app_dir("chat-store-export", || {
             save_one("one", "/repo", "why does it drop the token?");
-            let path = dir().unwrap().join("transcript.md");
+            let path = app_dir::ensure().unwrap().join("transcript.md");
 
             export("one", &path).unwrap();
 
@@ -204,7 +244,7 @@ mod tests {
     #[test]
     fn exporting_a_chat_that_is_not_there_says_so() {
         with_app_dir("chat-store-export-missing", || {
-            let path = dir().unwrap().join("transcript.md");
+            let path = app_dir::ensure().unwrap().join("transcript.md");
             assert!(matches!(export("nope", &path), Err(ChatError::NotFound(_))));
         });
     }
@@ -235,13 +275,10 @@ mod tests {
             save_one("older", "/repo", "first");
             save_one("newer", "/repo", "second");
             // Same millisecond is likely here; make the order the one under test.
-            let mut record = load("newer").unwrap();
-            record.updated_at += 1000;
-            app_dir::write_private(
-                &path("newer").unwrap(),
-                serde_json::to_string(&record).unwrap().as_bytes(),
-            )
-            .unwrap();
+            open()
+                .unwrap()
+                .execute("UPDATE chats SET updated_at = updated_at + 1000 WHERE id = 'newer'", [])
+                .unwrap();
 
             let ids: Vec<String> = list("/repo").unwrap().into_iter().map(|c| c.id).collect();
             assert_eq!(ids, ["newer", "older"]);
@@ -275,16 +312,17 @@ mod tests {
         });
     }
 
-    /// One unreadable file is one row missing, never an empty sidebar.
+    /// A damaged transcript fails to open on its own; the rest still list and open.
     #[test]
     fn a_damaged_chat_does_not_hide_the_others() {
         with_app_dir("chat-store-damaged", || {
             save_one("good", "/repo", "readable");
             save_one("bad", "/repo", "unreadable");
-            fs::write(path("bad").unwrap(), "{ not json").unwrap();
+            open().unwrap().execute("UPDATE chats SET body = '{ not json' WHERE id = 'bad'", []).unwrap();
 
             let ids: Vec<String> = list("/repo").unwrap().into_iter().map(|c| c.id).collect();
-            assert_eq!(ids, ["good"]);
+            assert!(ids.contains(&"good".to_string()), "{ids:?}");
+            assert!(load("good").is_ok());
             assert!(matches!(load("bad"), Err(ChatError::Parse(_))));
         });
     }
@@ -295,16 +333,20 @@ mod tests {
     fn a_chat_from_a_newer_build_is_left_alone() {
         with_app_dir("chat-store-newer", || {
             save_one("future", "/repo", "from tomorrow");
-            let mut value: Value =
-                serde_json::from_str(&fs::read_to_string(path("future").unwrap()).unwrap())
-                    .unwrap();
+            let mut value: Value = serde_json::from_str(&body("future")).unwrap();
             value["schemaVersion"] = serde_json::json!(CHAT_SCHEMA_VERSION + 1);
             let raw = value.to_string();
-            fs::write(path("future").unwrap(), &raw).unwrap();
+            open()
+                .unwrap()
+                .execute(
+                    "UPDATE chats SET schema_version = ?1, body = ?2 WHERE id = 'future'",
+                    params![CHAT_SCHEMA_VERSION + 1, raw],
+                )
+                .unwrap();
 
             assert!(list("/repo").unwrap().is_empty());
             assert!(matches!(load("future"), Err(ChatError::UnsupportedVersion(_))));
-            assert_eq!(fs::read_to_string(path("future").unwrap()).unwrap(), raw);
+            assert_eq!(body("future"), raw);
         });
     }
 
@@ -332,10 +374,12 @@ mod tests {
             assert!(list("/repo").unwrap().is_empty());
             assert!(matches!(load("one"), Err(ChatError::NotFound(_))));
             assert!(matches!(delete("one"), Err(ChatError::NotFound(_))));
+            assert!(!exists("one").unwrap());
         });
     }
 
-    /// The id arrives from the window and becomes a file name.
+    /// The id arrives from the window; one that is not an id is refused before
+    /// any query runs.
     #[test]
     fn an_id_that_is_not_an_id_never_reaches_the_filesystem() {
         with_app_dir("chat-store-bad-id", || {

@@ -16,8 +16,8 @@
 //!
 //! ## Everything here is derived, and that changes what a failure means
 //!
-//! A chat file is the user's own writing: losing one loses something nobody
-//! can reproduce, which is why `infra::chat_store` never deletes a file it
+//! A saved chat is the user's own writing: losing one loses something nobody
+//! can reproduce, which is why `infra::chat_store` never deletes a row it
 //! cannot read and why a newer format there is left strictly alone
 //! (`docs/07-upstream-findings.md`, "чужой урок"). Nothing in this file is
 //! like that. Every row can be rebuilt from the working tree, so a store that

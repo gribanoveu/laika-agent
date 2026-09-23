@@ -44,7 +44,7 @@ pub fn chat_save(
     branched_from: Option<String>,
 ) -> Result<ChatSummary, String> {
     let workspace = state.workspace()?;
-    let first = chat_store::load(&id).is_err();
+    let first = !chat_store::exists(&id).map_err(|e| e.to_string())?;
     let summary = chat_store::save(
         &id,
         &workspace.display().to_string(),
