@@ -205,11 +205,13 @@ export default function App() {
     agent.send(text);
   };
 
+  const openChat = history.chats.find((one) => one.id === agent.chatId);
+
   // The conversation as a file, for reading it somewhere else. Only what is
   // on disk can be written out — a turn saves when it comes to rest, so this
   // exports everything up to the one still running.
   const exportOpenChat = async () => {
-    const chat = history.chats.find((one) => one.id === agent.chatId);
+    const chat = openChat;
     if (!chat) return toast.show("Nothing saved to export yet");
     const path = await pickSavePath(chat.title, "md");
     if (!path) return;
@@ -307,7 +309,8 @@ export default function App() {
 
         <main className="main">
           <ChatPanel
-            title={history.chats.find((chat) => chat.id === agent.chatId)?.title ?? null}
+            title={openChat?.title ?? null}
+            branched={Boolean(openChat?.branchedFrom)}
             workspace={workspace.path}
             turn={agent.turn}
             onDecide={agent.decide}

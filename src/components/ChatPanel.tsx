@@ -10,6 +10,7 @@ import {
   FolderTree,
   GitBranch,
   ListTodo,
+  MessageSquare,
   Pencil,
   Download,
   Search,
@@ -439,6 +440,8 @@ type Props = {
   onOpenPanel?: (tab: AsideTab) => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
+  /** Whether the open chat was branched off another one; its header icon says so. */
+  branched?: boolean;
   workspace: string | null;
   turn: TurnState;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
@@ -462,6 +465,7 @@ export function ChatPanel({
   onToggleTerminal,
   onOpenPanel,
   title = null,
+  branched = false,
   workspace,
   turn,
   onDecide,
@@ -517,6 +521,11 @@ export function ChatPanel({
     <section className="chat-panel">
       <header className="chat-head">
         <div className="head-left">
+          {branched ? (
+            <GitBranch size={15} className="head-icon" aria-hidden />
+          ) : (
+            <MessageSquare size={15} className="head-icon" aria-hidden />
+          )}
           <h1 title={title ?? undefined}>{title ?? "New chat"}</h1>
         </div>
         <div className="head-right">
