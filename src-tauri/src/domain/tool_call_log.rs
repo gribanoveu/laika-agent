@@ -307,6 +307,28 @@ mod tests {
                 Some(ToolCall::StopProcess(crate::domain::tools::ProcessArgs { id: Some(1) })),
                 ToolResult::ProcessStopped(process()),
             ),
+            ToolName::ReadTerminal => (
+                Some(ToolCall::ReadTerminal(crate::domain::tools::ReadTerminalArgs { id: Some(1), lines: None })),
+                ToolResult::TerminalScreen(crate::domain::terminal::TerminalScreen {
+                    id: 1,
+                    shell: "zsh".into(),
+                    state: crate::domain::terminal::TerminalState::Running,
+                    alternate: false,
+                    output: LEAK.into(),
+                }),
+            ),
+            // The command line stays in the log, as runCommand's does.
+            ToolName::RunInTerminal => (
+                Some(ToolCall::RunInTerminal(crate::domain::tools::RunInTerminalArgs { command: "npm run dev".into(), id: None })),
+                ToolResult::TerminalTyped {
+                    terminal: crate::domain::terminal::TerminalInfo {
+                        id: 1,
+                        shell: "zsh".into(),
+                        state: crate::domain::terminal::TerminalState::Running,
+                    },
+                    command: "npm run dev".into(),
+                },
+            ),
             ToolName::Mcp => (
                 Some(ToolCall::Mcp(McpCallArgs {
                     name: "mcp__db__query".into(),

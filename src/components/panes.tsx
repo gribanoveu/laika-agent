@@ -35,6 +35,8 @@ export type PaneContext = {
   commitDraft: { message: string; onMessage: (message: string) => void };
   /** The background process a chat row asked to see; a new object each ask. */
   processFocus: { id: number } | null;
+  /** Puts text into the message being written — a selection from the terminal. */
+  onAddToChat: (text: string) => void;
   /** The open chat's transcript, for the files its calls touched. */
   chatBlocks: Block[];
   mcp: McpListProps;

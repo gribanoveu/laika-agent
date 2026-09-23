@@ -111,6 +111,31 @@
   overflow-y: auto;
 }
 
+/* The screen and what floats over it. */
+.terminal-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-quote {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-panel-soft);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.terminal-quote:hover {
+  background: var(--bg-hover);
+}
+
 /* xterm.js measures this box to decide columns and rows; the font it reads
    from here is the one it draws with. */
 .terminal-view {

@@ -197,6 +197,8 @@ pub struct Turn<'a> {
     pub hooks: &'a Hooks,
     /// Background processes, which outlive the turn; `None` has none.
     pub processes: Option<Arc<dyn BackgroundProcesses>>,
+    /// The user's own terminals; `None` has none.
+    pub terminals: Option<Arc<dyn crate::domain::terminal::UserTerminals>>,
 }
 
 
@@ -639,6 +641,7 @@ fn run(
                             mcp: turn.mcp.clone(),
                             cancelled: Some(turn.cancelled),
                             processes: turn.processes.clone(),
+                            terminals: turn.terminals.clone(),
                         };
                         execute_tool(
                             turn.scope,
@@ -1248,6 +1251,7 @@ mod tests {
         mcp: McpTools,
         hooks: Hooks,
         processes: Option<Arc<dyn BackgroundProcesses>>,
+        terminals: Option<Arc<dyn crate::domain::terminal::UserTerminals>>,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1289,6 +1293,7 @@ mod tests {
             mcp: McpTools::default(),
             hooks: Hooks::default(),
             processes: None,
+            terminals: None,
         }
     }
 
@@ -1336,6 +1341,7 @@ mod tests {
                 mcp: &self.mcp,
                 hooks: &self.hooks,
                 processes: self.processes.clone(),
+                terminals: self.terminals.clone(),
             };
             f(&turn)
         }

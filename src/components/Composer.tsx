@@ -41,6 +41,8 @@ type Props = {
   /** Text put into the box from outside — a branch hands back its message.
       Replaces what was typed; `seq` makes the same text twice land twice. */
   draft?: { text: string; seq: number } | null;
+  /** Text added after what is typed — a selection from the terminal. */
+  quote?: { text: string; seq: number } | null;
   /** Every configured `provider/model`, and the one turns go to now. */
   models: { choices: ModelChoice[]; current: ModelChoice | null };
   onModel: (choice: ModelChoice) => void;
@@ -63,6 +65,7 @@ export function Composer({
   unattended,
   onUnattended,
   draft = null,
+  quote = null,
   models,
   onModel,
   onLoadModels,
@@ -86,6 +89,13 @@ export function Composer({
     area.current?.focus();
     requestAnimationFrame(grow);
   }, [draft]);
+
+  useEffect(() => {
+    if (!quote) return;
+    setText((typed) => (typed.trim() ? `${typed.trimEnd()}\n\n${quote.text}` : quote.text));
+    area.current?.focus();
+    requestAnimationFrame(grow);
+  }, [quote]);
 
   const send = () => {
     if (!text.trim()) return;

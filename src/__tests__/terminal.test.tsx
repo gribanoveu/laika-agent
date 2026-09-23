@@ -51,9 +51,14 @@ mock.module("@tauri-apps/api/event", () => ({
 }));
 
 const drawn: number[] = [];
+/** The drawn screen's selection callback, to select as a user would. */
+let select: (text: string) => void = () => {};
+let cleared = 0;
 mock.module("../hooks/useTerminalScreen", () => ({
-  useTerminalScreen: (id: number) => {
+  useTerminalScreen: (id: number, _container: unknown, onSelection: (text: string) => void) => {
     if (drawn.at(-1) !== id) drawn.push(id);
+    select = onSelection;
+    return { clearSelection: () => cleared++ };
   },
 }));
 
@@ -62,7 +67,7 @@ afterAll(() => {
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
-const { terminalAttach, terminalTitle } = await import("../lib/terminal");
+const { terminalAttach, terminalQuote, terminalTitle } = await import("../lib/terminal");
 const { useTerminals } = await import("../hooks/useTerminals");
 const { TerminalPanel } = await import("../components/TerminalPanel");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -74,6 +79,7 @@ beforeEach(() => {
   drawn.length = 0;
   FakeChannel.made = [];
   nextId = 10;
+  cleared = 0;
 });
 
 describe("terminalAttach", () => {
@@ -96,6 +102,12 @@ describe("terminalAttach", () => {
     expect(terminalTitle({ id: 1, shell: "zsh", state: { state: "running" } })).toBe("zsh");
     expect(terminalTitle({ id: 1, shell: "zsh", state: { state: "exited", code: 3 } })).toBe("zsh — exited 3");
     expect(terminalTitle({ id: 1, shell: "zsh", state: { state: "exited", code: null } })).toBe("zsh — ended");
+  });
+
+  test("a selection is quoted with its terminal, in a fence nothing inside can close", () => {
+    const zsh = { id: 2, shell: "zsh", state: { state: "running" as const } };
+    expect(terminalQuote(zsh, "$ npm test\n1 failed\n\n")).toBe("From my terminal (zsh #2):\n```\n$ npm test\n1 failed\n```");
+    expect(terminalQuote(zsh, "see ```js``` and ````")).toBe("From my terminal (zsh #2):\n`````\nsee ```js``` and ````\n`````");
   });
 });
 
@@ -134,7 +146,7 @@ describe("useTerminals", () => {
 
 describe("TerminalPanel", () => {
   const panel = (props: Partial<Parameters<typeof TerminalPanel>[0]> = {}) => (
-    <TerminalPanel active workspace="/work/laika" processFocus={null} {...props} />
+    <TerminalPanel active workspace="/work/laika" processFocus={null} onAddToChat={() => {}} {...props} />
   );
 
   test("opening the tab with no shell gives one, and draws it", async () => {
@@ -178,6 +190,21 @@ describe("TerminalPanel", () => {
     fireEvent.click(screen.getByLabelText("New terminal"));
     await settle();
     expect(drawn).toEqual([2, 1, 10]);
+  });
+
+  test("a selection offers to go into the message, quoted with its terminal", async () => {
+    listed = [{ id: 1, shell: "zsh", state: { state: "running" } }];
+    const added: string[] = [];
+    render(panel({ onAddToChat: (text) => added.push(text) }));
+    await settle();
+    expect(screen.queryByText("Add to chat")).toBeNull();
+    act(() => select("  "));
+    expect(screen.queryByText("Add to chat")).toBeNull();
+    act(() => select("1 failed"));
+    fireEvent.click(screen.getByText("Add to chat"));
+    expect(added).toEqual([terminalQuote(listed[0], "1 failed")]);
+    expect(cleared).toBe(1);
+    expect(screen.queryByText("Add to chat")).toBeNull();
   });
 
   test("a process asked for from the chat shows the processes", async () => {

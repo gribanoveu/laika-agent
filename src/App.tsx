@@ -86,6 +86,8 @@ export default function App() {
   // Which background process a chat row asked the Terminal tab to show. The
   // row and the tab are in different subtrees, so it passes through here.
   const [processFocus, setProcessFocus] = useState<{ id: number } | null>(null);
+  // A terminal selection on its way to the composer, from the other subtree.
+  const [quote, setQuote] = useState<{ text: string; seq: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // The MCP and hooks files open as a whole (JSON) or one entry at a time
@@ -253,6 +255,7 @@ export default function App() {
     onNotify: toast.show,
     commitDraft: { message: commitMessage, onMessage: setCommitMessage },
     processFocus,
+    onAddToChat: (text) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 })),
     chatBlocks: agent.turn.blocks,
     mcp: {
       view: mcp.view,
@@ -366,6 +369,7 @@ export default function App() {
             unattended={approval.unattended}
             onUnattended={pickUnattended}
             draft={agent.draft}
+            quote={quote}
             models={llm.models}
             onModel={(choice) => llm.pickModel(choice.providerId, choice.model)}
             onLoadModels={llm.loadModels}

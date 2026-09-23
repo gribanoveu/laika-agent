@@ -167,7 +167,10 @@ describe("holding the chosen mode", () => {
 });
 
 describe("text handed to the box", () => {
-  const withDraft = (draft: { text: string; seq: number }) => (
+  const withDraft = (
+    draft: { text: string; seq: number } | null,
+    quote: { text: string; seq: number } | null = null,
+  ) => (
     <Composer
       onSend={() => {}}
       onStop={() => {}}
@@ -177,6 +180,7 @@ describe("text handed to the box", () => {
       unattended={false}
       onUnattended={() => {}}
       draft={draft}
+      quote={quote}
       models={{ choices: [], current: null }}
       onModel={() => {}}
       onLoadModels={() => {}}
@@ -195,6 +199,17 @@ describe("text handed to the box", () => {
     fireEvent.change(box, { target: { value: "edited" } });
     rerender(withDraft({ text: "try this", seq: 2 }));
     expect(box.value).toBe("try this");
+  });
+
+  /// A terminal selection is added to the message, not put in its place.
+  test("a quote goes after what was typed, each time it is handed", () => {
+    const { rerender } = render(withDraft(null, { text: "```\n1 failed\n```", seq: 1 }));
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(box.value).toBe("```\n1 failed\n```");
+
+    fireEvent.change(box, { target: { value: "why did this fail?  " } });
+    rerender(withDraft(null, { text: "```\n1 failed\n```", seq: 2 }));
+    expect(box.value).toBe("why did this fail?\n\n```\n1 failed\n```");
   });
 });
 

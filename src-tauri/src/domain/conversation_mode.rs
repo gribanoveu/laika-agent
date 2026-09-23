@@ -61,6 +61,8 @@ fn base_tools() -> HashSet<ToolName> {
         // A process's output is something to look at; one may still run
         // from an Agent turn before the mode changed.
         ToolName::ReadOutput,
+        // The user's own screen, looked at.
+        ToolName::ReadTerminal,
     ]
     .into_iter()
     .collect()
@@ -92,6 +94,8 @@ pub fn tools(mode: ConversationMode) -> HashSet<ToolName> {
                 ToolName::Move,
                 ToolName::Todo,
                 ToolName::RunCommand,
+                // The same line, typed where the user can see it run.
+                ToolName::RunInTerminal,
                 ToolName::StopProcess,
                 ToolName::WritePlan,
                 // Agent only: nothing says a foreign tool changes nothing.
@@ -135,6 +139,15 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Looking at the user's terminal is reading; typing into it is not.
+    #[test]
+    fn the_terminal_is_read_in_every_mode_and_typed_into_in_agent_alone() {
+        for mode in ConversationMode::ALL {
+            assert!(offers(*mode, ToolName::ReadTerminal), "{mode:?}");
+            assert_eq!(offers(*mode, ToolName::RunInTerminal), *mode == ConversationMode::Agent, "{mode:?}");
         }
     }
 

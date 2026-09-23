@@ -78,6 +78,9 @@ pub fn preview_tool_call(scope: &ToolScope, call: &LlmToolCall) -> ToolPreview {
             }
         }
 
+        // Where that terminal is now is the user's doing, not a path of ours.
+        ToolCall::RunInTerminal(args) => ToolPreview::Command { command: args.command, cwd: "your terminal".to_string() },
+
         // A rename, a new directory, a read: the arguments already say it.
         _ => ToolPreview::Nothing,
     }
@@ -113,6 +116,15 @@ mod tests {
     fn preview(root: &Path, name: &str, arguments: &str) -> ToolPreview {
         let scope = ToolScope::new(root).expect("scope");
         preview_tool_call(&scope, &call(name, arguments))
+    }
+
+    #[test]
+    fn a_line_for_the_terminal_runs_in_the_users_terminal() {
+        let root = crate::testing::temp_dir("preview-terminal");
+        assert_eq!(
+            preview(&root, "runInTerminal", r#"{"command":"npm run dev"}"#),
+            ToolPreview::Command { command: "npm run dev".into(), cwd: "your terminal".into() }
+        );
     }
 
     fn diff(preview: ToolPreview) -> FileDiffStats {

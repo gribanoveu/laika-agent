@@ -483,6 +483,9 @@ where
     let processes = app
         .try_state::<Arc<Processes>>()
         .map(|processes| Arc::clone(&processes) as Arc<dyn crate::domain::background::BackgroundProcesses>);
+    let terminals = app
+        .try_state::<Arc<crate::infra::terminal::Terminals>>()
+        .map(|terminals| Arc::clone(&terminals) as Arc<dyn crate::domain::terminal::UserTerminals>);
 
     tauri::async_runtime::spawn_blocking(move || {
         let events = chat_event_sink(&app, turn_id);
@@ -527,6 +530,7 @@ where
             mcp: &mcp,
             hooks: &hooks,
             processes,
+            terminals,
         };
         run(&turn).map_err(|e| e.to_string())
     })

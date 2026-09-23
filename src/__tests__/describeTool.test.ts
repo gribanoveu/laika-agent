@@ -50,6 +50,29 @@ describe("what each call shows", () => {
     expect(killed.meta).toBe("killed by a signal");
   });
 
+  test("the user's terminal: which one and what it showed; a typed line and where it went", () => {
+    const read = describeTool(
+      tool({
+        name: "readTerminal",
+        arguments: "{}",
+        result: { id: 2, shell: "zsh", state: { state: "running" }, alternate: false, output: "$ npm test\n1 failed" },
+      }),
+    );
+    expect(read).toMatchObject({ name: "Screen", arg: "#2 zsh", meta: "2 lines", detail: "$ npm test\n1 failed" });
+    const blank = describeTool(
+      tool({ name: "readTerminal", arguments: "{}", result: { id: 2, shell: "zsh", state: { state: "running" }, output: "" } }),
+    );
+    expect(blank.meta).toBeUndefined();
+    const typed = describeTool(
+      tool({
+        name: "runInTerminal",
+        arguments: '{"command":"npm run dev"}',
+        result: { terminal: { id: 2, shell: "zsh", state: { state: "running" } }, command: "npm run dev" },
+      }),
+    );
+    expect(typed).toMatchObject({ name: "Terminal", arg: "npm run dev", meta: "terminal #2", detail: "" });
+  });
+
   test("a read names the file and the lines it actually returned", () => {
     const shown = describeTool(
       tool({

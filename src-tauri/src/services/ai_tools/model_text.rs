@@ -86,6 +86,11 @@ pub fn for_model(result: &ToolResult) -> String {
             format!("{} on its own before this call — nothing was stopped.", process.describe())
         }
         ToolResult::ProcessStopped(process) => format!("{}, with everything it started.", process.describe()),
+        ToolResult::TerminalScreen(screen) => terminal_screen(screen),
+        ToolResult::TerminalTyped { terminal, command } => format!(
+            "Typed into the user's terminal #{} ({}): `{command}`. It runs there now; readTerminal shows what it printed.",
+            terminal.id, terminal.shell
+        ),
         ToolResult::SearchResults { matches, meta } => search(matches, meta),
         ToolResult::Skill { name, instructions, files, from } => skill(name, instructions, files, from),
         ToolResult::SkillFile { name, path, content } => format!("{name}/{path}:\n{content}"),
@@ -333,6 +338,27 @@ fn took(ms: u64) -> String {
     }
 }
 
+/// Which terminal and how it stands, then the lines — the same shape as a
+/// background process's read.
+fn terminal_screen(screen: &crate::domain::terminal::TerminalScreen) -> String {
+    use crate::domain::terminal::TerminalState;
+    let state = match screen.state {
+        TerminalState::Running => String::new(),
+        TerminalState::Exited { code: Some(code) } => format!(", its shell exited with code {code}"),
+        TerminalState::Exited { code: None } => ", its shell was ended by a signal".to_string(),
+    };
+    let mut out = format!("The user's terminal #{} ({}{state})", screen.id, screen.shell);
+    if screen.alternate {
+        out.push_str(" — a full-screen program is drawing it");
+    }
+    if screen.output.is_empty() {
+        out.push_str(":\n(nothing on screen)");
+    } else {
+        out.push_str(&format!(":\n{}", screen.output));
+    }
+    out
+}
+
 fn process_output(output: &ProcessOutput) -> String {
     let mut out = output.process.describe();
     if output.missed {
@@ -532,6 +558,36 @@ mod tests {
         assert_eq!(out("", "boom\n", Some(1), false), "Exit code 1\nstderr:\nboom");
         assert_eq!(out("", "", None, true), "Timed out and was killed, with everything it started.\n(no output)");
         assert_eq!(out("", "", None, false), "Ended by a signal, with no exit code.\n(no output)");
+    }
+
+    /// Which terminal, how its shell stands, whether a program has taken
+    /// the screen — then the lines.
+    #[test]
+    fn a_terminal_screen_says_whose_and_how_it_stands() {
+        use crate::domain::terminal::{TerminalInfo, TerminalScreen, TerminalState};
+        let screen = |state, alternate, output: &str| {
+            for_model(&ToolResult::TerminalScreen(TerminalScreen {
+                id: 2,
+                shell: "zsh".into(),
+                state,
+                alternate,
+                output: output.into(),
+            }))
+        };
+        assert_eq!(screen(TerminalState::Running, false, "$ ls\na.rs"), "The user's terminal #2 (zsh):\n$ ls\na.rs");
+        assert_eq!(
+            screen(TerminalState::Exited { code: Some(1) }, false, ""),
+            "The user's terminal #2 (zsh, its shell exited with code 1):\n(nothing on screen)"
+        );
+        assert_eq!(
+            screen(TerminalState::Exited { code: None }, true, "~"),
+            "The user's terminal #2 (zsh, its shell was ended by a signal) — a full-screen program is drawing it:\n~"
+        );
+        let typed = for_model(&ToolResult::TerminalTyped {
+            terminal: TerminalInfo { id: 3, shell: "bash".into(), state: TerminalState::Running },
+            command: "npm run dev".into(),
+        });
+        assert_eq!(typed, "Typed into the user's terminal #3 (bash): `npm run dev`. It runs there now; readTerminal shows what it printed.");
     }
 
     /// The model has no clock: how long a run took is worth a few words.

@@ -3,23 +3,30 @@
 //! pipes, with a timeout and a cap on what the model reads; this one is a
 //! person typing, so it gets a TTY and nothing is cut.
 //!
+//! The agent reaches them through [`UserTerminals`]: it reads what a screen
+//! shows and types a command into one, never more.
+//!
 //! The shells are in `infra::terminal`; decisions in `docs/15-terminal.md`.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Output kept per terminal while nothing draws it, replayed on the next
 /// attach: a few screens of a busy build, not its whole history.
 pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
 
+/// Lines of history kept past the screen, for `readTerminal`.
+pub const SCREEN_HISTORY: usize = 1000;
+
 /// How far past a cut the replay looks for a line start. A line longer than
 /// this is replayed from the middle rather than not at all.
 const LINE_START_SEARCH: usize = 4096;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
     pub id: u32,
@@ -28,7 +35,7 @@ pub struct TerminalInfo {
     pub state: TerminalState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum TerminalState {
     Running,
@@ -81,6 +88,42 @@ pub enum TerminalError {
     Ended(u32),
     #[error("could not resize terminal #{id}: {reason}")]
     Resize { id: u32, reason: String },
+    #[error("the user has no terminal open — the Terminal tab opens one")]
+    NoneOpen,
+    /// Typing would land in whatever holds the terminal — a `vim`, a REPL,
+    /// a password prompt — not in the shell.
+    #[error("terminal #{0} is running something in the foreground; wait for it to finish, or use runCommand")]
+    Busy(u32),
+    #[error("one line only: a line break in the command would run the rest as it is typed. Join the commands with && or ;")]
+    MultiLine,
+}
+
+/// What a terminal shows, as text: its last lines, history included,
+/// without colours or cursor movements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalScreen {
+    pub id: u32,
+    pub shell: String,
+    pub state: TerminalState,
+    /// A full-screen program — `vim`, `less`, `htop` — is drawing it; there
+    /// is no history behind that screen.
+    pub alternate: bool,
+    /// The lines, oldest first. `output`, so the call log redacts it.
+    pub output: String,
+}
+
+/// The user's terminals as the agent sees them.
+pub trait UserTerminals: Send + Sync {
+    fn list(&self) -> Vec<TerminalInfo>;
+
+    /// The last `lines` lines of terminal `id`, or of the newest one.
+    fn screen(&self, id: Option<u32>, lines: usize) -> Result<TerminalScreen, TerminalError>;
+
+    /// Types `command` and Enter into terminal `id`, or into the newest one
+    /// still running — or into a new one in `cwd` when none is. Refused when
+    /// something other than the shell holds the terminal.
+    fn run(&self, id: Option<u32>, command: &str, cwd: &Path) -> Result<TerminalInfo, TerminalError>;
 }
 
 /// The last [`MAX_SCROLLBACK_BYTES`] a terminal wrote. Bytes, not text: a

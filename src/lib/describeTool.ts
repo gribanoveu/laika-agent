@@ -48,6 +48,8 @@ export const LABELS: Record<string, string> = {
   writePlan: "Plan",
   readOutput: "Output",
   stopProcess: "Stop",
+  readTerminal: "Screen",
+  runInTerminal: "Terminal",
 };
 
 /** `mcp__<server>__<tool>` as `server · tool`; `null` for any other name. */
@@ -329,6 +331,24 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         meta: state.state === undefined ? undefined : [processStatus(state as ProcessState), result.missed ? "some output lost" : ""].filter(Boolean).join(" · "),
         detail: str(result.output) ?? "",
       };
+    }
+
+    // The user's own terminal: which one, and what it showed.
+    case "readTerminal": {
+      const id = num(result.id);
+      const output = str(result.output) ?? "";
+      return {
+        name,
+        arg: id === undefined ? "" : `#${id} ${str(result.shell) ?? ""}`.trim(),
+        meta: output ? `${output.split("\n").length} lines` : undefined,
+        detail: output,
+      };
+    }
+
+    // Typed, not run to the end: the terminal is where it goes on.
+    case "runInTerminal": {
+      const id = num(asObject(result.terminal).id);
+      return { name, arg: str(args.command) ?? "", meta: id === undefined ? undefined : `terminal #${id}`, detail: "" };
     }
 
     case "writePlan": {

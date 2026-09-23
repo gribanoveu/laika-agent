@@ -3,6 +3,9 @@
 //! Each is a PTY with the user's login shell on its far side, and four
 //! threads: one reads the PTY, one gathers what it read into frames for the
 //! screen, one writes what the user typed, one waits for the shell to end.
+//! Every frame is also fed to a `vt100` parser, which keeps the screen as
+//! text for the agent: raw output is a stream of cursor moves and redraws,
+//! and what a prompt or a progress bar looks like is only known by playing it.
 //! Typing goes through a queue rather than straight into the PTY: a write
 //! blocks while the program on the other side is not reading, and the command
 //! that carried the keystroke would block the window with it.
@@ -17,8 +20,8 @@ use std::time::Duration;
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
 use crate::domain::terminal::{
-    Scrollback, TerminalChanged, TerminalError, TerminalEventSink, TerminalInfo, TerminalOutputSink, TerminalSize,
-    TerminalState,
+    Scrollback, TerminalChanged, TerminalError, TerminalEventSink, TerminalInfo, TerminalOutputSink, TerminalScreen,
+    TerminalSize, TerminalState, UserTerminals, SCREEN_HISTORY,
 };
 
 /// Output is handed to the screen at most once a frame. The first chunk after
@@ -30,6 +33,9 @@ pub struct Terminals {
     registry: Mutex<Registry>,
     /// Told of every open, exit and close.
     changed: TerminalEventSink,
+    /// A program to run instead of the login shell — tests' `/bin/sh`: the
+    /// user's `.zshrc` is not something a test should run, or wait for.
+    shell: Option<String>,
 }
 
 /// Nobody listening — tests, and anything built before the window is.
@@ -52,6 +58,8 @@ struct Entry {
     /// To the writer thread; dropping it ends that thread.
     input: Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// The shell's; `None` where the platform does not say.
+    pid: Option<u32>,
     shared: Arc<Mutex<Shared>>,
 }
 
@@ -60,13 +68,31 @@ struct Entry {
 struct Shared {
     state: TerminalState,
     scrollback: Scrollback,
-    /// The screen drawing it, by the key it attached with.
-    screen: Option<(u32, TerminalOutputSink)>,
+    /// What the screen shows, played from the same bytes.
+    parser: vt100::Parser,
+    /// The tab drawing it, by the key it attached with.
+    viewer: Option<(u32, TerminalOutputSink)>,
 }
 
 impl Registry {
     fn entry(&self, id: u32) -> Result<&Entry, TerminalError> {
         self.entries.iter().find(|e| e.id == id).ok_or(TerminalError::NotFound(id))
+    }
+}
+
+impl Entry {
+    fn info(&self) -> TerminalInfo {
+        TerminalInfo { id: self.id, shell: self.shell.clone(), state: lock(&self.shared).state }
+    }
+
+    /// Something other than the shell holds the terminal: the foreground
+    /// process group is not the shell's own.
+    fn busy(&self) -> bool {
+        #[cfg(unix)]
+        if let (Some(group), Some(pid)) = (self.master.process_group_leader(), self.pid) {
+            return u32::try_from(group).ok() != Some(pid);
+        }
+        false
     }
 }
 
@@ -76,13 +102,23 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Terminals {
     pub fn new(changed: TerminalEventSink) -> Self {
-        Self { registry: Mutex::default(), changed }
+        Self { registry: Mutex::default(), changed, shell: None }
+    }
+
+    /// Runs `program` instead of the login shell — for tests elsewhere.
+    #[cfg(test)]
+    pub fn with_shell(program: &str) -> Self {
+        Self { registry: Mutex::default(), changed: Arc::new(|_| {}), shell: Some(program.to_string()) }
     }
 
     /// The user's login shell, in `cwd`.
     pub fn open(&self, cwd: &Path, size: TerminalSize) -> Result<TerminalInfo, TerminalError> {
-        let mut command = CommandBuilder::new_default_prog();
-        let shell = Path::new(&command.get_shell())
+        let mut command = match &self.shell {
+            Some(program) => CommandBuilder::new(program),
+            None => CommandBuilder::new_default_prog(),
+        };
+        let program = self.shell.clone().unwrap_or_else(|| command.get_shell());
+        let shell = Path::new(&program)
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "shell".to_string());
@@ -102,10 +138,12 @@ impl Terminals {
         let shared = Arc::new(Mutex::new(Shared {
             state: TerminalState::Running,
             scrollback: Scrollback::default(),
-            screen: None,
+            parser: vt100::Parser::new(size.rows, size.cols, SCREEN_HISTORY),
+            viewer: None,
         }));
         let (input, typed) = mpsc::channel();
         let killer = child.clone_killer();
+        let pid = child.process_id();
 
         let mut registry = lock(&self.registry);
         registry.next_id += 1;
@@ -114,7 +152,7 @@ impl Terminals {
         write(writer, typed);
         wait(child, Arc::clone(&shared), Arc::clone(&self.changed), id);
         let info = TerminalInfo { id, shell: shell.clone(), state: TerminalState::Running };
-        registry.entries.push(Entry { id, shell, master: pair.master, input, killer, shared });
+        registry.entries.push(Entry { id, shell, master: pair.master, input, killer, pid, shared });
         drop(registry);
         (self.changed)(TerminalChanged { id });
         Ok(info)
@@ -122,11 +160,7 @@ impl Terminals {
 
     /// Oldest first, the order they were opened in.
     pub fn list(&self) -> Vec<TerminalInfo> {
-        lock(&self.registry)
-            .entries
-            .iter()
-            .map(|e| TerminalInfo { id: e.id, shell: e.shell.clone(), state: lock(&e.shared).state })
-            .collect()
+        lock(&self.registry).entries.iter().map(Entry::info).collect()
     }
 
     /// Sends `screen` what the terminal wrote so far, then everything it
@@ -140,7 +174,7 @@ impl Terminals {
         if !replay.is_empty() {
             screen(&replay);
         }
-        shared.screen = Some((key, screen));
+        shared.viewer = Some((key, screen));
         Ok(())
     }
 
@@ -150,8 +184,8 @@ impl Terminals {
     pub fn detach(&self, id: u32, key: u32) -> Result<(), TerminalError> {
         let shared = self.shared(id)?;
         let mut shared = lock(&shared);
-        if shared.screen.as_ref().is_some_and(|(attached, _)| *attached == key) {
-            shared.screen = None;
+        if shared.viewer.as_ref().is_some_and(|(attached, _)| *attached == key) {
+            shared.viewer = None;
         }
         Ok(())
     }
@@ -167,11 +201,10 @@ impl Terminals {
 
     pub fn resize(&self, id: u32, size: TerminalSize) -> Result<(), TerminalError> {
         let registry = lock(&self.registry);
-        registry
-            .entry(id)?
-            .master
-            .resize(pty_size(size))
-            .map_err(|e| TerminalError::Resize { id, reason: e.to_string() })
+        let entry = registry.entry(id)?;
+        entry.master.resize(pty_size(size)).map_err(|e| TerminalError::Resize { id, reason: e.to_string() })?;
+        lock(&entry.shared).parser.screen_mut().set_size(size.rows, size.cols);
+        Ok(())
     }
 
     /// Hangs up on the shell, as closing a terminal window does, and forgets it.
@@ -199,6 +232,80 @@ impl Terminals {
     fn shared(&self, id: u32) -> Result<Arc<Mutex<Shared>>, TerminalError> {
         Ok(Arc::clone(&lock(&self.registry).entry(id)?.shared))
     }
+}
+
+impl UserTerminals for Terminals {
+    fn list(&self) -> Vec<TerminalInfo> {
+        Terminals::list(self)
+    }
+
+    fn screen(&self, id: Option<u32>, lines: usize) -> Result<TerminalScreen, TerminalError> {
+        let registry = lock(&self.registry);
+        let entry = match id {
+            Some(id) => registry.entry(id)?,
+            None => registry.entries.last().ok_or(TerminalError::NoneOpen)?,
+        };
+        let mut shared = lock(&entry.shared);
+        let state = shared.state;
+        let screen = shared.parser.screen_mut();
+        Ok(TerminalScreen {
+            id: entry.id,
+            shell: entry.shell.clone(),
+            state,
+            alternate: screen.alternate_screen(),
+            output: last_lines(screen, lines),
+        })
+    }
+
+    fn run(&self, id: Option<u32>, command: &str, cwd: &Path) -> Result<TerminalInfo, TerminalError> {
+        if command.contains(['\n', '\r']) {
+            return Err(TerminalError::MultiLine);
+        }
+        let target = {
+            let registry = lock(&self.registry);
+            let entry = match id {
+                Some(id) => Some(registry.entry(id)?),
+                None => registry.entries.iter().rev().find(|e| lock(&e.shared).state == TerminalState::Running),
+            };
+            if let Some(busy) = entry.filter(|e| e.busy()) {
+                return Err(TerminalError::Busy(busy.id));
+            }
+            entry.map(Entry::info)
+        };
+        let terminal = match target {
+            Some(terminal) => terminal,
+            // The size the tab replaces with its own once it draws it. What
+            // is typed before the shell is up waits in the PTY until it reads.
+            None => self.open(cwd, TerminalSize { cols: 80, rows: 24 })?,
+        };
+        self.write(terminal.id, format!("{command}\r").into_bytes())?;
+        Ok(terminal)
+    }
+}
+
+/// The last `wanted` lines, history first, without the blank rows under the
+/// last thing written. History is read a screenful at a time by scrolling
+/// the parser back: at offset `o` its window starts `o` lines above the screen.
+fn last_lines(screen: &mut vt100::Screen, wanted: usize) -> String {
+    let (rows, cols) = screen.size();
+    let rows = usize::from(rows);
+    screen.set_scrollback(usize::MAX);
+    let history = screen.scrollback();
+    let mut lines = Vec::new();
+    let mut offset = wanted.saturating_sub(rows).min(history);
+    while offset > 0 {
+        screen.set_scrollback(offset);
+        let take = offset.min(rows);
+        lines.extend(screen.rows(0, cols).take(take));
+        offset -= take;
+    }
+    screen.set_scrollback(0);
+    lines.extend(screen.rows(0, cols));
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    let skip = lines.len().saturating_sub(wanted);
+    lines[skip..].iter().map(|line| line.trim_end()).collect::<Vec<_>>().join("\n")
 }
 
 impl Drop for Terminals {
@@ -241,7 +348,7 @@ fn pty_size(size: TerminalSize) -> PtySize {
 /// been reaped: its pid may belong to someone else by then.
 fn hang_up(mut entry: Entry) {
     let mut shared = lock(&entry.shared);
-    shared.screen = None;
+    shared.viewer = None;
     if shared.state != TerminalState::Running {
         return;
     }
@@ -280,8 +387,9 @@ fn frames(received: Receiver<Vec<u8>>, shared: Arc<Mutex<Shared>>) {
         {
             let mut shared = lock(&shared);
             shared.scrollback.push(&frame);
-            if let Some((_, screen)) = &shared.screen {
-                screen(&frame);
+            shared.parser.process(&frame);
+            if let Some((_, viewer)) = &shared.viewer {
+                viewer(&frame);
             }
         }
         thread::sleep(FRAME);
@@ -510,6 +618,110 @@ mod tests {
         let at_most = started.elapsed().as_millis() / FRAME.as_millis() + 2;
         assert!(frames <= at_most, "{frames} frames in {:?}", started.elapsed());
         assert!(seen.lock().unwrap().0.len() > 1_000_000);
+    }
+
+    /// Straight on a parser: spaces written at a line's end are not part of
+    /// what it says.
+    #[test]
+    fn trailing_spaces_are_left_off_a_line() {
+        let mut parser = vt100::Parser::new(5, 20, 100);
+        parser.process(b"abc   \r\n  def  \r\n");
+        assert_eq!(last_lines(parser.screen_mut(), 10), "abc\n  def");
+    }
+
+    /// What the agent reads: the text as drawn, not the escapes that drew it.
+    #[test]
+    fn the_screen_is_read_as_text() {
+        let terminals = Terminals::default();
+        let id = open_sh(&terminals, &folder("term-screen"));
+        type_line(&terminals, id, r"printf '\033[31mred\033[0m\n'; echo sum-$((2+3))");
+        let screen = || UserTerminals::screen(&terminals, Some(id), 100).unwrap();
+        until("the answer on screen", || screen().output.contains("sum-5"));
+        let read = screen();
+        assert!(read.output.contains("\nred\n"), "{:?}", read.output);
+        assert!(!read.output.contains('\x1b'), "{:?}", read.output);
+        assert!(!read.output.ends_with('\n'), "the blank rows under the prompt are left out: {:?}", read.output);
+        assert_eq!((read.id, read.shell.as_str(), read.state, read.alternate), (id, "sh", TerminalState::Running, false));
+    }
+
+    /// Past the screen's own rows, history — up to the lines asked for.
+    #[test]
+    fn history_is_read_past_the_screen() {
+        let terminals = Terminals::default();
+        let id = open_sh(&terminals, &folder("term-history"));
+        type_line(&terminals, id, "seq 1 100; echo end-$((1+1))");
+        until("the end", || UserTerminals::screen(&terminals, Some(id), 10).unwrap().output.contains("end-2"));
+        let output = UserTerminals::screen(&terminals, Some(id), 50).unwrap().output;
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 50, "{output}");
+        // The prompt last, `end-2` and 100 above it, then back to 53.
+        assert_eq!(&lines[..3], ["53", "54", "55"], "{output}");
+        assert!(lines.contains(&"100") && !lines.contains(&"52"), "{output}");
+        // Fewer than a screen: the last of them.
+        let few = UserTerminals::screen(&terminals, Some(id), 3).unwrap().output;
+        assert_eq!(few.lines().count(), 3, "{few}");
+        assert!(few.starts_with("100\nend-2\n"), "{few}");
+    }
+
+    /// The parser follows the PTY: a line longer than the new width wraps.
+    #[test]
+    fn a_resize_reaches_the_screen_text() {
+        let terminals = Terminals::default();
+        let id = open_sh(&terminals, &folder("term-screen-size"));
+        terminals.resize(id, TerminalSize { cols: 20, rows: 6 }).unwrap();
+        type_line(&terminals, id, "echo abcdefghijklmnopqrstuvwxyz-$((1+1))");
+        until("the wrapped line", || {
+            let output = UserTerminals::screen(&terminals, Some(id), 20).unwrap().output;
+            output.contains("abcdefghijklmnopqrst\nuvwxyz-2")
+        });
+    }
+
+    /// A full-screen program owns the terminal: the agent is told, and does
+    /// not type into it.
+    #[test]
+    fn a_program_in_the_foreground_holds_the_terminal() {
+        let terminals = Terminals::default();
+        let dir = folder("term-busy");
+        let id = open_sh(&terminals, &dir);
+        type_line(&terminals, id, r"printf '\033[?1049h'; sleep 30");
+        until("the alternate screen", || UserTerminals::screen(&terminals, Some(id), 10).unwrap().alternate);
+        until("sleep in the foreground", || {
+            matches!(UserTerminals::run(&terminals, Some(id), "echo hi", &dir), Err(TerminalError::Busy(busy)) if busy == id)
+        });
+        assert_eq!(UserTerminals::run(&terminals, None, "echo hi", &dir), Err(TerminalError::Busy(id)), "the newest, too");
+    }
+
+    #[test]
+    fn a_command_goes_to_the_newest_running_shell() {
+        let terminals = Terminals::default();
+        let dir = folder("term-run");
+        let (first, second) = (open_sh(&terminals, &dir), open_sh(&terminals, &dir));
+        type_line(&terminals, second, "exit");
+        until("the second's exit", || terminals.list()[1].state != TerminalState::Running);
+
+        let ran = UserTerminals::run(&terminals, None, "echo ran-$((3+4))", &dir).unwrap();
+        assert_eq!(ran.id, first, "the ended one is passed over");
+        assert_eq!(UserTerminals::screen(&terminals, None, 5).unwrap().id, second, "but read: it is the newest");
+        until("the answer", || UserTerminals::screen(&terminals, Some(first), 20).unwrap().output.contains("ran-7"));
+        assert_eq!(UserTerminals::run(&terminals, Some(second), "echo x", &dir), Err(TerminalError::Ended(second)));
+        assert_eq!(UserTerminals::run(&terminals, Some(9), "echo x", &dir), Err(TerminalError::NotFound(9)));
+        assert_eq!(UserTerminals::run(&terminals, None, "echo a\necho b", &dir), Err(TerminalError::MultiLine));
+        assert_eq!(UserTerminals::run(&terminals, None, "echo a\recho b", &dir), Err(TerminalError::MultiLine));
+    }
+
+    /// With none running, one is opened for it, in the folder.
+    #[test]
+    fn a_command_with_no_shell_running_opens_one() {
+        let terminals = Terminals::with_shell("/bin/sh");
+        let dir = folder("term-run-new");
+        assert_eq!(UserTerminals::screen(&terminals, None, 10), Err(TerminalError::NoneOpen));
+        let ran = UserTerminals::run(&terminals, None, "echo made-$((1+1)); pwd", &dir).unwrap();
+        assert_eq!((ran.shell.as_str(), terminals.list().len()), ("sh", 1));
+        until("the answer", || {
+            // The path is longer than the screen is wide: joined, it is whole.
+            let output = UserTerminals::screen(&terminals, None, 20).unwrap().output.replace('\n', "");
+            output.contains("made-2") && output.contains(&dir.display().to_string())
+        });
     }
 
     #[test]

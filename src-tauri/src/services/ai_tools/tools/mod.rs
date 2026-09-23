@@ -38,6 +38,7 @@ pub mod skill;
 pub mod write_plan;
 pub mod mcp;
 pub mod process;
+pub mod terminal;
 
 /// One row: a tool and the function that builds its schema.
 type ToolDefinitionRow = (ToolName, fn() -> LlmToolDefinition);
@@ -68,6 +69,8 @@ const DEFINITIONS: &[ToolDefinitionRow] = &[
     (ToolName::Skill, skill::definition),
     (ToolName::ReadOutput, process::read_definition),
     (ToolName::StopProcess, process::stop_definition),
+    (ToolName::ReadTerminal, terminal::read_definition),
+    (ToolName::RunInTerminal, terminal::run_definition),
 ];
 
 /// What the model is offered for a turn.
@@ -110,6 +113,8 @@ pub fn execute_tool(
         ToolCall::WritePlan(args) => write_plan::write_plan(args),
         ToolCall::ReadOutput(args) => process::read_output(args, deps),
         ToolCall::StopProcess(args) => process::stop_process(args, deps),
+        ToolCall::ReadTerminal(args) => terminal::read_terminal(args, deps),
+        ToolCall::RunInTerminal(args) => terminal::run_in_terminal(scope, args, deps),
         ToolCall::Mcp(args) => mcp::mcp(args, deps),
     }
 }
@@ -122,7 +127,7 @@ mod definition_tests {
         DeleteDirectoryArgs, DeleteFileArgs, EditFileArgs, FileEdit, GitBlameArgs, GitDiffArgs, GitLogArgs,
         GrepArgs, ListFilesArgs, MoveArgs, ReadFileArgs, SemanticSearchArgs, SkillArgs, TodoArgs, WritePlanArgs, TodoUpdateStatus,
         WriteFileArgs,
-        CreateDirectoryArgs, ProcessArgs,
+        CreateDirectoryArgs, ProcessArgs, ReadTerminalArgs, RunInTerminalArgs,
     };
     use crate::services::ai_tools::parse::parse_tool_call;
     use std::collections::BTreeSet;
@@ -314,6 +319,14 @@ mod definition_tests {
             ),
             ToolName::ReadOutput => (r#"{"id":1}"#, vec![ToolCall::ReadOutput(ProcessArgs { id: Some(1) })]),
             ToolName::StopProcess => (r#"{"id":1}"#, vec![ToolCall::StopProcess(ProcessArgs { id: Some(1) })]),
+            ToolName::ReadTerminal => (
+                r#"{"id":"2","lines":40}"#,
+                vec![ToolCall::ReadTerminal(ReadTerminalArgs { id: Some(2), lines: Some(40) })],
+            ),
+            ToolName::RunInTerminal => (
+                r#"{"command":"npm run dev"}"#,
+                vec![ToolCall::RunInTerminal(RunInTerminalArgs { command: "npm run dev".into(), id: None })],
+            ),
             ToolName::Mcp => unreachable!("an MCP tool's schema is its server's; see built_in()"),
         }
     }

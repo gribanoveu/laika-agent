@@ -4,7 +4,7 @@ import { ProcessList } from "./ProcessList";
 import { useProcesses } from "../hooks/useProcesses";
 import { useTerminals } from "../hooks/useTerminals";
 import { useTerminalScreen } from "../hooks/useTerminalScreen";
-import { terminalTitle } from "../lib/terminal";
+import { terminalQuote, terminalTitle, type TerminalInfo } from "../lib/terminal";
 import "./TerminalPanel.css";
 
 type Props = {
@@ -12,15 +12,36 @@ type Props = {
   workspace: string | null;
   /** The background process a chat row asked to see; a new object each ask. */
   processFocus: { id: number } | null;
+  /** Puts text into the message being written. */
+  onAddToChat: (text: string) => void;
 };
 
 /** What the pane shows: one of the user's shells, or the agent's background processes. */
 type Shown = number | "processes";
 
-function TerminalView({ id }: { id: number }) {
+/** One shell's screen, and "Add to chat" over it while something is selected. */
+function TerminalView({ terminal, onAddToChat }: { terminal: TerminalInfo; onAddToChat: (text: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useTerminalScreen(id, ref);
-  return <div ref={ref} className="terminal-view" />;
+  const [selection, setSelection] = useState("");
+  const { clearSelection } = useTerminalScreen(terminal.id, ref, setSelection);
+  return (
+    <div className="terminal-screen">
+      <div ref={ref} className="terminal-view" />
+      {selection.trim() && (
+        <button
+          type="button"
+          className="terminal-quote"
+          onClick={() => {
+            onAddToChat(terminalQuote(terminal, selection));
+            clearSelection();
+            setSelection("");
+          }}
+        >
+          Add to chat
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -28,7 +49,7 @@ function TerminalView({ id }: { id: number }) {
  * background processes as the last tab. Opening the pane gives a shell, as a
  * terminal window does — once per folder, not again after the last is closed.
  */
-export function TerminalPanel({ active, workspace, processFocus }: Props) {
+export function TerminalPanel({ active, workspace, processFocus, onAddToChat }: Props) {
   const { processes, error: processError, stop } = useProcesses(active);
   const shells = useTerminals(active);
   const [picked, setPicked] = useState<Shown | null>(null);
@@ -46,8 +67,8 @@ export function TerminalPanel({ active, workspace, processFocus }: Props) {
 
   // A picked shell that was closed falls back to the newest one left.
   const newest = shells.terminals[shells.terminals.length - 1];
-  const shown: Shown =
-    picked === "processes" ? "processes" : (shells.terminals.find((t) => t.id === picked) ?? newest)?.id ?? "processes";
+  const drawn = picked === "processes" ? undefined : (shells.terminals.find((t) => t.id === picked) ?? newest);
+  const shown: Shown = drawn?.id ?? "processes";
   const running = processes.filter((p) => p.state.state === "running").length;
   const newShell = () => void shells.open().then((t) => t && setPicked(t.id));
 
@@ -97,12 +118,12 @@ export function TerminalPanel({ active, workspace, processFocus }: Props) {
         </button>
       </div>
       {shells.error && <div className="terminal-error">{shells.error}</div>}
-      {shown === "processes" ? (
+      {drawn ? (
+        <TerminalView key={drawn.id} terminal={drawn} onAddToChat={onAddToChat} />
+      ) : (
         <div className="terminal-processes">
           <ProcessList processes={processes} error={processError} onStop={stop} focus={processFocus} />
         </div>
-      ) : (
-        <TerminalView key={shown} id={shown} />
       )}
     </div>
   );

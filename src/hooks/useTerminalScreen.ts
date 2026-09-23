@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -48,9 +48,19 @@ function look(element: HTMLElement) {
 /**
  * Draws terminal `id` into `container`: what it wrote so far, then what it
  * writes; what is typed goes to its shell, and its size follows the element's.
- * Detached when it unmounts — the shell runs on in the backend.
+ * Detached when it unmounts — the shell runs on in the backend. What the user
+ * selects is told to `onSelection` ("" when nothing is).
  */
-export function useTerminalScreen(id: number, container: RefObject<HTMLDivElement | null>) {
+export function useTerminalScreen(
+  id: number,
+  container: RefObject<HTMLDivElement | null>,
+  onSelection: (text: string) => void,
+) {
+  const shown = useRef<Terminal | null>(null);
+  // The latest callback, without drawing the terminal again when it changes.
+  const selected = useRef(onSelection);
+  selected.current = onSelection;
+
   useEffect(() => {
     const element = container.current;
     if (!element) return;
@@ -59,8 +69,10 @@ export function useTerminalScreen(id: number, container: RefObject<HTMLDivElemen
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((_, uri) => void openUrl(uri)));
     term.open(element);
+    shown.current = term;
 
     const input = term.onData((data) => void terminalWrite(id, data));
+    const selection = term.onSelectionChange(() => selected.current(term.getSelection()));
     const resized = term.onResize(({ cols, rows }) => void terminalResize(id, cols, rows));
     // Hidden or not laid out yet, there is nothing to measure.
     const refit = () => {
@@ -97,11 +109,15 @@ export function useTerminalScreen(id: number, container: RefObject<HTMLDivElemen
     return () => {
       live = false;
       detach?.();
+      shown.current = null;
       input.dispose();
+      selection.dispose();
       resized.dispose();
       sized.disconnect();
       restyled.disconnect();
       term.dispose();
     };
   }, [id, container]);
+
+  return { clearSelection: useCallback(() => shown.current?.clearSelection(), []) };
 }

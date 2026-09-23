@@ -63,6 +63,16 @@ export async function terminalClose(id: number): Promise<void> {
   return invoke<void>("terminal_close", { id });
 }
 
+/**
+ * A selection from a terminal, as it goes into the message: which terminal,
+ * then the text in a fence longer than any run of backticks inside it.
+ */
+export function terminalQuote(terminal: TerminalInfo, selection: string): string {
+  const longest = Math.max(0, ...(selection.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `From my terminal (${terminal.shell} #${terminal.id}):\n${fence}\n${selection.trimEnd()}\n${fence}`;
+}
+
 export function terminalTitle(terminal: TerminalInfo): string {
   if (terminal.state.state === "running") return terminal.shell;
   return terminal.state.code === null ? `${terminal.shell} — ended` : `${terminal.shell} — exited ${terminal.state.code}`;
