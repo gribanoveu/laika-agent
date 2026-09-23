@@ -123,6 +123,9 @@ pub async fn workspace_open(
     if let Some(processes) = app.try_state::<Arc<Processes>>() {
         processes.stop_all();
     }
+    if let Some(terminals) = app.try_state::<Arc<crate::infra::terminal::Terminals>>() {
+        terminals.close_all();
+    }
 
     let shown = resolved.display().to_string();
     // Only a convenience for the next launch: a folder that opened stays open

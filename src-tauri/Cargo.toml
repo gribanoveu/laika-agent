@@ -73,6 +73,7 @@ tokenizers = { version = "0.21", default-features = false, features = ["fancy-re
 notify = "8"
 yaml_serde = "0.10"
 tree-sitter-bash = "0.25"
+portable-pty = "0.9.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -77,6 +77,10 @@ pub fn run() {
             app.manage(std::sync::Arc::new(infra::background::Processes::new(
                 commands::processes::process_event_sink(app.handle()),
             )));
+            // The user's own shells, in the Terminal tab.
+            app.manage(std::sync::Arc::new(infra::terminal::Terminals::new(
+                commands::terminal::terminal_event_sink(app.handle()),
+            )));
             let resources = app.path().resource_dir().ok();
             let model = infra::local_embeddings::LocalEmbeddings::new(
                 infra::local_embeddings::bundled_model_dir(resources.as_deref()),
@@ -137,6 +141,13 @@ pub fn run() {
             commands::hooks::hooks_config_save,
             commands::processes::processes_list,
             commands::processes::process_stop,
+            commands::terminal::terminal_open,
+            commands::terminal::terminal_list,
+            commands::terminal::terminal_attach,
+            commands::terminal::terminal_detach,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_close,
             commands::skills::skills_set_enabled,
             commands::skills::skills_set_source_enabled,
             commands::skills::rules_list,
@@ -156,6 +167,7 @@ pub fn run() {
                 use tauri::Manager;
                 app.state::<std::sync::Arc<services::mcp_servers::McpServers>>().stop_all();
                 app.state::<std::sync::Arc<infra::background::Processes>>().stop_all();
+                app.state::<std::sync::Arc<infra::terminal::Terminals>>().close_all();
             }
         });
 }
