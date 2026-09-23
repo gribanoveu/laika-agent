@@ -38,6 +38,26 @@
   --amber: #e0b35f;
   --purple: #b39bff;
 
+  /* The terminal's sixteen ANSI colours (xterm.js reads them as values).
+     The named ones follow the palette above; "black" has to show on the
+     panel, and "white" is dimmer than the text, as terminals draw it. */
+  --term-black: #4a4a55;
+  --term-red: var(--red);
+  --term-green: var(--green);
+  --term-yellow: var(--amber);
+  --term-blue: var(--accent);
+  --term-magenta: var(--purple);
+  --term-cyan: #5fc7d4;
+  --term-white: var(--text-dim);
+  --term-bright-black: var(--text-faint);
+  --term-bright-red: #f4a19b;
+  --term-bright-green: #8ae3b4;
+  --term-bright-yellow: #f0cc85;
+  --term-bright-blue: #92bdf0;
+  --term-bright-magenta: #cbb8ff;
+  --term-bright-cyan: #8adbe4;
+  --term-bright-white: var(--text);
+
   color-scheme: dark;
 }
 
@@ -64,6 +84,24 @@
   --red: #c2453d;
   --amber: #8c650f;
   --purple: #6146c9;
+
+  /* On a light panel "white" has to show too. */
+  --term-black: var(--text);
+  --term-red: var(--red);
+  --term-green: var(--green);
+  --term-yellow: var(--amber);
+  --term-blue: var(--accent);
+  --term-magenta: var(--purple);
+  --term-cyan: #1b7f8c;
+  --term-white: #a3a3ae;
+  --term-bright-black: var(--text-faint);
+  --term-bright-red: #d9574e;
+  --term-bright-green: #27a86d;
+  --term-bright-yellow: #a57a17;
+  --term-bright-blue: #3c82d0;
+  --term-bright-magenta: #7a5fe0;
+  --term-bright-cyan: #2296a5;
+  --term-bright-white: #c4c4ce;
 
   color-scheme: light;
 }

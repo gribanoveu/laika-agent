@@ -1,13 +1,17 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import type { ProcessView } from "../lib/chat";
+import type { TerminalInfo } from "../lib/terminal";
 
-// Opening another folder stops the background processes and would file a
-// running turn's chat in the wrong folder. The user is told before either.
+// Opening another folder stops the background processes, closes the user's
+// terminals and would file a running turn's chat in the wrong folder. The
+// user is told before any of it.
 
 let processes: ProcessView[] = [];
+let terminals: TerminalInfo[] = [];
 mock.module("@tauri-apps/api/core", () => ({
-  invoke: (command: string) => Promise.resolve(command === "processes_list" ? processes : null),
+  invoke: (command: string) =>
+    Promise.resolve(command === "processes_list" ? processes : command === "terminal_list" ? terminals : null),
   transformCallback: (callback: unknown) => callback,
 }));
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
@@ -16,6 +20,7 @@ afterAll(() => {
 });
 afterEach(() => {
   processes = [];
+  terminals = [];
 });
 
 const { useFolderSwitch } = await import("../hooks/useFolderSwitch");
@@ -49,6 +54,20 @@ describe("switching folders", () => {
     expect(blocked?.kind === "processes" && blocked.processes.map((p) => p.command)).toEqual(["bun run dev"]);
   });
 
+  test("an open shell asks too; one whose shell has ended does not", async () => {
+    terminals = [{ id: 1, shell: "zsh", state: { state: "exited", code: 0 } }];
+    let went = 0;
+    const { result } = renderHook(() => useFolderSwitch(false));
+    await act(() => result.current.guard(() => went++));
+    expect(went).toBe(1);
+
+    terminals.push({ id: 2, shell: "zsh", state: { state: "running" } });
+    await act(() => result.current.guard(() => went++));
+    expect(went).toBe(1);
+    const blocked = result.current.blocked;
+    expect(blocked?.kind === "processes" && blocked.terminals.map((t) => t.id)).toEqual([2]);
+  });
+
   /// The turn's chat is saved into whatever folder is open when it ends.
   test("while the agent works it is refused, whatever runs", async () => {
     let went = 0;
@@ -63,11 +82,17 @@ describe("the dialog", () => {
   test("switches only when the user agrees to stop the processes", () => {
     let went = 0;
     let closed = 0;
-    const blocked = { kind: "processes" as const, processes: [proc(1, "bun run dev", { state: "running" })], go: () => went++ };
+    const blocked = {
+      kind: "processes" as const,
+      processes: [proc(1, "bun run dev", { state: "running" })],
+      terminals: [{ id: 3, shell: "zsh", state: { state: "running" as const } }],
+      go: () => went++,
+    };
     const { unmount } = render(
       <FolderSwitchDialog blocked={blocked} folder="/work/laika" onStopAgent={() => {}} onClose={() => closed++} />,
     );
     expect(screen.getByText("bun run dev")).toBeTruthy();
+    expect(screen.getByText("terminal: zsh")).toBeTruthy();
     fireEvent.click(screen.getByText("Cancel"));
     expect(went).toBe(0);
     fireEvent.click(screen.getByText("Stop them and switch"));

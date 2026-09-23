@@ -12,9 +12,8 @@ import {
 import { ChangesPanel } from "./ChangesPanel";
 import { FilesPanel } from "./FilesPanel";
 import { ItemList } from "./ItemList";
-import { ProcessList } from "./ProcessList";
+import { TerminalPanel } from "./TerminalPanel";
 import { PlanPanel } from "./PlanPanel";
-import { useProcesses } from "../hooks/useProcesses";
 import { useRules } from "../hooks/useRules";
 import { useSkills } from "../hooks/useSkills";
 import type { HooksView, McpServerState, McpView, RuleListItem, SkillListItem, SkillsView, Task } from "../lib/chat";
@@ -339,24 +338,11 @@ function RulesPane({ active, workspace }: PaneContext) {
   return <RulesList rules={rules.rules} error={rules.error} onToggle={rules.setEnabled} />;
 }
 
-// ─── Files, Terminal ───────────────────────────────────────────────────────
+// ─── Files ─────────────────────────────────────────────────────────────────
 
 // Filled by its own command wrapper once that command exists.
 function FilesPane({ active, workspace, chatBlocks }: PaneContext) {
   return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} />;
-}
-
-function TerminalPane({ active, processFocus }: PaneContext) {
-  const { processes, error, stop } = useProcesses(active);
-  return (
-    <div className="panel-section">
-      <div className="section-label">
-        <span>Background processes</span>
-        <span>{processes.filter((p) => p.state.state === "running").length} running</span>
-      </div>
-      <ProcessList processes={processes} error={error} onStop={stop} focus={processFocus} />
-    </div>
-  );
 }
 
 // ─── The registry ──────────────────────────────────────────────────────────
@@ -373,5 +359,5 @@ export const PANES: PaneDef[] = [
   { id: "skills", label: "Skills", icon: Sparkles, dock: "right", Component: SkillsPane },
   { id: "rules", label: "Rules", icon: BookText, dock: "right", Component: RulesPane },
   { id: "files", label: "Files", icon: FolderClosed, dock: "right", Component: FilesPane },
-  { id: "terminal", label: "Terminal", icon: SquareTerminal, dock: "bottom", Component: TerminalPane },
+  { id: "terminal", label: "Terminal", icon: SquareTerminal, dock: "bottom", Component: TerminalPanel },
 ];

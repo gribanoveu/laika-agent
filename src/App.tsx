@@ -155,6 +155,21 @@ export default function App() {
   const openTab = (next: AsideTab) =>
     setDocks(openPane(docks, next, PANES.find((p) => p.id === next)?.dock ?? "right"));
 
+  // Ctrl+` shows and hides the Terminal, as in VS Code. Caught before the
+  // terminal itself sees it, which would send the shell a NUL. Focus leaves
+  // the composer, so the shell that opens takes the typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.code !== "Backquote") return;
+      e.preventDefault();
+      e.stopPropagation();
+      (document.activeElement as HTMLElement | null)?.blur();
+      setDocks(toggleTerminal({ top: tab, topHidden: asideHidden, bottom: bottomTab }));
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [tab, asideHidden, bottomTab]);
+
   // A plan the agent has just finished writing is shown, once, when its turn
   // ends — not mid-turn, while it is still filling in the checklist.
   useEffect(() => {

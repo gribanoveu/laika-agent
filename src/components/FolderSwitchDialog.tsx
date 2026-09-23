@@ -17,7 +17,7 @@ export function FolderSwitchDialog({ blocked, folder, onStopAgent, onClose }: Pr
 
   return (
     <Modal
-      title={agent ? "The agent is still working" : "Stop running processes?"}
+      title={agent ? "The agent is still working" : "Stop what runs here?"}
       open={blocked !== null}
       onClose={onClose}
       footer={
@@ -52,7 +52,10 @@ export function FolderSwitchDialog({ blocked, folder, onStopAgent, onClose }: Pr
             </p>
             <ul className="switch-processes">
               {blocked.processes.map((p) => (
-                <li key={p.id}>{p.command}</li>
+                <li key={`p${p.id}`}>{p.command}</li>
+              ))}
+              {blocked.terminals.map((t) => (
+                <li key={`t${t.id}`}>terminal: {t.shell}</li>
               ))}
             </ul>
           </>
