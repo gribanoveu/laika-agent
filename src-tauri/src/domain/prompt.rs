@@ -78,7 +78,7 @@ Do not commit, push, merge, rebase, reset, clean, delete branches, rewrite histo
 
 ## The checklist
 
-`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, mark each one as it finishes, and do not open items for things you are merely suggesting. The list holds no state of its own: every call is given the whole list back, so send the whole list.
+`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, mark each one as it finishes, and do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. The list as it stands, ids and notes included, is under "Checklist" at the end of every request — there is nothing to read back, and it is still there after older history is summarized.
 
 ## Evidence
 
@@ -205,6 +205,30 @@ pub fn checklist_message(todos: &[Task]) -> Option<LlmMessage> {
     todo_block(todos).map(LlmMessage::system)
 }
 
+/// How to read a checklist row, said wherever the rows are shown.
+pub const CHECKLIST_LEGEND: &str = "[>] in progress, [x] done, [-] cancelled; ids first";
+
+/// One row per task — `[>] t2 Fix the cut`, `[x] t1 Read — found it` — the
+/// same in the prompt and in `todo`'s own result. The id has to be in both:
+/// once older history is summarized, the results that carried it are gone,
+/// and a task other than the current one could no longer be named.
+pub fn checklist_rows(todos: &[Task]) -> String {
+    todos
+        .iter()
+        .map(|task| {
+            let mark = match task.status {
+                TodoStatus::Pending => "[ ]",
+                TodoStatus::InProgress => "[>]",
+                TodoStatus::Completed => "[x]",
+                TodoStatus::Cancelled => "[-]",
+            };
+            let note = task.note.as_deref().map(|n| format!(" — {n}")).unwrap_or_default();
+            format!("{mark} {} {}{note}", task.id, task.title)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The checklist as it stands, or nothing at all.
 ///
 /// `None` rather than an empty heading: a "TODO:" with no items under it reads
@@ -213,19 +237,7 @@ pub fn todo_block(todos: &[Task]) -> Option<String> {
     if todos.is_empty() {
         return None;
     }
-    let lines: Vec<String> = todos
-        .iter()
-        .map(|task| match task.status {
-            TodoStatus::Completed => format!("[x] {}", task.title),
-            TodoStatus::InProgress => format!("[>] {}   <- in progress", task.title),
-            TodoStatus::Pending => format!("[ ] {}", task.title),
-            TodoStatus::Cancelled => match &task.note {
-                Some(note) => format!("[-] {} (cancelled: {note})", task.title),
-                None => format!("[-] {} (cancelled)", task.title),
-            },
-        })
-        .collect();
-    Some(format!("## Checklist\n\n{}", lines.join("\n")))
+    Some(format!("## Checklist\n\n({CHECKLIST_LEGEND})\n{}", checklist_rows(todos)))
 }
 
 /// Past this many characters of descriptions, the rest of the catalog is
@@ -513,22 +525,32 @@ mod tests {
     }
 
     #[test]
-    fn a_checklist_carries_every_status_and_a_cancelled_reason() {
+    fn a_checklist_carries_every_status_the_ids_and_the_notes() {
         let todos = vec![
-            task("read the parser", TodoStatus::Completed),
-            task("fix the cut", TodoStatus::InProgress),
-            task("write a test", TodoStatus::Pending),
-            Task {
-                note: Some("no longer needed".to_string()),
-                ..task("rename the module", TodoStatus::Cancelled)
-            },
+            Task { id: "t1".into(), note: Some("found it".into()), ..task("read the parser", TodoStatus::Completed) },
+            Task { id: "t2".into(), ..task("fix the cut", TodoStatus::InProgress) },
+            Task { id: "t3".into(), ..task("write a test", TodoStatus::Pending) },
+            Task { id: "t4".into(), note: Some("no longer needed".into()), ..task("rename the module", TodoStatus::Cancelled) },
         ];
         let text = todo_block(&todos).expect("a list");
 
-        assert!(text.contains("[x] read the parser"));
-        assert!(text.contains("[>] fix the cut"));
-        assert!(text.contains("[ ] write a test"));
-        assert!(text.contains("[-] rename the module (cancelled: no longer needed)"));
+        // The ids are what `todo update` takes: without them here, a summarized
+        // history leaves no way to name any task but the current one.
+        assert!(text.contains("[x] t1 read the parser — found it"), "{text}");
+        assert!(text.contains("[>] t2 fix the cut"), "{text}");
+        assert!(text.contains("[ ] t3 write a test"), "{text}");
+        assert!(text.contains("[-] t4 rename the module — no longer needed"), "{text}");
+    }
+
+    /// `todo write` appends. A rule saying "send the whole list" made every
+    /// write that followed it a duplicate of the list.
+    #[test]
+    fn the_checklist_rule_says_write_appends() {
+        let rule = INSTRUCTIONS.split("## The checklist").nth(1).expect("the section");
+        let rule = rule.split("\n## ").next().unwrap_or_default();
+        assert!(rule.contains("send only the tasks that are new"), "{rule}");
+        assert!(!rule.contains("send the whole list"), "{rule}");
+        assert!(rule.contains("ids and notes included"), "{rule}");
     }
 
     /// An empty heading reads as a list somebody emptied, and invites the

@@ -15,7 +15,8 @@ use std::collections::BTreeMap;
 use crate::domain::background::ProcessOutput;
 use crate::domain::code_search::{CodeMatch, SearchMeta};
 use crate::domain::command_exec::CommandOutput;
-use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, LogCommit, GrepMatch, OutlineEntry, Task, TodoStatus, ToolResult};
+use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, LogCommit, GrepMatch, OutlineEntry, Task, ToolResult};
+use crate::domain::prompt::{checklist_rows, CHECKLIST_LEGEND};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::ai_tools::tools::git::MAX_DIFF_CHARS;
 use crate::services::text_diff::render_for_model;
@@ -192,20 +193,7 @@ fn todo(tasks: &[Task]) -> String {
     if tasks.is_empty() {
         return "The checklist is empty.".to_string();
     }
-    let rows: Vec<String> = tasks
-        .iter()
-        .map(|t| {
-            let mark = match t.status {
-                TodoStatus::Pending => "[ ]",
-                TodoStatus::InProgress => "[>]",
-                TodoStatus::Completed => "[x]",
-                TodoStatus::Cancelled => "[-]",
-            };
-            let note = t.note.as_deref().map(|n| format!(" — {n}")).unwrap_or_default();
-            format!("{mark} {} {}{note}", t.id, t.title)
-        })
-        .collect();
-    format!("Checklist ([>] in progress, [x] done, [-] cancelled; ids first):\n{}", rows.join("\n"))
+    format!("Checklist ({CHECKLIST_LEGEND}):\n{}", checklist_rows(tasks))
 }
 
 fn git_status(
@@ -395,6 +383,7 @@ fn skill(name: &str, instructions: &str, files: &[String], from: &str) -> String
 mod tests {
     use super::*;
     use crate::domain::background::{ProcessInfo, ProcessState};
+    use crate::domain::tools::TodoStatus;
     use crate::domain::tools::FileDiffStats;
 
     fn hit(path: &str, line: u32, text: &str, before: &[&str], after: &[&str]) -> GrepMatch {
@@ -629,6 +618,17 @@ mod tests {
             shown.ends_with("\n[x] 1 Read — found it\n[>] 2 Fix\n[ ] 3 Test\n[-] 4 Docs — not asked"),
             "{shown}"
         );
+    }
+
+    /// The prompt's checklist and this result are one format: an id the model
+    /// read in either is the id `todo update` takes.
+    #[test]
+    fn a_checklist_reads_the_same_here_as_in_the_prompt() {
+        let tasks = vec![Task { id: "t1".into(), title: "Read".into(), status: TodoStatus::InProgress, note: None }];
+        let shown = for_model(&ToolResult::Todo { tasks: tasks.clone() });
+        let prompt = crate::domain::prompt::todo_block(&tasks).expect("a list");
+        assert!(shown.ends_with("[>] t1 Read"), "{shown}");
+        assert!(prompt.ends_with("[>] t1 Read"), "{prompt}");
     }
 
     #[test]
