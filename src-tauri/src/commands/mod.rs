@@ -15,3 +15,4 @@ pub mod tool_log;
 pub mod mcp;
 pub mod hooks;
 pub mod processes;
+pub mod git;

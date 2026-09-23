@@ -23,3 +23,4 @@ pub mod mcp;
 pub mod hooks;
 pub mod background;
 pub mod command_risk;
+pub mod git_changes;
