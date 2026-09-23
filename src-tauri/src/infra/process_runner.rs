@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use crate::domain::command_exec::{
     CommandError, CommandEvent, CommandOutput, CommandRequest, CommandSink, OutputStream,
-    MAX_OUTPUT_CHARS, Shell, truncate_output,
+    MAX_OUTPUT_CHARS, Shell, ShellFound, truncate_output,
 };
 
 /// How often the child is checked while waiting. Short enough that a timeout
@@ -181,6 +181,33 @@ fn collect(
     })
 }
 
+/// Asks the shell what it really is — see `domain::command_exec::describe_shell`.
+/// `None` when it would not say: it failed to start, or it has no `-c` to ask
+/// with (`cmd.exe`).
+#[cfg(unix)]
+pub fn probe_shell(shell: &Shell) -> Option<ShellFound> {
+    // Not through `run`: that would resolve the login `PATH` first — a login
+    // shell, seconds on a heavy `.zshrc` — and `printf` is a builtin.
+    let out = Command::new(&shell.program)
+        .args(&shell.args)
+        .arg(r#"printf '%s\n%s\n' "${BASH_VERSION:-}" "${ZSH_VERSION:-}""#)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut lines = stdout.lines().map(str::trim);
+    let mut next = || lines.next().filter(|v| !v.is_empty()).map(String::from);
+    Some(ShellFound { bash: next(), zsh: next() })
+}
+
+#[cfg(not(unix))]
+pub fn probe_shell(_shell: &Shell) -> Option<ShellFound> {
+    None
+}
+
 #[cfg(unix)]
 pub(crate) fn set_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
@@ -238,6 +265,32 @@ mod tests {
 
     /// What a hook is given: the event on stdin, the project in its env.
     #[cfg(unix)]
+    /// What the probe hears is each shell's own variables.
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_asks_the_shell_what_it_is() {
+        let bash = Shell { program: "/bin/bash".into(), args: vec!["-c".into()] };
+        let heard = probe_shell(&bash).expect("bash answers");
+        assert!(heard.bash.is_some_and(|v| v.chars().next().is_some_and(|c| c.is_ascii_digit())));
+        assert_eq!(heard.zsh, None);
+        if Path::new("/bin/zsh").exists() {
+            let zsh = probe_shell(&Shell { program: "/bin/zsh".into(), args: vec!["-c".into()] }).expect("zsh answers");
+            assert!(zsh.zsh.is_some() && zsh.bash.is_none(), "{zsh:?}");
+        }
+        assert!(probe_shell(&Shell::default()).is_some(), "sh answers, whatever it is");
+    }
+
+    /// No answer, no claim.
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_that_does_not_answer_is_not_described() {
+        let missing = Shell { program: "/no/such/shell".into(), args: vec!["-c".into()] };
+        assert_eq!(probe_shell(&missing), None);
+        // Runs `exit 3`; the probe's line is only its `$0`.
+        let failing = Shell { program: "/bin/sh".into(), args: vec!["-c".into(), "exit 3".into()] };
+        assert_eq!(probe_shell(&failing), None);
+    }
+
     #[test]
     fn input_and_environment_reach_the_command() {
         let dir = temp_dir("run-input");

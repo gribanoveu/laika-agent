@@ -73,6 +73,40 @@ impl CommandRequest {
     }
 }
 
+/// What a probe of the shell found: the version variables bash and zsh set —
+/// which they still set when they stand in for `sh`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShellFound {
+    pub bash: Option<String>,
+    pub zsh: Option<String>,
+}
+
+/// The shell as the model is told it, each turn.
+///
+/// `/bin/sh` is not one program. On macOS it is bash 3.2 in sh mode, which
+/// runs `[[ ]]` and arrays without a word; on Debian and Ubuntu — most Linux
+/// CI — it is dash, which refuses them. A script the agent checked by running
+/// it here proves nothing about the other, and saying "POSIX sh" while the
+/// shell accepts bash is how that goes unnoticed. So the line names what the
+/// shell really is. Only for `sh`: a shell set by name is what it says, and
+/// one that would not answer the probe (`cmd.exe`) is named and nothing more.
+pub fn describe_shell(program: &str, found: Option<&ShellFound>) -> String {
+    let is_sh = std::path::Path::new(program).file_name().is_some_and(|name| name == "sh");
+    let Some(found) = found.filter(|_| is_sh) else { return program.to_string() };
+    // `3.2.57(1)-release` is `3.2.57` to anyone reading it.
+    let version = |v: &str| v.split('(').next().unwrap_or(v).to_string();
+    let standing_in = match (&found.bash, &found.zsh) {
+        (Some(v), _) => format!("bash {}", version(v)),
+        (None, Some(v)) => format!("zsh {}", version(v)),
+        (None, None) => return format!("{program} — a plain POSIX sh: bash-only syntax fails here"),
+    };
+    format!(
+        "{program} — really {standing_in} in sh mode: bash-only syntax ([[ ]], arrays, `source`) runs here \
+         but fails where /bin/sh is dash (Debian, Ubuntu, most Linux CI). Write anything that will run \
+         elsewhere — a script, a CI step — in POSIX sh, and check it with `shellcheck -s sh`, not by running it here"
+    )
+}
+
 /// Which shell runs the command line, and how it is told to.
 ///
 /// A setting rather than a search of `PATH`, for the reason in the module
@@ -273,6 +307,38 @@ const PARTIAL_LINE_MIN: usize = 80;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn found(bash: Option<&str>, zsh: Option<&str>) -> ShellFound {
+        ShellFound { bash: bash.map(Into::into), zsh: zsh.map(Into::into) }
+    }
+
+    /// macOS: `sh` is bash, which lets bash through — the model is told,
+    /// and told what that does not prove.
+    #[test]
+    fn an_sh_that_is_bash_says_so_and_what_it_does_not_prove() {
+        let line = describe_shell("/bin/sh", Some(&found(Some("3.2.57(1)-release"), None)));
+        assert!(line.starts_with("/bin/sh — really bash 3.2.57 in sh mode:"), "{line}");
+        assert!(line.contains("fails where /bin/sh is dash") && line.contains("shellcheck -s sh"), "{line}");
+        let zsh = describe_shell("/bin/sh", Some(&found(None, Some("5.9"))));
+        assert!(zsh.starts_with("/bin/sh — really zsh 5.9 in sh mode:"), "{zsh}");
+    }
+
+    #[test]
+    fn a_plain_sh_is_named_as_one() {
+        assert_eq!(
+            describe_shell("/bin/sh", Some(&found(None, None))),
+            "/bin/sh — a plain POSIX sh: bash-only syntax fails here"
+        );
+    }
+
+    /// Nothing is claimed that the probe did not find, or about a shell
+    /// set by name.
+    #[test]
+    fn an_unprobed_or_named_shell_is_only_named() {
+        assert_eq!(describe_shell("/bin/sh", None), "/bin/sh");
+        assert_eq!(describe_shell("/bin/bash", Some(&found(Some("5.2"), None))), "/bin/bash");
+        assert_eq!(describe_shell("cmd.exe", None), "cmd.exe");
+    }
 
     #[test]
     fn a_carriage_return_writes_over_the_line_as_a_terminal_would() {

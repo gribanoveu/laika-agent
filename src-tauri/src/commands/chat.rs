@@ -495,6 +495,10 @@ where
         let sleep = |d: Duration| std::thread::sleep(d);
         let take_steering = || state.steering.take();
         let shell = Shell::default();
+        let shell_described = crate::domain::command_exec::describe_shell(
+            &shell.program,
+            crate::infra::process_runner::probe_shell(&shell).as_ref(),
+        );
         // A skills folder that cannot be read costs the turn its skills, not
         // the turn itself: nothing the user asked for depends on it existing.
         let skills = crate::services::skills::enabled_catalog(Some(&workspace)).unwrap_or_default();
@@ -522,6 +526,7 @@ where
             sleep: &sleep,
             take_steering: &take_steering,
             shell: &shell,
+            shell_described: &shell_described,
             search,
             skills: &skills,
             rules: &rules,

@@ -167,6 +167,8 @@ pub struct Turn<'a> {
     /// Which shell runs a command line. A setting, not a search of `PATH` —
     /// see `domain::command_exec`.
     pub shell: &'a Shell,
+    /// How the prompt names it — `domain::command_exec::describe_shell`.
+    pub shell_described: &'a str,
     /// Takes whatever the user has typed since it was last called. Draining
     /// rather than reading is deliberate: a note handed to the model must
     /// leave the queue in the same step, or a round that is retried or
@@ -836,7 +838,7 @@ fn request_messages(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<
     let context = prompt::TurnContext {
         mode: turn.mode,
         workspace: turn.scope.root(),
-        shell: &turn.shell.program,
+        shell: turn.shell_described,
         today: &Local::now().format("%e %B %Y").to_string(),
         unattended: turn.approval.skip_all,
         skills: turn.skills,
@@ -1252,6 +1254,7 @@ mod tests {
         hooks: Hooks,
         processes: Option<Arc<dyn BackgroundProcesses>>,
         terminals: Option<Arc<dyn crate::domain::terminal::UserTerminals>>,
+        shell_described: String,
     }
 
     fn harness(label: &str, steps: Vec<Step>) -> Harness {
@@ -1294,6 +1297,7 @@ mod tests {
             hooks: Hooks::default(),
             processes: None,
             terminals: None,
+            shell_described: "/bin/sh".to_string(),
         }
     }
 
@@ -1334,6 +1338,7 @@ mod tests {
                 take_steering: &take_steering,
                 search: self.search.clone(),
                 shell: &shell,
+                shell_described: &self.shell_described,
                 skills: &self.skills,
                 rules: &self.rules,
                 log_call: &log_call,
@@ -1673,6 +1678,16 @@ mod tests {
             |h: &Harness| facts_of(&h.provider.requests()[0]).contains("approved this turn in advance");
         assert!(watched(&unattended));
         assert!(!watched(&attended));
+    }
+
+    /// What the shell really is, as the command layer found it, is what the
+    /// model reads — not the bare path.
+    #[test]
+    fn the_shell_reaches_the_prompt_as_described() {
+        let mut h = harness("prompt-shell", vec![text("done")]);
+        h.shell_described = "/bin/sh — really bash 3.2.57 in sh mode".to_string();
+        h.run(|turn| stream(turn, vec![LlmMessage::user("hi")], vec![])).expect("finishes");
+        assert!(facts_of(&h.provider.requests()[0]).contains("Shell for commands: /bin/sh — really bash 3.2.57 in sh mode"));
     }
 
     /// Half the gate: a tool the mode does not offer is not in the request.
