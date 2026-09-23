@@ -9,15 +9,9 @@
   padding: 24px 28px;
 }
 
-.chat-empty-ico {
-  width: 46px;
-  height: 46px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  background: var(--bg-panel-soft);
-  border: 1px solid var(--border-soft);
-  color: var(--text-dim);
+.chat-empty-logo {
+  width: 112px;
+  height: 112px;
   margin-bottom: 2px;
 }
 

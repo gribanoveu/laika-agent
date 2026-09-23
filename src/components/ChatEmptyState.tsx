@@ -1,23 +1,20 @@
-import { FolderGit2, MessageSquarePlus } from "lucide-react";
+import { FolderGit2 } from "lucide-react";
+import logo from "../assets/laika-logo.png";
 import "./ChatEmptyState.css";
 
 type Props = {
   /** The open folder's display path, or `null` when nothing is open. */
   workspace: string | null;
   onOpenRepo: () => void;
-  onNewChat: () => void;
 };
 
 /** Fills the thread while there is nothing to show: no workspace, or no messages. */
-export function ChatEmptyState({ workspace, onOpenRepo, onNewChat }: Props) {
-  const Icon = workspace ? MessageSquarePlus : FolderGit2;
+export function ChatEmptyState({ workspace, onOpenRepo }: Props) {
   const name = workspace?.split("/").filter(Boolean).pop() ?? "";
 
   return (
     <div className="chat-empty">
-      <span className="chat-empty-ico">
-        <Icon size={22} />
-      </span>
+      <img className="chat-empty-logo" src={logo} alt="" />
       <h2 className="chat-empty-title">
         {workspace ? "Start the conversation" : "Nothing is open"}
       </h2>
@@ -26,18 +23,15 @@ export function ChatEmptyState({ workspace, onOpenRepo, onNewChat }: Props) {
           ? `Describe a task and the agent works through ${name}, showing every tool call as it goes.`
           : "Open a folder to give the agent a workspace. It reads and writes inside that folder; a command it runs is not confined to it, which is what the approval prompts are for."}
       </p>
-      <div className="chat-empty-actions">
-        {!workspace && (
+      {/* No "New chat" here: this already is one. */}
+      {!workspace && (
+        <div className="chat-empty-actions">
           <button className="btn btn-primary" type="button" onClick={onOpenRepo}>
             <FolderGit2 size={13} />
             Open folder…
           </button>
-        )}
-        <button className="btn btn-ghost" type="button" onClick={onNewChat}>
-          <MessageSquarePlus size={13} />
-          New chat
-        </button>
-      </div>
+        </div>
+      )}
       <p className="chat-empty-hint">
         <kbd>Enter</kbd> to send
         <span className="sep">·</span>

@@ -24,7 +24,6 @@ const panel = (
       turn={turn}
       onDecide={onDecide}
       onOpenRepo={() => {}}
-      onNewChat={() => {}}
       onImplement={over.onImplement}
     />,
   );
@@ -90,6 +89,8 @@ describe("grouping", () => {
   test("with nothing said yet the empty state fills the thread", () => {
     panel(state([]));
     expect(screen.getByText("Start the conversation")).toBeDefined();
+    // It already is a new chat: offering another one does nothing.
+    expect(screen.queryByRole("button", { name: /New chat/ })).toBeNull();
   });
 });
 
@@ -340,7 +341,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
       />,
     );
     expect(screen.getByRole("heading", { name: "Fix the tax rounding" })).toBeTruthy();
@@ -355,7 +355,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onToggleAside={() => toggled++}
       />,
     );
@@ -368,7 +367,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         asideOpen
         onToggleAside={() => toggled++}
       />,
@@ -384,7 +382,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onOpenPanel={(tab) => opened.push(tab)}
       />,
     );
@@ -403,7 +400,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onOpenPanel={() => {}}
         terminalOpen
         onToggleTerminal={() => toggled++}
@@ -426,7 +422,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onExport={() => exported++}
       />,
     );
@@ -446,7 +441,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onExport={() => {}}
       />,
     );
@@ -461,7 +455,6 @@ describe("the header", () => {
         turn={state([])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
       />,
     );
     expect(screen.queryByTitle("More")).toBeNull();
@@ -501,7 +494,6 @@ describe("branching from a message", () => {
         turn={state(blocks, { status: "done" })}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         branchable={branchable}
         onBranch={onBranch}
       />,
@@ -615,7 +607,6 @@ describe("a background process started from the chat", () => {
         turn={state([started])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onOpenProcess={(id) => opened.push(id)}
       />,
     );
@@ -647,7 +638,6 @@ describe("a background process that ended", () => {
         turn={state([ended(101)])}
         onDecide={() => {}}
         onOpenRepo={() => {}}
-        onNewChat={() => {}}
         onOpenProcess={(id) => opened.push(id)}
       />,
     );

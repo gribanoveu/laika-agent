@@ -313,7 +313,6 @@ export default function App() {
             turn={agent.turn}
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
-            onNewChat={newChat}
             asideOpen={changesShown(docks)}
             onToggleAside={() => setDocks(toggleChanges(docks))}
             terminalOpen={bottomTab === "terminal"}

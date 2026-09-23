@@ -443,7 +443,6 @@ type Props = {
   turn: TurnState;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
   onOpenRepo: () => void;
-  onNewChat: () => void;
   /** Present while the conversation is in Plan mode: hands the plan to Agent mode. */
   onImplement?: () => void;
   /** Opens the Plan tab, where the plan is read and edited before handing it over. */
@@ -467,7 +466,6 @@ export function ChatPanel({
   turn,
   onDecide,
   onOpenRepo,
-  onNewChat,
   onImplement,
   onOpenPlan,
   onOpenProcess,
@@ -556,7 +554,7 @@ export function ChatPanel({
 
       <div ref={scrollRef} className={`thread chat-text${groups.length === 0 ? " thread-empty" : ""}`}>
         {groups.length === 0 ? (
-          <ChatEmptyState workspace={workspace} onOpenRepo={onOpenRepo} onNewChat={onNewChat} />
+          <ChatEmptyState workspace={workspace} onOpenRepo={onOpenRepo} />
         ) : (
           <div ref={contentRef}>
             {groups.map((turnGroup, index) => (
