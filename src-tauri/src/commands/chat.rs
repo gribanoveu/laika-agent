@@ -107,6 +107,7 @@ pub async fn workspace_open(
     app: AppHandle,
     state: State<'_, Arc<AgentState>>,
     index: State<'_, Arc<WorkspaceIndex>>,
+    git_watch: State<'_, super::git::GitWatch>,
 ) -> Result<String, String> {
     let resolved = PathBuf::from(&path)
         .canonicalize()
@@ -129,6 +130,7 @@ pub async fn workspace_open(
     if let Err(e) = crate::infra::recent_workspaces::record(&shown) {
         eprintln!("recent folders not saved: {e}");
     }
+    super::git::watch_git(&app, &git_watch, &resolved, shown.clone());
     let index = Arc::clone(&index);
     let sink = index_event_sink(&app, shown.clone());
     // Reported through the sink; see above.

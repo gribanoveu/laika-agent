@@ -7,6 +7,8 @@ import "./ChangesPanel.css";
 type Props = {
   /** On screen: the status is read only while it is. */
   active: boolean;
+  /** The open folder, as the backend's events name it. */
+  workspace: string | null;
   onNotify: (msg: string) => void;
   /** The commit message, held above the panel: it outlives the panel being closed or moved. */
   message: string;
@@ -54,8 +56,8 @@ function StageRow({
   );
 }
 
-export function ChangesPanel({ active, onNotify, message, onMessage }: Props) {
-  const { unstaged, staged, error, stage, unstage, commit } = useStaging(active);
+export function ChangesPanel({ active, workspace, onNotify, message, onMessage }: Props) {
+  const { unstaged, staged, error, stage, unstage, commit } = useStaging(active, workspace);
   const [committing, setCommitting] = useState(false);
 
   const canCommit = staged.length > 0 && message.trim().length > 0 && !committing;

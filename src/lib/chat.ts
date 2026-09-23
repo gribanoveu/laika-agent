@@ -611,6 +611,17 @@ export function processStatus(state: ProcessState): string {
 export type ChangedFile = { path: string; add: number; del: number };
 export type WorkingChanges = { staged: ChangedFile[]; unstaged: ChangedFile[] };
 
+/**
+ * The open folder's repository changed outside the tree — a `git add` or a
+ * commit made elsewhere. Pinned on the Rust side in `commands/git.rs`.
+ */
+export const GIT_EVENT = "workspace-git:changed";
+
+export async function onGitChanged(handler: (root: string) => void): Promise<UnlistenFn> {
+  if (!inTauri()) return () => {};
+  return listen<{ root: string }>(GIT_EVENT, ({ payload }) => handler(payload.root));
+}
+
 export async function gitChanges(): Promise<WorkingChanges> {
   requireBackend();
   return invoke<WorkingChanges>("git_changes");

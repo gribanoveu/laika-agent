@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { gitChanges, gitCommit, gitStage, gitUnstage, type WorkingChanges } from "../lib/chat";
-
-/**
- * How often the open tab reads the status again: the agent and the user's
- * editor change files without telling it.
- */
-// ponytail: a status per tick; a large repository pays it every 2s while the
-// tab is open — the file watcher's events if that shows.
-const POLL_MS = 2000;
+import {
+  gitChanges,
+  gitCommit,
+  gitStage,
+  gitUnstage,
+  onGitChanged,
+  onIndexEvent,
+  type WorkingChanges,
+} from "../lib/chat";
 
 const none: WorkingChanges = { staged: [], unstaged: [] };
 
-/** The open folder's staged and unstaged files, read while the Changes tab is on screen. */
-export function useStaging(visible: boolean) {
+/**
+ * The open folder's staged and unstaged files, read while the Changes tab is
+ * on screen: when it opens, after each of its own actions, and when the
+ * backend says the folder changed — an edit to the tree starts an index sync,
+ * and a change to `.git` has its own event.
+ */
+export function useStaging(visible: boolean, workspace: string | null) {
   const [changes, setChanges] = useState<WorkingChanges>(none);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,9 +39,16 @@ export function useStaging(visible: boolean) {
   useEffect(() => {
     if (!visible) return;
     void load();
-    const timer = setInterval(load, POLL_MS);
-    return () => clearInterval(timer);
-  }, [visible, load]);
+    const stops: (() => void)[] = [];
+    let live = true;
+    const keep = (stop: () => void) => (live ? stops.push(stop) : stop());
+    onIndexEvent((event) => event.root === workspace && event.kind === "syncStarted" && void load()).then(keep);
+    onGitChanged((root) => root === workspace && void load()).then(keep);
+    return () => {
+      live = false;
+      stops.forEach((stop) => stop());
+    };
+  }, [visible, workspace, load]);
 
   // Every action reads the status back rather than guessing it: staging a
   // file with edits on both sides, say, leaves it in one list, not two.

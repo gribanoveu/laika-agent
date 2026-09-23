@@ -378,7 +378,7 @@ function TerminalPane({ active }: PaneContext) {
 // names a pane. `dock` is where the menu opens it; each dock shows one pane. There is no tab strip: eight icons in a 300px column were
 // unreadable, and only one of them is opened often.
 export const PANES: PaneDef[] = [
-  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, onNotify, commitDraft }) => <ChangesPanel active={active} onNotify={onNotify} {...commitDraft} /> },
+  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },

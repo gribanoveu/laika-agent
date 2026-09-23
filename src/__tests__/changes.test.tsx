@@ -30,6 +30,17 @@ mock.module("@tauri-apps/api/core", () => ({
   transformCallback: (callback: unknown) => callback,
 }));
 
+/** The backend's events, by channel: what each listener would hear. */
+const listeners = new Map<string, Set<(message: { payload: unknown }) => void>>();
+const emit = (channel: string, payload: unknown) => listeners.get(channel)?.forEach((handler) => handler({ payload }));
+mock.module("@tauri-apps/api/event", () => ({
+  listen: (channel: string, handler: (message: { payload: unknown }) => void) => {
+    if (!listeners.has(channel)) listeners.set(channel, new Set());
+    listeners.get(channel)!.add(handler);
+    return Promise.resolve(() => listeners.get(channel)!.delete(handler));
+  },
+}));
+
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 afterAll(() => {
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
@@ -54,6 +65,7 @@ function panel(message = "", notes: string[] = [], messages: string[] = []) {
   return render(
     <ChangesPanel
       active
+      workspace="/repo"
       onNotify={(note) => notes.push(note)}
       message={message}
       onMessage={(next) => messages.push(next)}
@@ -130,5 +142,36 @@ describe("ChangesPanel", () => {
     panel("Fix");
     await settle();
     expect((screen.getByText("Commit") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("reads again when the folder or its .git changes, and only for the open folder", async () => {
+    const view = panel();
+    await settle();
+    const reads = () => calls.filter((c) => c.command === "git_changes").length;
+    const before = reads();
+
+    act(() => emit("workspace-git:changed", { root: "/repo" }));
+    await settle();
+    expect(reads()).toBe(before + 1);
+
+    act(() => emit("workspace-index:event", { root: "/repo", kind: "syncStarted" }));
+    await settle();
+    expect(reads()).toBe(before + 2);
+
+    // Another folder's events, and the rest of a sync, are not a change here.
+    act(() => {
+      emit("workspace-git:changed", { root: "/elsewhere" });
+      emit("workspace-index:event", { root: "/elsewhere", kind: "syncStarted" });
+      emit("workspace-index:event", { root: "/repo", kind: "keywordsReady" });
+    });
+    await settle();
+    expect(reads()).toBe(before + 2);
+
+    // Hidden, the tab stops listening.
+    view.rerender(<ChangesPanel active={false} workspace="/repo" onNotify={() => {}} message="" onMessage={() => {}} />);
+    await settle();
+    act(() => emit("workspace-git:changed", { root: "/repo" }));
+    await settle();
+    expect(reads()).toBe(before + 2);
   });
 });

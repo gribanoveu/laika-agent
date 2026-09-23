@@ -93,6 +93,12 @@ pub fn commit(root: &Path, message: &str) -> Result<String, GitChangesError> {
     Ok(oid.to_string().chars().take(7).collect())
 }
 
+/// The `.git` directory of the repository `root` is in — what staging and
+/// committing write, and the tree's watcher leaves out. `None` outside one.
+pub fn git_dir(root: &Path) -> Option<std::path::PathBuf> {
+    Repository::discover(root).ok().map(|repo| repo.path().to_path_buf())
+}
+
 fn open(root: &Path) -> Result<Repository, GitChangesError> {
     Repository::discover(root).map_err(|_| GitChangesError::NotARepository)
 }
