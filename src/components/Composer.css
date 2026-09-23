@@ -71,3 +71,9 @@
 .composer .send.stop:hover {
   background: var(--bg-hover);
 }
+
+.composer-wrap {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}

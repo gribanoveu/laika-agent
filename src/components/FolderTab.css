@@ -1,0 +1,58 @@
+/* A strip joined to the top of the composer, inset from its sides. */
+.folder-tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 4px 12px 3px 8px;
+  background: var(--bg-panel-soft);
+  border-radius: var(--radius) var(--radius) 0 0;
+  min-width: 0;
+}
+.folder-tab-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.folder-tab .chip-label {
+  max-width: 240px;
+}
+/* No folder yet: the one thing to do before sending, so it reads as an action. */
+.folder-tab.empty .chip {
+  color: var(--accent);
+}
+.folder-tab-branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.folder-tab-branch svg {
+  flex: none;
+}
+.folder-tab-branch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* What the folder holds against its last commit; opens Changes. */
+.folder-tab-changes {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.folder-tab-changes:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--text-faint);
+}

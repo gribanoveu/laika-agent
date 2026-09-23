@@ -23,16 +23,13 @@ import { ChatMenu, type ChatMenuItem } from "./ChatMenu";
 import { DiffView } from "./DiffView";
 import { PANES } from "./panes";
 import type { AsideTab } from "../types";
-import { IndexBadge } from "./IndexBadge";
 import { Markdown } from "./Markdown";
-import type { IndexState } from "../lib/indexStatus";
 import { describeActive, describeRun, describeTool } from "../lib/describeTool";
 import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
   processStatus,
-  type ChangeTotals,
   type ProcessInfo,
   type ToolCallDecision,
   type ToolPreview,
@@ -442,12 +439,6 @@ type Props = {
   onOpenPanel?: (tab: AsideTab) => void;
   /** The open chat's title; `null` for one not saved yet. */
   title?: string | null;
-  /** The git branch checked out in the folder; `null` outside a repository. */
-  branch?: string | null;
-  /** The open folder's index; `null` until anything is known about it. */
-  index?: IndexState | null;
-  /** Lines added and removed since the last commit; `null` outside a repository. */
-  changes?: ChangeTotals | null;
   workspace: string | null;
   turn: TurnState;
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void;
@@ -472,11 +463,8 @@ export function ChatPanel({
   onToggleTerminal,
   onOpenPanel,
   title = null,
-  branch = null,
   workspace,
   turn,
-  index,
-  changes = null,
   onDecide,
   onOpenRepo,
   onNewChat,
@@ -501,7 +489,6 @@ export function ChatPanel({
   useEffect(() => {
     void scrollToBottom("instant");
   }, [lastUserId, scrollToBottom]);
-  const name = workspace?.split("/").filter(Boolean).pop() ?? null;
 
   // The side panels first — they are what the menu is opened for — then what
   // can be done to the conversation itself.
@@ -533,28 +520,6 @@ export function ChatPanel({
       <header className="chat-head">
         <div className="head-left">
           <h1 title={title ?? undefined}>{title ?? "New chat"}</h1>
-          {workspace && (
-            <div className="head-sub">
-              {/* The branch where there is one: in one open folder at a time it
-                  is what changes. The folder stays in the tooltip. */}
-              <span className="chat-path" title={workspace}>
-                {branch ? <GitBranch size={11} /> : <Folder size={11} />}
-                <span>{branch ?? name}</span>
-              </span>
-              {index && <IndexBadge state={index} />}
-              {changes && changes.files > 0 && (
-                <button
-                  type="button"
-                  className="head-changes"
-                  title={`${changes.files} ${changes.files === 1 ? "file" : "files"} changed since the last commit`}
-                  onClick={() => onOpenPanel?.("changes")}
-                >
-                  <span className="add">+{changes.add}</span>
-                  <span className="del">−{changes.del}</span>
-                </button>
-              )}
-            </div>
-          )}
         </div>
         <div className="head-right">
           {turn.retrying && (

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
   Clock,
-  FolderOpen,
   GitBranch,
   Keyboard,
   MessageSquare,
@@ -11,7 +10,6 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import { Dropdown } from "./Dropdown";
 import { GettingStarted } from "./GettingStarted";
 import type { ChatSummary } from "../lib/chat";
 import type { AsideTab } from "../types";
@@ -19,11 +17,6 @@ import "./Sidebar.css";
 
 type Props = {
   chats: ChatSummary[];
-  repo: string | null;
-  /** Folders opened lately, the last one first. */
-  recent: string[];
-  onOpenFolder: (path: string) => void;
-  onPickFolder: () => void;
   activeChat: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
@@ -32,17 +25,8 @@ type Props = {
   onOnboardingAction: (tab: AsideTab) => void;
 };
 
-/** Not a path: no folder is called this. */
-const PICK = "\u0000pick";
-
-const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-
 export function Sidebar({
   chats,
-  repo,
-  recent,
-  onOpenFolder,
-  onPickFolder,
   activeChat,
   onSelectChat,
   onNewChat,
@@ -74,20 +58,6 @@ export function Sidebar({
           <Plus size={14} />
           <span className="label">New chat</span>
         </button>
-        {/* One folder at a time: switching is here, and the list below is
-            that folder's chats. */}
-        <Dropdown
-          below
-          right
-          label={<FolderOpen size={15} />}
-          title="Switch folder"
-          value={repo ?? ""}
-          options={[
-            ...recent.map((path) => ({ value: path, label: folderName(path), hint: path })),
-            { value: PICK, label: "Open folder…" },
-          ]}
-          onPick={(value) => (value === PICK ? onPickFolder() : value !== repo && onOpenFolder(value))}
-        />
         <button className="iconbtn" type="button" title="Collapse panel" onClick={onToggleCollapse}>
           <PanelLeft size={15} />
         </button>

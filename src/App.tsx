@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
+import { FolderTab } from "./components/FolderTab";
 import { AsidePanel } from "./components/AsidePanel";
 import { PANES, type Dock, type PaneContext } from "./components/panes";
 import { Modal } from "./components/Modal";
@@ -291,10 +292,6 @@ export default function App() {
       <div className="body">
         <Sidebar
           chats={history.chats}
-          repo={workspace.path}
-          recent={workspace.recent}
-          onOpenFolder={openFolder}
-          onPickFolder={chooseFolder}
           activeChat={agent.chatId}
           onSelectChat={agent.open}
           onNewChat={newChat}
@@ -312,10 +309,7 @@ export default function App() {
         <main className="main">
           <ChatPanel
             title={history.chats.find((chat) => chat.id === agent.chatId)?.title ?? null}
-            branch={branch}
             workspace={workspace.path}
-            index={index}
-            changes={changeTotals}
             turn={agent.turn}
             onDecide={agent.decide}
             onOpenRepo={chooseFolder}
@@ -336,6 +330,18 @@ export default function App() {
             onBranch={agent.branch}
           />
           <Composer
+            tab={
+              <FolderTab
+                path={workspace.path}
+                recent={workspace.recent}
+                onOpenFolder={openFolder}
+                onPickFolder={chooseFolder}
+                branch={branch}
+                index={index}
+                changes={changeTotals}
+                onOpenChanges={() => openTab("changes")}
+              />
+            }
             onSend={send}
             onStop={agent.cancel}
             running={agent.turn.status === "running"}

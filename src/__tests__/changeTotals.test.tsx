@@ -1,9 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ChangeTotals } from "../lib/chat";
-import { emptyTurn } from "../lib/chatTurnReducer";
 
-// The chat header's count of lines added and removed since the last commit:
+// The folder tab's count of lines added and removed since the last commit:
 // read when the folder opens and on the backend's change events for it.
 
 let totals: ChangeTotals | null;
@@ -36,7 +35,6 @@ afterAll(() => {
 });
 
 const { useChangeTotals } = await import("../hooks/useChangeTotals");
-const { ChatPanel } = await import("../components/ChatPanel");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
 beforeEach(() => {
@@ -87,34 +85,5 @@ describe("useChangeTotals", () => {
     act(() => emit("workspace-git:changed", { root: "/repo" }));
     await settle();
     expect(reads).toBe(before);
-  });
-});
-
-describe("the chat header", () => {
-  const header = (changes: ChangeTotals | null, opened: string[] = []) =>
-    render(
-      <ChatPanel
-        workspace="/repo"
-        changes={changes}
-        turn={emptyTurn()}
-        onDecide={() => {}}
-        onOpenRepo={() => {}}
-        onNewChat={() => {}}
-        onOpenPanel={(tab) => opened.push(tab)}
-      />,
-    );
-
-  test("shows lines added and removed, and opens Changes", () => {
-    const opened: string[] = [];
-    header({ files: 2, add: 12, del: 3 }, opened);
-    const button = screen.getByTitle("2 files changed since the last commit");
-    expect(button.textContent).toBe("+12−3");
-    fireEvent.click(button);
-    expect(opened).toEqual(["changes"]);
-  });
-
-  test("a clean folder, or no repository, shows nothing", () => {
-    header({ files: 0, add: 0, del: 0 });
-    expect(screen.queryByTitle(/changed since the last commit/)).toBeNull();
   });
 });

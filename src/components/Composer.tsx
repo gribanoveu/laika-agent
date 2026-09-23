@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import { ContextMeter } from "./ContextMeter";
@@ -25,6 +25,8 @@ const CONVERSATIONS: { value: ConversationMode; label: string; hint: string }[] 
 ];
 
 type Props = {
+  /** Drawn on the box's top edge — the folder the message will be worked on. */
+  tab?: ReactNode;
   /** Sends the box. While a turn is running the same box steers it instead. */
   onSend: (text: string) => void;
   onStop: () => void;
@@ -52,6 +54,7 @@ type Props = {
 };
 
 export function Composer({
+  tab,
   onSend,
   onStop,
   running,
@@ -92,92 +95,95 @@ export function Composer({
   };
 
   return (
-    <section className="composer">
-      <textarea
-        className="chat-text"
-        ref={area}
-        rows={2}
-        placeholder={running ? "Add something while it works…" : "Describe your task…"}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          grow();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          }
-        }}
-      />
-      <div className="composer-bar">
-        <Dropdown
-          title="Permission mode"
-          heading="Permissions"
-          label={
-            <span className="mode-label">
-              <ShieldCheck size={13} />
-              {unattended ? "Auto" : "Ask"}
-            </span>
-          }
-          value={unattended ? "auto" : "ask"}
-          options={MODES}
-          onPick={(v) => onUnattended(v === "auto")}
-        />
-        {/* Two chips because these are two questions. This one is what the
-            agent is for; the one beside it is who has to agree before it
-            acts — a plan-mode turn still asks, and an unattended agent still
-            cannot write in Ask. */}
-        <Dropdown
-          title="What the agent may do"
-          heading="Mode"
-          label={
-            <span className="mode-label">
-              <Bot size={13} />
-              {CONVERSATIONS.find((c) => c.value === conversation)?.label ?? "Agent"}
-            </span>
-          }
-          value={conversation}
-          options={CONVERSATIONS.map((c) => ({ value: c.value, label: c.label, hint: c.hint }))}
-          onPick={(v) => onConversation(v as ConversationMode)}
-        />
-        <Dropdown
-          title="Model"
-          heading="Model"
-          label={<span className="model-label">{models.current?.label ?? "no model"}</span>}
-          value={models.current ? choiceKey(models.current) : ""}
-          options={models.choices.map((choice) => ({
-            value: choiceKey(choice),
-            label: choice.label,
-            hint: choice.model ? undefined : "The first model the provider lists",
-          }))}
-          emptyLabel="No provider yet — add one in Settings → Models"
-          onOpen={onLoadModels}
-          onPick={(key) => {
-            const choice = models.choices.find((c) => choiceKey(c) === key);
-            if (choice) onModel(choice);
+    <div className="composer-wrap">
+      {tab}
+      <section className="composer">
+        <textarea
+          className="chat-text"
+          ref={area}
+          rows={2}
+          placeholder={running ? "Add something while it works…" : "Describe your task…"}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            grow();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
           }}
         />
-        {/* Shown from the first render, before anything has been said: an
-            empty conversation already costs the prompt and the schemas. */}
-        {context && (
-          <span className="composer-meter">
-            <ContextMeter context={context} usage={usage} running={running} onCompact={onCompact} up />
-          </span>
-        )}
-        {/* One button, two jobs: while a turn runs the only thing worth doing
-            with it is stopping — and a send button that does nothing during a
-            turn is worse than no button. */}
-        {running ? (
-          <button className="send stop" type="button" title="Stop" onClick={onStop}>
-            <Square size={14} />
-          </button>
-        ) : (
-          <button className="send" type="button" title="Send" onClick={send}>
-            <SendHorizontal size={16} />
-          </button>
-        )}
-      </div>
-    </section>
+        <div className="composer-bar">
+          <Dropdown
+            title="Permission mode"
+            heading="Permissions"
+            label={
+              <span className="mode-label">
+                <ShieldCheck size={13} />
+                {unattended ? "Auto" : "Ask"}
+              </span>
+            }
+            value={unattended ? "auto" : "ask"}
+            options={MODES}
+            onPick={(v) => onUnattended(v === "auto")}
+          />
+          {/* Two chips because these are two questions. This one is what the
+              agent is for; the one beside it is who has to agree before it
+              acts — a plan-mode turn still asks, and an unattended agent still
+              cannot write in Ask. */}
+          <Dropdown
+            title="What the agent may do"
+            heading="Mode"
+            label={
+              <span className="mode-label">
+                <Bot size={13} />
+                {CONVERSATIONS.find((c) => c.value === conversation)?.label ?? "Agent"}
+              </span>
+            }
+            value={conversation}
+            options={CONVERSATIONS.map((c) => ({ value: c.value, label: c.label, hint: c.hint }))}
+            onPick={(v) => onConversation(v as ConversationMode)}
+          />
+          <Dropdown
+            title="Model"
+            heading="Model"
+            label={<span className="model-label">{models.current?.label ?? "no model"}</span>}
+            value={models.current ? choiceKey(models.current) : ""}
+            options={models.choices.map((choice) => ({
+              value: choiceKey(choice),
+              label: choice.label,
+              hint: choice.model ? undefined : "The first model the provider lists",
+            }))}
+            emptyLabel="No provider yet — add one in Settings → Models"
+            onOpen={onLoadModels}
+            onPick={(key) => {
+              const choice = models.choices.find((c) => choiceKey(c) === key);
+              if (choice) onModel(choice);
+            }}
+          />
+          {/* Shown from the first render, before anything has been said: an
+              empty conversation already costs the prompt and the schemas. */}
+          {context && (
+            <span className="composer-meter">
+              <ContextMeter context={context} usage={usage} running={running} onCompact={onCompact} up />
+            </span>
+          )}
+          {/* One button, two jobs: while a turn runs the only thing worth doing
+              with it is stopping — and a send button that does nothing during a
+              turn is worse than no button. */}
+          {running ? (
+            <button className="send stop" type="button" title="Stop" onClick={onStop}>
+              <Square size={14} />
+            </button>
+          ) : (
+            <button className="send" type="button" title="Send" onClick={send}>
+              <SendHorizontal size={16} />
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }

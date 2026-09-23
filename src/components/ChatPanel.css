@@ -27,48 +27,6 @@
 .head-left {
   min-width: 0;
 }
-/* Where the chat runs: the folder, and whether its index is ready. */
-.head-sub {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-  min-width: 0;
-}
-.chat-path {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: var(--fs-xs);
-  color: var(--text-faint);
-}
-.chat-path svg {
-  flex: none;
-}
-.chat-path span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* What the folder holds against its last commit; opens Changes. */
-.head-changes {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.head-changes:hover {
-  text-decoration: underline;
-  text-decoration-color: var(--text-faint);
-}
 .head-right {
   flex: none;
   display: flex;

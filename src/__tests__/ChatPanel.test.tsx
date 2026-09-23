@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ChatPanel, Preview, formatDuration } from "../components/ChatPanel";
 import { emptyTurn, type Block, type TurnState } from "../lib/chatTurnReducer";
-import { fromSnapshot, type IndexState } from "../lib/indexStatus";
 
 // The transcript's own rules: who a block belongs to, and what the approval
 // card sends back. Both are decided here rather than by the backend, so both
@@ -17,12 +16,11 @@ const state = (blocks: Block[], over: Partial<TurnState> = {}): TurnState => ({
 const panel = (
   turn: TurnState,
   onDecide = () => {},
-  over: { index?: IndexState | null; onImplement?: () => void } = {},
+  over: { onImplement?: () => void } = {},
 ) =>
   render(
     <ChatPanel
       workspace="/tmp/project"
-      index={over.index}
       turn={turn}
       onDecide={onDecide}
       onOpenRepo={() => {}}
@@ -333,7 +331,8 @@ describe("how long the agent worked", () => {
 });
 
 describe("the header", () => {
-  test("names the chat, and the folder under it", () => {
+  /// The folder, its branch and its changes are on the composer's tab now.
+  test("names the chat, and only the chat", () => {
     render(
       <ChatPanel
         title="Fix the tax rounding"
@@ -345,7 +344,7 @@ describe("the header", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Fix the tax rounding" })).toBeTruthy();
-    expect(screen.getByTitle("/tmp/project").textContent).toBe("project");
+    expect(screen.queryByTitle("/tmp/project")).toBeNull();
   });
 
   test("shows and hides the side panel, and says which it would do", () => {
@@ -468,20 +467,6 @@ describe("the header", () => {
     expect(screen.queryByTitle("More")).toBeNull();
   });
 
-  test("shows the checked-out branch under the title, the folder in its tooltip", () => {
-    render(
-      <ChatPanel
-        branch="feature/parser"
-        workspace="/tmp/project"
-        turn={state([])}
-        onDecide={() => {}}
-        onOpenRepo={() => {}}
-        onNewChat={() => {}}
-      />,
-    );
-    expect(screen.getByTitle("/tmp/project").textContent).toBe("feature/parser");
-  });
-
   test("a chat not saved yet is a new one", () => {
     panel(state([]));
     expect(screen.getByRole("heading", { name: "New chat" })).toBeTruthy();
@@ -501,22 +486,6 @@ describe("a notice", () => {
 
     expect(screen.getByText("Older history compacted")).toBeTruthy();
     expect(screen.queryByText("Agent")).toBeNull();
-  });
-});
-
-describe("the folder's index", () => {
-  test("its state is shown beside the folder, with the detail on hover", () => {
-    const index = fromSnapshot({ root: "/tmp/project", syncing: false, embedded: 3, skipped: 2, embeddingError: null });
-    panel(state([]), () => {}, { index });
-
-    const badge = screen.getByRole("status");
-    expect(badge.textContent).toBe("Indexed");
-    expect(badge.getAttribute("title")).toContain("2 files not indexed");
-  });
-
-  test("nothing is shown before anything is known", () => {
-    panel(state([]));
-    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 

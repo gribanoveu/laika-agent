@@ -20,7 +20,6 @@
   align-items: center;
   gap: 6px;
   padding: 12px 10px 10px;
-  /* Clipped sideways only, so the folder menu can open downwards. */
   overflow-x: clip;
 }
 .window.collapsed .sidebar-top {
@@ -59,43 +58,10 @@
 
 .group {
   padding: 10px 10px 0;
-  /* Clipped sideways only: the folder menu opens downwards over the list. */
   overflow-x: clip;
 }
 .window.collapsed .group {
   display: none;
-}
-/* The folder switcher in the top bar: an icon button like its neighbours,
-   with a menu that fits the panel. */
-.sidebar-top .chip {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  justify-content: center;
-  border-radius: 8px;
-}
-.sidebar-top .chip-chev {
-  display: none;
-}
-/* The menu spans the top bar rather than hanging off the button, so it
-   stays inside the panel. */
-.sidebar-top .dropdown-wrap {
-  position: static;
-}
-.sidebar-top .dropdown-menu {
-  top: calc(100% - 4px);
-  left: 10px;
-  right: 10px;
-  min-width: 0;
-  max-width: none;
-}
-/* The rail is narrower than the menu: it opens beside it, level with the
-   folder button (the second in the column), over the chat. */
-.window.collapsed .sidebar-top .dropdown-menu {
-  top: 50px;
-  left: calc(100% + 8px);
-  right: auto;
-  width: 226px;
 }
 
 .chat {
