@@ -3,8 +3,6 @@
 // that carry it. What stays here is what the panels around the chat are still
 // drawn from.
 
-export type ChangedFile = { name: string; add: number; del: number };
-
 export const ASIDE_TABS = ["changes", "plan", "mcp", "hooks", "skills", "rules", "files", "terminal"] as const;
 export type AsideTab = (typeof ASIDE_TABS)[number];
 export const isAsideTab = (value: unknown): value is AsideTab => ASIDE_TABS.includes(value as AsideTab);

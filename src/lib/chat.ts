@@ -605,6 +605,33 @@ export function processStatus(state: ProcessState): string {
   }
 }
 
+// ---------------------------------------------------------------- git changes
+
+/** Mirrors `domain::git_changes::ChangedFile`; `path` is relative to the repository. */
+export type ChangedFile = { path: string; add: number; del: number };
+export type WorkingChanges = { staged: ChangedFile[]; unstaged: ChangedFile[] };
+
+export async function gitChanges(): Promise<WorkingChanges> {
+  requireBackend();
+  return invoke<WorkingChanges>("git_changes");
+}
+
+export async function gitStage(paths: string[]): Promise<void> {
+  requireBackend();
+  return invoke("git_stage", { paths });
+}
+
+export async function gitUnstage(paths: string[]): Promise<void> {
+  requireBackend();
+  return invoke("git_unstage", { paths });
+}
+
+/** Commits what is staged; resolves to the new commit's short id. */
+export async function gitCommit(message: string): Promise<string> {
+  requireBackend();
+  return invoke<string>("git_commit", { message });
+}
+
 // ---------------------------------------------------------------- hooks
 
 /** Mirrors `domain::hooks::HookItem`. `problem` is why it will not run as written. */
