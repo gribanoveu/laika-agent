@@ -399,7 +399,7 @@ describe("hooks", () => {
 
 describe("background processes", () => {
   /// The model was told at the start of its round; the reader sees the same.
-  test("each ended process is a notice", () => {
+  test("each ended process is a block of its own, carrying the process", () => {
     const state = run([
       ev({
         type: "processesEnded",
@@ -412,9 +412,17 @@ describe("background processes", () => {
         },
       }),
     ]);
-    expect(state.blocks.map((b) => (b as { text: string }).text)).toEqual([
-      "Background process #2 `npm run dev` ended: exit 1",
-      "Background process #3 `tail -f log` ended: stopped",
+    expect(state.blocks).toEqual([
+      {
+        kind: "processEnded",
+        id: "ended:0",
+        process: { id: 2, command: "npm run dev", cwd: ".", state: { state: "exited", code: 1 } },
+      },
+      {
+        kind: "processEnded",
+        id: "ended:1",
+        process: { id: 3, command: "tail -f log", cwd: ".", state: { state: "stopped" } },
+      },
     ]);
   });
 });

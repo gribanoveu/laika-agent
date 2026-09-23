@@ -1,9 +1,9 @@
 import {
-  processStatus,
   type ChatUsage,
   type Checkpoint,
   type Outcome,
   type PendingToolCall,
+  type ProcessInfo,
   type TurnEvent,
 } from "./chat";
 
@@ -31,6 +31,8 @@ export type Block =
   | { kind: "steer"; id: string; text: string }
   /** Something the app did to the conversation, said out loud. */
   | { kind: "notice"; id: string; text: string }
+  /** A background process ended — what the model was told at its round, drawn as a card. */
+  | { kind: "processEnded"; id: string; process: ProcessInfo }
   | {
       kind: "tool";
       id: string;
@@ -257,10 +259,17 @@ function applyEvent(state: TurnState, event: TurnEvent): TurnState {
 
     case "processesEnded":
       // What the model was just told, said to the reader too.
-      return event.payload.processes.reduce(
-        (next, p) => appendNotice(next, `Background process #${p.id} \`${p.command}\` ended: ${processStatus(p.state)}`),
-        state,
-      );
+      return {
+        ...state,
+        blocks: [
+          ...state.blocks,
+          ...event.payload.processes.map((process, at) => ({
+            kind: "processEnded" as const,
+            id: `ended:${state.blocks.length + at}`,
+            process,
+          })),
+        ],
+      };
 
     case "steeringApplied":
       return {

@@ -662,3 +662,41 @@ describe("a background process started from the chat", () => {
   });
 });
 
+describe("a background process that ended", () => {
+  const ended = (code: number) =>
+    ({
+      kind: "processEnded",
+      id: "ended:0",
+      process: { id: 4, command: "cargo build", cwd: "src-tauri", state: { state: "exited", code } },
+    }) as Block;
+
+  test("is a card with the command, the folder and how it ended, that opens the Terminal tab", () => {
+    const opened: number[] = [];
+    const { container } = render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([ended(101)])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onOpenProcess={(id) => opened.push(id)}
+      />,
+    );
+    const card = screen.getByTitle("Show in Terminal");
+    expect(card.className).toContain("failed");
+    expect(screen.getByText("Background process #4 ended")).toBeTruthy();
+    expect(screen.getByText("cargo build")).toBeTruthy();
+    expect(screen.getByText("src-tauri")).toBeTruthy();
+    expect(screen.getByText("exit 101")).toBeTruthy();
+    // News from the app, not something the agent said.
+    expect(container.querySelector(".role")).toBeNull();
+    fireEvent.click(card);
+    expect(opened).toEqual([4]);
+  });
+
+  test("a clean exit is not drawn as a failure", () => {
+    panel(state([ended(0)]));
+    expect(screen.getByText("exit 0").closest(".process-ended")?.className).not.toContain("failed");
+  });
+});
+

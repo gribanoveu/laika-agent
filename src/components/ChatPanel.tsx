@@ -31,7 +31,9 @@ import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
   previewCalls,
+  processStatus,
   type ChangeTotals,
+  type ProcessInfo,
   type ToolCallDecision,
   type ToolPreview,
 } from "../lib/chat";
@@ -57,6 +59,43 @@ const TOOL_ICON: Record<string, typeof FileText> = {
 
 /** Opens a background process in the Terminal tab. */
 type OpenProcess = (id: number) => void;
+
+/**
+ * A background process that ended, as the model was told of it: how it
+ * ended, what it was, where it ran. Opens it in the Terminal tab, where its
+ * output is.
+ */
+function ProcessEndedCard({ process, onOpen }: { process: ProcessInfo; onOpen?: OpenProcess }) {
+  const state = process.state;
+  const tone = state.state === "exited" && state.code !== 0 ? "failed" : state.state === "stopped" ? "stopped" : "ended";
+  return (
+    <button
+      type="button"
+      className={`process-ended ${tone}`}
+      title={onOpen ? "Show in Terminal" : undefined}
+      disabled={!onOpen}
+      onClick={() => onOpen?.(process.id)}
+    >
+      <span className="process-ended-ico" aria-hidden>
+        <TerminalSquare size={14} />
+      </span>
+      <span className="process-ended-body">
+        <code className="process-ended-command">{process.command}</code>
+        <span className="process-ended-meta">
+          <span className="process-ended-label">
+            Background process #{process.id} {state.state === "stopped" ? "stopped" : "ended"}
+          </span>
+          <span className="process-ended-cwd">
+            <Folder size={11} aria-hidden />
+            {process.cwd === "." ? "project root" : process.cwd}
+          </span>
+        </span>
+      </span>
+      <span className="process-ended-state">{processStatus(state)}</span>
+      {onOpen && <ArrowUpRight className="process-ended-open" size={13} aria-hidden />}
+    </button>
+  );
+}
 
 function ToolRow({ block, onOpenProcess }: { block: Extract<Block, { kind: "tool" }>; onOpenProcess?: OpenProcess }) {
   const [open, setOpen] = useState(false);
@@ -253,9 +292,10 @@ function group(blocks: Block[]): Group[] {
   const groups: Group[] = [];
   for (const block of blocks) {
     // A notice is nobody's turn — it is the app saying what it did — so it
-    // stands alone rather than appearing under "Agent" as something said.
+    // stands alone rather than appearing under "Agent" as something said. A
+    // process that ended is news of the same kind.
     const role =
-      block.kind === "notice"
+      block.kind === "notice" || block.kind === "processEnded"
         ? "notice"
         : block.kind === "user" || block.kind === "steer"
           ? "user"
@@ -677,6 +717,8 @@ function renderBlock(
           {block.text}
         </p>
       );
+    case "processEnded":
+      return <ProcessEndedCard key={block.id} process={block.process} onOpen={onOpenProcess} />;
     case "message":
       return (
         <div className="msg" key={block.id}>
