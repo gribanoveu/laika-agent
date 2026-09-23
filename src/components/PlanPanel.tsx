@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Circle, CircleCheck, CircleDot, CircleX, Pencil } from "lucide-react";
+import { ChevronRight, Circle, CircleCheck, CircleDot, CircleX, Pencil } from "lucide-react";
 import type { Task } from "../lib/chat";
 import { Markdown } from "./Markdown";
 import "./PlanPanel.css";
@@ -22,12 +22,38 @@ const MARK: Record<Task["status"], { icon: typeof Circle; label: string }> = {
   cancelled: { icon: CircleX, label: "Dropped" },
 };
 
+/** The task the work is on: the one in progress, else the next to do; `null`
+    once nothing is left. */
+export function currentTask(tasks: Task[]): Task | null {
+  return tasks.find((t) => t.status === "inProgress") ?? tasks.find((t) => t.status === "pending") ?? null;
+}
+
+function TaskRow({ task, current = false }: { task: Task; current?: boolean }) {
+  const { icon: Icon, label } = MARK[task.status];
+  return (
+    <li className={`plan-task ${task.status}${current ? " plan-current" : ""}`}>
+      <Icon size={14} className="plan-mark" aria-label={label} />
+      <div className="plan-task-body">
+        <div className="plan-task-title">{task.title}</div>
+        {task.note && <div className="plan-task-note">{task.note}</div>}
+      </div>
+    </li>
+  );
+}
+
+/** Folded by default to the one task the work is on — what is worth a glance
+    while the agent works; the whole list is a click away. */
 function Checklist({ tasks }: { tasks: Task[] }) {
+  const [open, setOpen] = useState(false);
   const done = tasks.filter((t) => t.status === "completed").length;
+  const current = currentTask(tasks);
   return (
     <div className="panel-section plan-section">
       <div className="section-label">
-        <span>Checklist</span>
+        <button type="button" className="plan-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <ChevronRight size={12} className="plan-fold-chev" />
+          Checklist
+        </button>
         <span className="count">
           {done}/{tasks.length}
         </span>
@@ -36,18 +62,17 @@ function Checklist({ tasks }: { tasks: Task[] }) {
         <div style={{ width: `${(done / tasks.length) * 100}%` }} />
       </div>
       <ul className="plan-checklist">
-        {tasks.map((task) => {
-          const { icon: Icon, label } = MARK[task.status];
-          return (
-            <li key={task.id} className={`plan-task ${task.status}`}>
-              <Icon size={14} className="plan-mark" aria-label={label} />
-              <div className="plan-task-body">
-                <div className="plan-task-title">{task.title}</div>
-                {task.note && <div className="plan-task-note">{task.note}</div>}
-              </div>
-            </li>
-          );
-        })}
+        {open ? (
+          tasks.map((task) => <TaskRow key={task.id} task={task} />)
+        ) : current ? (
+          // Keyed by the task, so a new one is a new row and plays its entrance.
+          <TaskRow key={current.id} task={current} current />
+        ) : (
+          <li key="done" className="plan-task plan-current completed">
+            <CircleCheck size={14} className="plan-mark" aria-label="Done" />
+            <div className="plan-task-title">All done</div>
+          </li>
+        )}
       </ul>
     </div>
   );

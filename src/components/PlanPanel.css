@@ -123,3 +123,40 @@
   color: var(--text-faint);
   text-decoration: line-through;
 }
+
+.plan-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.plan-fold:hover {
+  color: var(--text-dim);
+}
+.plan-fold-chev {
+  transition: transform 0.15s;
+}
+.plan-fold[aria-expanded="true"] .plan-fold-chev {
+  transform: rotate(90deg);
+}
+
+/* Folded: the one task the work is on. A new one rises into place. */
+.plan-current {
+  animation: plan-current-in 0.28s ease-out;
+}
+@keyframes plan-current-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-current {
+    animation: none;
+  }
+}

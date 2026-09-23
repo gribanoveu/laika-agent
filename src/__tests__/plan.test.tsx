@@ -42,7 +42,7 @@ afterAll(() => {
 
 const { useAgentTurn } = await import("../hooks/useAgentTurn");
 const { writtenChecklist, writtenPlan } = await import("../lib/plan");
-const { PlanPanel } = await import("../components/PlanPanel");
+const { PlanPanel, currentTask } = await import("../components/PlanPanel");
 const { describeTool } = await import("../lib/describeTool");
 
 afterEach(() => {
@@ -262,9 +262,49 @@ describe("the Plan tab", () => {
       ],
     });
     expect(screen.getByText("1/3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Checklist" }));
     expect(screen.getByText("not needed")).toBeTruthy();
     expect(screen.getByText("fix").closest("li")?.className).toContain("inProgress");
     expect(screen.getByLabelText("Done")).toBeTruthy();
+  });
+});
+
+describe("the folded checklist", () => {
+  const task = (id: string, status: "completed" | "inProgress" | "pending" | "cancelled") => ({ id, title: `task ${id}`, status });
+  const panel = (checklist: ReturnType<typeof task>[]) =>
+    render(<PlanPanel plan="# Fix" checklist={checklist} onEdit={() => {}} locked={false} />);
+
+  test("shows only the task under way until opened, then all of them", () => {
+    panel([task("1", "completed"), task("2", "inProgress"), task("3", "pending")]);
+    expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["task 2"]);
+    expect(screen.getByRole("button", { name: "Checklist" }).getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Checklist" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Checklist" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  test("the one in progress over the next to do; the next to do when none has started", () => {
+    expect(currentTask([task("1", "pending"), task("2", "inProgress")])?.id).toBe("2");
+    expect(currentTask([task("1", "completed"), task("2", "cancelled"), task("3", "pending")])?.id).toBe("3");
+    expect(currentTask([task("1", "completed"), task("2", "cancelled")])).toBeNull();
+  });
+
+  test("nothing left is said as such", () => {
+    panel([task("1", "completed"), task("2", "cancelled")]);
+    expect(screen.getByRole("listitem").textContent).toBe("All done");
+  });
+
+  /// The entrance plays because the row is a new element, not the old one relabelled.
+  test("a new current task is a new row", () => {
+    const { rerender } = panel([task("1", "inProgress"), task("2", "pending")]);
+    const first = screen.getByRole("listitem");
+    rerender(<PlanPanel plan="# Fix" checklist={[task("1", "completed"), task("2", "inProgress")]} onEdit={() => {}} locked={false} />);
+    const second = screen.getByRole("listitem");
+    expect(second.textContent).toBe("task 2");
+    expect(second).not.toBe(first);
+    expect(second.className).toContain("plan-current");
   });
 });
 
