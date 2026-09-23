@@ -6,6 +6,16 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalAttach, terminalResize, terminalWrite } from "../lib/terminal";
 import "@xterm/xterm/css/xterm.css";
 
+/**
+ * How long the size has to hold still before the shell is told it. xterm.js
+ * follows the element every frame of a drag, a window resize or the dock's
+ * width transition; were each of those widths a SIGWINCH, zsh would redraw
+ * its prompt for a width xterm.js had already left, and the misplaced copies
+ * would stay on screen. Told once, when xterm.js is already at the final
+ * width, the shell redraws at the width it is shown at.
+ */
+const SETTLE_MS = 150;
+
 const ANSI = [
   "black",
   "red",
@@ -73,7 +83,11 @@ export function useTerminalScreen(
 
     const input = term.onData((data) => void terminalWrite(id, data));
     const selection = term.onSelectionChange(() => selected.current(term.getSelection()));
-    const resized = term.onResize(({ cols, rows }) => void terminalResize(id, cols, rows));
+    let settling: ReturnType<typeof setTimeout> | undefined;
+    const resized = term.onResize(({ cols, rows }) => {
+      clearTimeout(settling);
+      settling = setTimeout(() => void terminalResize(id, cols, rows), SETTLE_MS);
+    });
     // Hidden or not laid out yet, there is nothing to measure.
     const refit = () => {
       if (element.clientWidth > 0 && element.clientHeight > 0) fit.fit();
@@ -113,6 +127,7 @@ export function useTerminalScreen(
       input.dispose();
       selection.dispose();
       resized.dispose();
+      clearTimeout(settling);
       sized.disconnect();
       restyled.disconnect();
       term.dispose();

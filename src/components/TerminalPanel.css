@@ -147,6 +147,9 @@
 .terminal-view .xterm {
   height: 100%;
 }
-.terminal-view .xterm-viewport {
+/* xterm.css paints the viewport black. Rows fill the height in whole cells,
+   and what is left under the last one showed it as a black strip. */
+.terminal-view .xterm .xterm-viewport {
+  background-color: var(--bg-panel);
   scrollbar-width: thin;
 }
