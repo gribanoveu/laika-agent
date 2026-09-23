@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use crate::domain::background::{BackgroundProcesses, ProcessChanged, ProcessEventSink, ProcessInfo};
+use crate::domain::command_exec::collapse_redraws;
 use crate::infra::background::Processes;
 
 /// A background process started, wrote, ended or was stopped.
@@ -36,8 +37,13 @@ fn views(processes: &Processes) -> Vec<ProcessView> {
         .list()
         .into_iter()
         .rev()
-        .map(|info| ProcessView { tail: processes.tail(info.id, TAIL_BYTES).unwrap_or_default(), info })
+        .map(|info| ProcessView { tail: shown_tail(processes, info.id), info })
         .collect()
+}
+
+/// As a terminal would show it: a countdown is its last value, not every one.
+fn shown_tail(processes: &Processes, id: u32) -> String {
+    collapse_redraws(&processes.tail(id, TAIL_BYTES).unwrap_or_default()).into_owned()
 }
 
 /// Read when the tab opens and on each [`PROCESS_EVENT`].
@@ -87,7 +93,7 @@ mod tests {
     fn the_tab_lists_newest_first_with_what_each_wrote() {
         let processes = Processes::default();
         let dir = crate::testing::temp_dir("cmd-processes");
-        processes.start(&Shell::default(), "echo first; sleep 30", &dir, ".").unwrap();
+        processes.start(&Shell::default(), "printf 'zero\\rfirst\\n'; sleep 30", &dir, ".").unwrap();
         processes.start(&Shell::default(), "sleep 30", &dir, "sub").unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !views(&processes)[1].tail.contains("first") {

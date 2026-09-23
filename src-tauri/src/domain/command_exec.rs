@@ -165,7 +165,33 @@ pub enum CommandError {
     Io(String),
 }
 
-/// Keeps the beginning and the end of `text`, dropping the middle.
+/// `text` as a terminal would leave it: a carriage return goes back to the
+/// start of the line, and what follows is written over it. A progress bar or
+/// a countdown redraws one line hundreds of times; kept raw, every redraw
+/// reached the model — and ran into the cut — glued into one line.
+pub fn collapse_redraws(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    // A Windows line end needs nothing of its own: the empty part after its
+    // return writes over nothing.
+    let lines: Vec<String> = text
+        .split('\n')
+        .map(|line| {
+            let mut shown: Vec<char> = Vec::new();
+            for part in line.split('\r') {
+                let part: Vec<char> = part.chars().collect();
+                let over = part.len().min(shown.len());
+                shown.splice(..over, part);
+            }
+            shown.into_iter().collect()
+        })
+        .collect();
+    std::borrow::Cow::Owned(lines.join("\n"))
+}
+
+/// Keeps the beginning and the end of `text`, dropping the middle — after
+/// [`collapse_redraws`], so what is cut is what a terminal would have shown.
 ///
 /// Head-only truncation is what a diff wants and the wrong shape here. A test
 /// run's verdict is in the last lines (`test result: FAILED. 3 passed; 497
@@ -174,6 +200,7 @@ pub enum CommandError {
 /// missing, so the model can ask for them specifically rather than re-running
 /// the whole thing blind.
 pub fn truncate_output(text: &str, max_chars: usize) -> (String, bool) {
+    let text = &*collapse_redraws(text);
     if text.chars().count() <= max_chars {
         return (text.to_string(), false);
     }
@@ -246,6 +273,26 @@ const PARTIAL_LINE_MIN: usize = 80;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_carriage_return_writes_over_the_line_as_a_terminal_would() {
+        let countdown = "\rleft: 60 s\rleft: 59 s\rleft:  9 s";
+        assert_eq!(collapse_redraws(countdown), "left:  9 s");
+        // A shorter redraw leaves the end of the longer one, as on screen.
+        assert_eq!(collapse_redraws("50% done\r75%"), "75% done");
+        // A line left at a return keeps what it showed.
+        assert_eq!(collapse_redraws("step 1\n42%\r"), "step 1\n42%");
+        // Windows line ends are line ends, not redraws.
+        assert_eq!(collapse_redraws("a\r\nb\r\n"), "a\nb\n");
+        assert_eq!(collapse_redraws("plain\ntext"), "plain\ntext");
+    }
+
+    #[test]
+    fn the_cut_counts_what_a_terminal_would_show() {
+        let bar: String = (0..=1000).map(|i| format!("\r{i:>4}/1000")).collect();
+        let (out, cut) = truncate_output(&format!("start\n{bar}\ndone"), 200);
+        assert_eq!((out.as_str(), cut), ("start\n1000/1000\ndone", false));
+    }
 
     fn request(timeout_seconds: Option<u32>) -> CommandRequest {
         CommandRequest {

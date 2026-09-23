@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { describeActive, describeRun, describeTool } from "../lib/describeTool";
+import { collapseRedraws, describeActive, describeRun, describeTool } from "../lib/describeTool";
 import type { Block } from "../lib/chatTurnReducer";
 
 // What a tool call looks like in the transcript. Rendering, so the tests are
@@ -461,3 +461,19 @@ describe("a call under way, in words", () => {
     expect(describeActive(tool({ name: "runCommand", arguments: '{"command":"cargo test"}' }))).toMatch(/^Running cargo test/);
   });
 });
+
+describe("collapseRedraws", () => {
+  test("a carriage return writes over the line, as a terminal would", () => {
+    expect(collapseRedraws("\rleft: 60 s\rleft: 59 s\rleft:  9 s")).toBe("left:  9 s");
+    expect(collapseRedraws("50% done\r75%")).toBe("75% done");
+    expect(collapseRedraws("step 1\n42%\r")).toBe("step 1\n42%");
+    expect(collapseRedraws("a\r\nb\r\n")).toBe("a\nb\n");
+    expect(collapseRedraws("plain")).toBe("plain");
+  });
+
+  test("a running command's live output shows the last redraw", () => {
+    const running = tool({ name: "runCommand", arguments: '{"command":"timer"}', status: "running", output: "go\n\rleft: 60\rleft: 59" });
+    expect(describeTool(running).detail).toBe("go\nleft: 59");
+  });
+});
+

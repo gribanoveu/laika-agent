@@ -79,6 +79,22 @@ function parseArguments(raw: string): Json {
 const str = (value: unknown) => (typeof value === "string" ? value : undefined);
 const num = (value: unknown) => (typeof value === "number" ? value : undefined);
 
+/**
+ * Output as a terminal would leave it: a carriage return goes back to the
+ * start of the line and what follows writes over it — a countdown shows its
+ * last value. The backend does the same to what it settles
+ * (`domain::command_exec::collapse_redraws`); this is for the live stream.
+ */
+export function collapseRedraws(text: string): string {
+  if (!text.includes("\r")) return text;
+  return text
+    .split("\n")
+    .map((line) =>
+      line.split("\r").reduce((shown, part) => [...part].concat([...shown].slice([...part].length)).join(""), ""),
+    )
+    .join("\n");
+}
+
 export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDisplay {
   const args = parseArguments(block.arguments);
   const result = asObject(block.result);
@@ -292,7 +308,7 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
         // While it runs there is only what has streamed in; once it settles the
         // captured output is authoritative — and shorter, being truncated in
         // the middle rather than cut off wherever the turn ended.
-        detail: settled || streamed,
+        detail: settled || collapseRedraws(streamed),
       };
     }
 
