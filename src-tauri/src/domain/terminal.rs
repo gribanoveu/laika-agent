@@ -111,6 +111,29 @@ pub struct TerminalScreen {
     pub alternate: bool,
     /// The lines, oldest first. `output`, so the call log redacts it.
     pub output: String,
+    /// Lines left out at the front by [`TerminalScreen::fit`].
+    #[serde(default)]
+    pub cut: usize,
+}
+
+impl TerminalScreen {
+    /// At most `max` characters, the newest kept: whole lines go from the
+    /// front, and a last line longer than all of it keeps its end. A screen
+    /// is read for what happened last, unlike a command's output, whose
+    /// first lines say what it was doing.
+    pub fn fit(mut self, max: usize) -> Self {
+        let mut total = self.output.chars().count();
+        let lines: Vec<&str> = self.output.split('\n').collect();
+        let mut from = 0;
+        while total > max && from + 1 < lines.len() {
+            total -= lines[from].chars().count() + 1;
+            from += 1;
+        }
+        let kept = lines[from..].join("\n");
+        self.output = kept.chars().skip(total.saturating_sub(max)).collect();
+        self.cut = from;
+        self
+    }
 }
 
 /// The user's terminals as the agent sees them.
@@ -193,6 +216,31 @@ mod tests {
         let kept = scrollback.to_vec();
         assert_eq!(kept.len(), MAX_SCROLLBACK_BYTES);
         assert!(kept.ends_with(b"ab\n"));
+    }
+
+    fn screen(output: &str) -> TerminalScreen {
+        TerminalScreen { id: 1, shell: "zsh".into(), state: TerminalState::Running, alternate: false, output: output.into(), cut: 0 }
+    }
+
+    #[test]
+    fn a_screen_that_fits_is_left_as_it_is() {
+        assert_eq!(screen("ab\ncd").fit(5), screen("ab\ncd"));
+    }
+
+    /// Whole lines from the front, counted — in characters, not bytes.
+    #[test]
+    fn a_screen_too_long_keeps_its_last_lines() {
+        let fitted = screen("один\nдва\nтри\nчетыре").fit(10);
+        assert_eq!((fitted.output.as_str(), fitted.cut), ("три\nчетыре", 2));
+        // Exactly at the limit, nothing more goes.
+        assert_eq!(screen("один\nдва").fit(8).cut, 0);
+        assert_eq!(screen("один\nдва").fit(7).output, "два");
+    }
+
+    #[test]
+    fn a_last_line_longer_than_the_limit_keeps_its_end() {
+        let fitted = screen("first\n0123456789").fit(4);
+        assert_eq!((fitted.output.as_str(), fitted.cut), ("6789", 1));
     }
 
     #[test]

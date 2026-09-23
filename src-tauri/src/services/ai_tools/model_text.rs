@@ -351,10 +351,14 @@ fn terminal_screen(screen: &crate::domain::terminal::TerminalScreen) -> String {
     if screen.alternate {
         out.push_str(" — a full-screen program is drawing it");
     }
+    out.push(':');
+    if screen.cut > 0 {
+        out.push_str(&format!("\n[{} earlier lines left out — more than one result carries; ask for fewer lines]", screen.cut));
+    }
     if screen.output.is_empty() {
-        out.push_str(":\n(nothing on screen)");
+        out.push_str("\n(nothing on screen)");
     } else {
-        out.push_str(&format!(":\n{}", screen.output));
+        out.push_str(&format!("\n{}", screen.output));
     }
     out
 }
@@ -572,9 +576,19 @@ mod tests {
                 state,
                 alternate,
                 output: output.into(),
+                cut: 0,
             }))
         };
         assert_eq!(screen(TerminalState::Running, false, "$ ls\na.rs"), "The user's terminal #2 (zsh):\n$ ls\na.rs");
+        let cut = for_model(&ToolResult::TerminalScreen(TerminalScreen {
+            id: 2,
+            shell: "zsh".into(),
+            state: TerminalState::Running,
+            alternate: false,
+            output: "tail".into(),
+            cut: 40,
+        }));
+        assert_eq!(cut, "The user's terminal #2 (zsh):\n[40 earlier lines left out — more than one result carries; ask for fewer lines]\ntail");
         assert_eq!(
             screen(TerminalState::Exited { code: Some(1) }, false, ""),
             "The user's terminal #2 (zsh, its shell exited with code 1):\n(nothing on screen)"

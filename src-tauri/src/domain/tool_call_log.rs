@@ -315,6 +315,7 @@ mod tests {
                     state: crate::domain::terminal::TerminalState::Running,
                     alternate: false,
                     output: LEAK.into(),
+                    cut: 0,
                 }),
             ),
             // The command line stays in the log, as runCommand's does.

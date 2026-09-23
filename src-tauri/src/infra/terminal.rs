@@ -254,6 +254,7 @@ impl UserTerminals for Terminals {
             state,
             alternate: screen.alternate_screen(),
             output: last_lines(screen, lines),
+            cut: 0,
         })
     }
 
