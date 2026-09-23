@@ -7,6 +7,15 @@ mod data_policy;
 mod testing;
 pub mod services;
 
+/// What of the window comes back. Not the frame: that is the config's
+/// (tauri.macos.conf.json swaps it), and a restored one would outlive every
+/// change to it.
+#[cfg(desktop)]
+fn window_state() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::all() & !StateFlags::DECORATIONS
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -22,18 +31,25 @@ pub fn run() {
             let _ = window.set_focus();
         }
     }));
-    // Saved on exit, applied when the window is created — so the window opens
-    // where it was, not at the config's size and then jumping.
+    // Applied when the window is created — so the window opens where it was,
+    // not at the config's size and then jumping.
     #[cfg(desktop)]
-    // Not the frame: that is the config's (tauri.macos.conf.json swaps it), and a
-    // restored one would outlive every change to it.
-    let builder = builder.plugin(
-        tauri_plugin_window_state::Builder::default()
-            .with_state_flags(
-                tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::DECORATIONS,
-            )
-            .build(),
-    );
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().with_state_flags(window_state()).build());
+    // The plugin writes the file only on a clean exit. `tauri dev` restarting
+    // after a rebuild, a Ctrl+C, a crash: none is one, and the window came back
+    // at whatever size the last clean exit saw. Leaving the window — for the
+    // editor or the terminal that is about to restart it — and closing it
+    // write it too.
+    #[cfg(desktop)]
+    let builder = builder.on_window_event(|window, event| {
+        use tauri::Manager;
+        use tauri_plugin_window_state::AppHandleExt;
+        if matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::CloseRequested { .. }) {
+            if let Err(e) = window.app_handle().save_window_state(window_state()) {
+                eprintln!("window size and position not saved: {e}");
+            }
+        }
+    });
     builder
         .plugin(tauri_plugin_opener::init())
         // The folder picker. A file chooser is the platform's dialog, not one
