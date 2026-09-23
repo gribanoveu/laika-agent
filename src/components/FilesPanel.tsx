@@ -1,0 +1,209 @@
+import { useState, type CSSProperties } from "react";
+import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
+import type { FileStatus, TreeEntry } from "../lib/chat";
+import type { Block } from "../lib/chatTurnReducer";
+import { touchedFiles, type Touch, type TouchedFile } from "../lib/touchedFiles";
+import { useFileTree } from "../hooks/useFileTree";
+import "./FilesPanel.css";
+
+type Props = {
+  /** On screen: the folder is read only while it is. */
+  active: boolean;
+  /** The open chat's transcript: what the agent did is read from its calls. */
+  blocks: Block[];
+  workspace: string | null;
+};
+
+/** As a file explorer marks them, with the word in the tooltip. */
+const STATUS: Record<FileStatus, { letter: string; title: string }> = {
+  modified: { letter: "M", title: "Modified" },
+  added: { letter: "A", title: "Added to the index" },
+  untracked: { letter: "U", title: "Untracked" },
+  conflicted: { letter: "!", title: "Conflicted" },
+};
+
+type Tree = ReturnType<typeof useFileTree>;
+
+/**
+ * An unfolded folder and the run of folders under it that each hold only the
+ * next: drawn as one row, `src / main / java`, as an editor's explorer does.
+ * The run ends at a folder that is folded, not read yet, or holds a file or a
+ * choice of folders.
+ */
+function compacted(head: TreeEntry, tree: Tree): TreeEntry[] {
+  const run = [head];
+  for (let last = head; tree.expanded.has(last.path); ) {
+    const listing = tree.listings[last.path];
+    const only = listing && listing.entries.length === 1 && listing.more === 0 ? listing.entries[0] : null;
+    if (!only?.isDir || !tree.expanded.has(only.path)) break;
+    run.push(only);
+    last = only;
+  }
+  return run;
+}
+
+/** One folder's entries, and under each unfolded one its own — as deep as unfolded. */
+function TreeLevel({ dir, depth, tree }: { dir: string; depth: number; tree: Tree }) {
+  const listing = tree.listings[dir];
+  const indent = { "--depth": depth } as CSSProperties;
+  if (!listing) {
+    return (
+      <div className="tree-note" style={indent}>
+        Loading…
+      </div>
+    );
+  }
+  return (
+    <>
+      {listing.entries.map((entry) =>
+        entry.isDir ? (
+          <FolderRow key={entry.path} entry={entry} depth={depth} tree={tree} />
+        ) : (
+          <div
+            key={entry.path}
+            className={`tree-row${entry.status ? ` ${entry.status}` : ""}`}
+            style={indent}
+            title={entry.path}
+          >
+            <span className="tree-chev" />
+            <File className="tree-icon" size={13} aria-hidden />
+            <span className="tree-name">{entry.name}</span>
+            {entry.status && (
+              <span className={`tree-status ${entry.status}`} title={STATUS[entry.status].title}>
+                {STATUS[entry.status].letter}
+              </span>
+            )}
+          </div>
+        ),
+      )}
+      {listing.more > 0 && (
+        <div className="tree-note" style={indent}>
+          …and {listing.more} more
+        </div>
+      )}
+    </>
+  );
+}
+
+/** A folder, or a run of them in one row; a click folds or unfolds the whole run. */
+function FolderRow({ entry, depth, tree }: { entry: TreeEntry; depth: number; tree: Tree }) {
+  const open = tree.expanded.has(entry.path);
+  const run = compacted(entry, tree);
+  const last = run[run.length - 1];
+  const Icon = open ? FolderOpen : Folder;
+  return (
+    <div>
+      <button
+        type="button"
+        className={`tree-row dir${open ? " open" : ""}`}
+        style={{ "--depth": depth } as CSSProperties}
+        aria-expanded={open}
+        title={last.path}
+        onClick={() => tree.toggle(entry.path)}
+      >
+        <span className="tree-chev">
+          <ChevronRight size={12} />
+        </span>
+        <Icon className="tree-icon" size={13} aria-hidden />
+        <span className="tree-name">
+          {run.map((folder, at) => (
+            <span key={folder.path} className={at < run.length - 1 ? "tree-part" : undefined}>
+              {at > 0 && <span className="tree-sep"> / </span>}
+              {folder.name}
+            </span>
+          ))}
+        </span>
+        {entry.changed && <span className="tree-changed" title="Changes inside" />}
+      </button>
+      {open && <TreeLevel dir={last.path} depth={depth + 1} tree={tree} />}
+    </div>
+  );
+}
+
+const TOUCH_LABEL: Record<Touch, string> = {
+  read: "read",
+  edited: "edited",
+  written: "written",
+  deleted: "deleted",
+  moved: "moved",
+};
+
+/** The Files tab: the files the agent worked with in this chat, or the open folder as a tree. */
+export function FilesPanel({ active, blocks, workspace }: Props) {
+  const [view, setView] = useState<"chat" | "folder">("chat");
+  const files = touchedFiles(blocks, workspace);
+  // The tree is read only while its own tab is the one showing.
+  const tree = useFileTree(active && view === "folder", workspace);
+  return (
+    <div className="panel-section">
+      <div className="files-tabs" role="tablist" aria-label="Files">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "chat"}
+          className={`files-tab${view === "chat" ? " active" : ""}`}
+          onClick={() => setView("chat")}
+        >
+          In this chat
+          {files.length > 0 && <span className="files-tab-count">{files.length}</span>}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "folder"}
+          className={`files-tab${view === "folder" ? " active" : ""}`}
+          title={workspace ?? undefined}
+          disabled={!workspace}
+          onClick={() => setView("folder")}
+        >
+          All files
+        </button>
+      </div>
+
+      <div role="tabpanel">
+        {view === "chat" ? (
+          files.length === 0 ? (
+            <div className="files-empty">Files the agent reads or changes in this chat show up here.</div>
+          ) : (
+            files.map((file) => <TouchedRow key={file.path} file={file} />)
+          )
+        ) : tree.error ? (
+          <div className="files-empty">{tree.error}</div>
+        ) : (
+          <TreeLevel dir="" depth={0} tree={tree} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TouchedRow({ file }: { file: TouchedFile }) {
+  const cut = file.path.lastIndexOf("/");
+  const dir = cut > 0 ? file.path.slice(0, cut) : null;
+  const gone = file.touches[file.touches.length - 1] === "deleted";
+  return (
+    <div className={`files-row${gone ? " gone" : ""}`} title={file.path}>
+      <span className="files-label">
+        <span className="files-name">{file.path.slice(cut + 1)}</span>
+        {dir && (
+          <span className="files-dir">
+            <bdi>{dir}</bdi>
+          </span>
+        )}
+      </span>
+      <span className="files-touches">
+        {file.touches.map((touch) => (
+          <span key={touch} className={`files-touch ${touch}`}>
+            {TOUCH_LABEL[touch]}
+          </span>
+        ))}
+      </span>
+      {(file.add > 0 || file.del > 0) && (
+        <span className="files-stat">
+          {file.add > 0 && <span className="add">+{file.add}</span>}
+          {file.del > 0 && <span className="del">−{file.del}</span>}
+        </span>
+      )}
+    </div>
+  );
+}

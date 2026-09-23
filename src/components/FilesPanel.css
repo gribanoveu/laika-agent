@@ -1,0 +1,219 @@
+/* The tab's own two views, switched here: what the agent touched, and the
+   whole folder. */
+.files-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 2px 8px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+}
+.files-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.files-tab:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.files-tab.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.files-tab:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.files-tab-count {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.files-empty {
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+/* A file the agent worked with: its name and folder, what it did, how much. */
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.files-row:hover {
+  background: var(--bg-hover);
+}
+.files-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.files-name,
+.files-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-name {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+/* Gone from disk: said by the name, not only by the tag. */
+.files-row.gone .files-name {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+/* A long path is cut from its start: the folders nearest the file tell them apart. */
+.files-dir {
+  direction: rtl;
+  text-align: left;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.files-touches {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+.files-touch {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-faint) 16%, transparent);
+}
+.files-touch.edited,
+.files-touch.written {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.files-touch.deleted {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+.files-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The open folder, one row per entry, indented by how deep it sits. */
+.tree-row {
+  --indent: calc(4px + var(--depth, 0) * 14px);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 8px 3px var(--indent);
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+.tree-row.dir {
+  cursor: pointer;
+  color: var(--text);
+}
+.tree-chev {
+  flex: none;
+  width: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.tree-chev svg {
+  transition: transform 0.15s;
+}
+.tree-row.open .tree-chev svg {
+  transform: rotate(90deg);
+}
+.tree-icon {
+  flex: none;
+  color: var(--text-faint);
+}
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A run of folders in one row: the folder whose contents are shown in full,
+   the ones it sits in quieter. */
+.tree-part {
+  color: var(--text-dim);
+}
+.tree-sep {
+  color: var(--text-faint);
+  white-space: pre;
+}
+/* A changed file's name takes its status colour, as in an editor's explorer. */
+.tree-row.modified .tree-name {
+  color: var(--amber);
+}
+.tree-row.added .tree-name,
+.tree-row.untracked .tree-name {
+  color: var(--green);
+}
+.tree-row.conflicted .tree-name {
+  color: var(--red);
+}
+.tree-status {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.tree-status.modified {
+  color: var(--amber);
+}
+.tree-status.added,
+.tree-status.untracked {
+  color: var(--green);
+}
+.tree-status.conflicted {
+  color: var(--red);
+}
+/* A folder with a change inside: a dot where a file has its letter. */
+.tree-changed {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--amber) 70%, transparent);
+}
+.tree-note {
+  padding: 3px 8px 3px calc(24px + var(--depth, 0) * 14px);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}

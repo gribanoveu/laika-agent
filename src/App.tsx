@@ -236,6 +236,7 @@ export default function App() {
     onNotify: toast.show,
     commitDraft: { message: commitMessage, onMessage: setCommitMessage },
     processFocus,
+    chatBlocks: agent.turn.blocks,
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,

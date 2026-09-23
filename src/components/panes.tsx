@@ -10,6 +10,7 @@ import {
   Webhook,
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
+import { FilesPanel } from "./FilesPanel";
 import { ItemList } from "./ItemList";
 import { ProcessList } from "./ProcessList";
 import { PlanPanel } from "./PlanPanel";
@@ -18,6 +19,7 @@ import { useRules } from "../hooks/useRules";
 import { useSkills } from "../hooks/useSkills";
 import type { HooksView, McpServerState, McpView, RuleListItem, SkillListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
+import type { Block } from "../lib/chatTurnReducer";
 
 /**
  * What every pane is drawn from. A pane that only it needs reads its own data
@@ -34,6 +36,8 @@ export type PaneContext = {
   commitDraft: { message: string; onMessage: (message: string) => void };
   /** The background process a chat row asked to see; a new object each ask. */
   processFocus: { id: number } | null;
+  /** The open chat's transcript, for the files its calls touched. */
+  chatBlocks: Block[];
   mcp: McpListProps;
   hooks: HooksListProps;
   plan: {
@@ -338,26 +342,8 @@ function RulesPane({ active, workspace }: PaneContext) {
 // ─── Files, Terminal ───────────────────────────────────────────────────────
 
 // Filled by its own command wrapper once that command exists.
-const WORKSPACE_FILES: string[] = [];
-
-function FilesPane() {
-  return (
-    <div className="panel-section">
-      <div className="section-label">
-        <span>Workspace</span>
-        <span className="count">{WORKSPACE_FILES.length}</span>
-      </div>
-      {WORKSPACE_FILES.length === 0 ? (
-        <div className="empty">No workspace indexed.</div>
-      ) : (
-        WORKSPACE_FILES.map((path) => (
-          <div className="file" key={path}>
-            <span>{path}</span>
-          </div>
-        ))
-      )}
-    </div>
-  );
+function FilesPane({ active, workspace, chatBlocks }: PaneContext) {
+  return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} />;
 }
 
 function TerminalPane({ active, processFocus }: PaneContext) {

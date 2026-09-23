@@ -157,6 +157,8 @@ describe("the side panel", () => {
     workspace: "/repo",
     onNotify: () => {},
     commitDraft: { message: "", onMessage: () => {} },
+    processFocus: null,
+    chatBlocks: [],
     mcp: {
       view: null,
       error: null,
