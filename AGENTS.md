@@ -78,6 +78,19 @@ The AI-agent tool surface lives in `domain/tools.rs` (tool identity, loop cost, 
 - New commands must be registered in `generate_handler![]` in `lib.rs` (`main.rs` only calls `run()`), and any new plugin/API surface needs a corresponding entry in `src-tauri/capabilities/*.json` — a command that "does nothing" at runtime usually means a missing capability entry, not a missing registration.
 - Long-running git operations (clone, fetch) run as `async` commands or via `spawn_blocking`, not on the IPC event loop.
 
+### Keeping the frontend current
+
+The frontend does not poll the backend for state. When backend state changes, the backend says so on a Tauri event, and the frontend reads again — a timer that re-asks is a bug, not a fallback.
+
+- **Tauri's events are the bus.** There is no app-wide bus or dispatcher on top of them: a named channel per source, with one enum per channel (the sink rule above), is what a generic bus would reduce to, minus the types. Today's channels: `chat:turn-event` (`commands/chat_events.rs`), `workspace-index:event` (`commands/workspace_events.rs`), `workspace-git:changed` (`commands/git.rs`). The name is a `pub const` beside the emitter, and a test pins it — the frontend's copy in `src/lib/` is a string.
+- **An event names what it is about** — the folder (`root`, the string `workspace_open` returned) or the turn (`turnId`). Events outlive their subject: a sync of the folder just left still reports, and a listener that does not check would apply it to the next one.
+- **An event is a signal to re-read, not the new state**, unless the payload is the data itself (a streamed delta). The listener calls the command it already has. This keeps one source of truth, and a lost or coalesced event costs nothing: the next one re-reads everything.
+- **Reuse a signal before adding one.** A change to the working tree already arrives as the index's `syncStarted`; `.git` is the one part that watcher leaves out, which is why `workspace-git:changed` exists. A new channel is for a change no existing one reports.
+- **Listen only while it matters.** A hook subscribes while its pane is on screen and unsubscribes on cleanup (`useStaging` is the pattern), reading once when it starts listening — what changed while it was hidden is not replayed.
+- Wrappers in `src/lib/` own the channel: `onIndexEvent`, `onGitChanged`, `onTurnEvent` — components and hooks never call `listen()` directly, as with `invoke()`.
+
+The one exception is `useProcesses` (the Terminal tab), which still polls every second for process output; it moves to an event when `infra/process_runner.rs` gets a sink. A clock that only redraws elapsed time (`ChatPanel`) is not polling.
+
 ## Filesystem & git
 
 - Prefer `git2` over shelling out to `git` for programmatic operations (diff, blame, branch listing); shell out only for actions you don't want to reimplement, isolated to one module.
