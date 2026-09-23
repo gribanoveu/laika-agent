@@ -79,6 +79,9 @@ export default function App() {
   // other dock, would otherwise throw away a message half written. A different
   // folder is a different repository, and starts empty.
   const [commitMessage, setCommitMessage] = useState("");
+  // Which background process a chat row asked the Terminal tab to show. The
+  // row and the tab are in different subtrees, so it passes through here.
+  const [processFocus, setProcessFocus] = useState<{ id: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // The MCP and hooks files open as a whole (JSON) or one entry at a time
@@ -230,6 +233,7 @@ export default function App() {
     workspace: workspace.path,
     onNotify: toast.show,
     commitDraft: { message: commitMessage, onMessage: setCommitMessage },
+    processFocus,
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
@@ -320,6 +324,10 @@ export default function App() {
             onExport={exportOpenChat}
             onImplement={conversation.value === "plan" ? implement : undefined}
             onOpenPlan={() => openTab("plan")}
+            onOpenProcess={(id) => {
+              openTab("terminal");
+              setProcessFocus({ id });
+            }}
             branchable={agent.branchable}
             onBranch={agent.branch}
           />

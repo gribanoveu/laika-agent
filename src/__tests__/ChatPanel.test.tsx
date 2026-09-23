@@ -625,3 +625,40 @@ describe("a finished call's diff", () => {
     expect(container.querySelectorAll(".diff-view .diff-add")).toHaveLength(1);
   });
 });
+
+describe("a background process started from the chat", () => {
+  const started = {
+    kind: "tool",
+    id: "b1",
+    round: 1,
+    name: "runCommand",
+    arguments: '{"command":"npm run dev","background":true}',
+    status: "done",
+    result: { result: "processStarted", id: 3, command: "npm run dev", cwd: ".", state: { state: "running" } },
+    output: "",
+  } as Block;
+
+  test("its row opens it in the Terminal tab, by id", () => {
+    const opened: number[] = [];
+    render(
+      <ChatPanel
+        workspace="/tmp/project"
+        turn={state([started])}
+        onDecide={() => {}}
+        onOpenRepo={() => {}}
+        onNewChat={() => {}}
+        onOpenProcess={(id) => opened.push(id)}
+      />,
+    );
+    const row = screen.getByTitle("Show in Terminal") as HTMLButtonElement;
+    expect(row.disabled).toBe(false);
+    fireEvent.click(row);
+    expect(opened).toEqual([3]);
+  });
+
+  test("with nowhere to open it, the row stays as it was", () => {
+    panel(state([started]));
+    expect(screen.queryByTitle("Show in Terminal")).toBeNull();
+  });
+});
+

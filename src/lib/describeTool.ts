@@ -23,6 +23,8 @@ export type ToolDisplay = {
   detail: string;
   /** `detail` is a unified diff, to be drawn as one rather than as text. */
   diff?: boolean;
+  /** A background process this call started: the row opens it in the Terminal tab. */
+  process?: number;
 };
 
 export const LABELS: Record<string, string> = {
@@ -291,7 +293,13 @@ export function describeTool(block: Extract<Block, { kind: "tool" }>): ToolDispl
       // Started to run on: the answer is a number, not an exit code.
       if (args.background === true) {
         const id = num(result.id);
-        return { name, arg: str(args.command) ?? "", meta: id === undefined ? "background" : `background #${id}`, detail: "" };
+        return {
+          name,
+          arg: str(args.command) ?? "",
+          meta: id === undefined ? "background" : `background #${id}`,
+          detail: "",
+          process: id,
+        };
       }
       const streamed = block.output;
       const settled = `${str(result.stdout) ?? ""}${str(result.stderr) ?? ""}`;

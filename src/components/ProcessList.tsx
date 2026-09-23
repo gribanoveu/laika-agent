@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronRight, Folder, Square } from "lucide-react";
 import { processStatus, type ProcessView } from "../lib/chat";
 import "./ProcessList.css";
 
@@ -6,6 +7,8 @@ type Props = {
   processes: ProcessView[];
   error: string | null;
   onStop: (id: number) => void;
+  /** A process asked for from the chat: it opens and scrolls into view. A new object each ask. */
+  focus?: { id: number } | null;
 };
 
 /** Kept scrolled to the end, where a running process's news is. */
@@ -15,17 +18,24 @@ function Tail({ text }: { text: string }) {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [text]);
   return (
-    <pre ref={ref} className="process-tail">
+    <pre ref={ref} className={`process-tail${text ? "" : " empty"}`}>
       {text || "No output yet."}
     </pre>
   );
 }
 
 /** The agent's background processes: what runs, where, how it ended, and the end of what it wrote. */
-export function ProcessList({ processes, error, onStop }: Props) {
+export function ProcessList({ processes, error, onStop, focus = null }: Props) {
   // The newest is the one being watched; others open on a click.
   const [open, setOpen] = useState<number | null>(null);
   const shown = open ?? processes[0]?.id ?? null;
+  const cards = useRef(new Map<number, HTMLDivElement>());
+
+  useEffect(() => {
+    if (!focus) return;
+    setOpen(focus.id);
+    cards.current.get(focus.id)?.scrollIntoView?.({ block: "nearest" });
+  }, [focus]);
 
   if (!processes.length) {
     return (
@@ -41,31 +51,48 @@ export function ProcessList({ processes, error, onStop }: Props) {
       {processes.map((p) => {
         const running = p.state.state === "running";
         const failed = p.state.state === "exited" && p.state.code !== 0;
+        const state = running ? "running" : failed ? "failed" : "ended";
+        const isOpen = shown === p.id;
         return (
-          <div key={p.id} className={`process${shown === p.id ? " open" : ""}`}>
-            <div className="process-head" onClick={() => setOpen(shown === p.id ? -1 : p.id)}>
-              <span className="process-id">#{p.id}</span>
+          <div
+            key={p.id}
+            ref={(node) => {
+              if (node) cards.current.set(p.id, node);
+              else cards.current.delete(p.id);
+            }}
+            className={`process ${state}${isOpen ? " open" : ""}`}
+          >
+            <div className="process-head" onClick={() => setOpen(isOpen ? -1 : p.id)}>
+              <span className="process-dot" aria-hidden />
               <div className="process-body">
+                {/* The whole command, wrapped: the card is where it is read in full. */}
                 <code className="process-command">{p.command}</code>
-                <span className="process-cwd">{p.cwd}</span>
+                <div className="process-meta">
+                  <span className="process-id">#{p.id}</span>
+                  <span className="process-cwd" title="Where it runs, from the open folder">
+                    <Folder size={11} aria-hidden />
+                    {p.cwd === "." ? "project root" : p.cwd}
+                  </span>
+                  <span className="process-state">{processStatus(p.state)}</span>
+                </div>
               </div>
-              <span className={`process-state ${running ? "running" : failed ? "failed" : "ended"}`}>
-                {processStatus(p.state)}
-              </span>
               {running && (
                 <button
                   type="button"
-                  className="btn btn-ghost process-stop"
+                  className="process-stop"
+                  title="Stop"
                   onClick={(e) => {
                     e.stopPropagation();
                     onStop(p.id);
                   }}
                 >
+                  <Square size={10} fill="currentColor" aria-hidden />
                   Stop
                 </button>
               )}
+              <ChevronRight className="process-chev" size={13} aria-hidden />
             </div>
-            {shown === p.id && <Tail text={p.tail} />}
+            {isOpen && <Tail text={p.tail} />}
           </div>
         );
       })}

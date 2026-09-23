@@ -110,6 +110,25 @@ describe("the process list", () => {
     expect(screen.queryByText("ready on :5173")).toBeNull();
   });
 
+  test("names the folder it runs in, the open folder's root in words", () => {
+    render(<ProcessList processes={listed} error={null} onStop={() => {}} />);
+    expect(screen.getByText("web")).toBeTruthy();
+    expect(screen.getByText("project root")).toBeTruthy();
+  });
+
+  test("a process asked for from the chat opens, and asking again reopens it", () => {
+    const { rerender } = render(<ProcessList processes={listed} error={null} onStop={() => {}} focus={null} />);
+    expect(screen.queryByText("error[E0433]")).toBeNull();
+    rerender(<ProcessList processes={listed} error={null} onStop={() => {}} focus={{ id: 1 }} />);
+    expect(screen.getByText("error[E0433]")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("cargo build"));
+    expect(screen.queryByText("error[E0433]")).toBeNull();
+    // The same process again: a new ask, so it opens though the id is the same.
+    rerender(<ProcessList processes={listed} error={null} onStop={() => {}} focus={{ id: 1 }} />);
+    expect(screen.getByText("error[E0433]")).toBeTruthy();
+  });
+
   test("with nothing running it says what would", () => {
     render(<ProcessList processes={[]} error={null} onStop={() => {}} />);
     expect(screen.getByText(/No background processes/)).toBeTruthy();

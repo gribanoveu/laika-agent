@@ -32,6 +32,8 @@ export type PaneContext = {
   onNotify: (msg: string) => void;
   /** The commit message being written in Changes. */
   commitDraft: { message: string; onMessage: (message: string) => void };
+  /** The background process a chat row asked to see; a new object each ask. */
+  processFocus: { id: number } | null;
   mcp: McpListProps;
   hooks: HooksListProps;
   plan: {
@@ -358,7 +360,7 @@ function FilesPane() {
   );
 }
 
-function TerminalPane({ active }: PaneContext) {
+function TerminalPane({ active, processFocus }: PaneContext) {
   const { processes, error, stop } = useProcesses(active);
   return (
     <div className="panel-section">
@@ -366,7 +368,7 @@ function TerminalPane({ active }: PaneContext) {
         <span>Background processes</span>
         <span>{processes.filter((p) => p.state.state === "running").length} running</span>
       </div>
-      <ProcessList processes={processes} error={error} onStop={stop} />
+      <ProcessList processes={processes} error={error} onStop={stop} focus={processFocus} />
     </div>
   );
 }

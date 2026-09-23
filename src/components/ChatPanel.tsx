@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  ArrowUpRight,
   Brain,
   Loader2,
   ChevronRight,
@@ -53,18 +54,25 @@ const TOOL_ICON: Record<string, typeof FileText> = {
 };
 
 
-function ToolRow({ block }: { block: Extract<Block, { kind: "tool" }> }) {
+/** Opens a background process in the Terminal tab. */
+type OpenProcess = (id: number) => void;
+
+function ToolRow({ block, onOpenProcess }: { block: Extract<Block, { kind: "tool" }>; onOpenProcess?: OpenProcess }) {
   const [open, setOpen] = useState(false);
   const shown = describeTool(block);
   const Icon = TOOL_ICON[shown.name] ?? Terminal;
+  // A background start has nothing to unfold here: its output is the
+  // Terminal tab's, and the row goes there.
+  const process = shown.process !== undefined && onOpenProcess ? shown.process : undefined;
 
   return (
     <div className={`tool-item${open ? " open" : ""} ${block.status}`}>
       <button
         className="tool"
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={!shown.detail}
+        title={process !== undefined ? "Show in Terminal" : undefined}
+        onClick={() => (process !== undefined ? onOpenProcess?.(process) : setOpen((v) => !v))}
+        disabled={!shown.detail && process === undefined}
       >
         <span className="ico">
           <Icon size={13} />
@@ -72,7 +80,11 @@ function ToolRow({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         <span className="name">{shown.name}</span>
         <span className="arg">{shown.arg}</span>
         {shown.meta && <span className="meta">{shown.meta}</span>}
-        {shown.detail && <ChevronRight className="chev" size={12} />}
+        {process !== undefined ? (
+          <ArrowUpRight className="chev" size={12} />
+        ) : (
+          shown.detail && <ChevronRight className="chev" size={12} />
+        )}
       </button>
       {open &&
         shown.detail &&
@@ -338,7 +350,7 @@ function activity(run: Run): string {
   return last.kind === "tool" ? describeActive(last) : "Thinking";
 }
 
-function ToolRun({ run, live }: { run: Run; live: boolean }) {
+function ToolRun({ run, live, onOpenProcess }: { run: Run; live: boolean; onOpenProcess?: OpenProcess }) {
   const tools = run.blocks.filter((b): b is Tool => b.kind === "tool");
   const failed = tools.filter((t) => t.status === "failed").length;
   // Held for a moment each, so quick calls do not flicker past unread.
@@ -365,7 +377,11 @@ function ToolRun({ run, live }: { run: Run; live: boolean }) {
       </summary>
       <div className="tools">
         {run.blocks.map((block) =>
-          block.kind === "tool" ? <ToolRow key={block.id} block={block} /> : renderBlock(block, () => {}, false),
+          block.kind === "tool" ? (
+            <ToolRow key={block.id} block={block} onOpenProcess={onOpenProcess} />
+          ) : (
+            renderBlock(block, () => {}, false)
+          ),
         )}
       </div>
     </details>
@@ -398,6 +414,8 @@ type Props = {
   onImplement?: () => void;
   /** Opens the Plan tab, where the plan is read and edited before handing it over. */
   onOpenPlan?: () => void;
+  /** Opens the Terminal tab on a background process a call started. */
+  onOpenProcess?: (id: number) => void;
   /** Bubbles a branch can start at; `null` while a turn runs. */
   branchable?: ReadonlySet<string> | null;
   onBranch?: (bubbleId: string) => void;
@@ -420,6 +438,7 @@ export function ChatPanel({
   onNewChat,
   onImplement,
   onOpenPlan,
+  onOpenProcess,
   branchable = null,
   onBranch,
 }: Props) {
@@ -535,11 +554,12 @@ export function ChatPanel({
                       // Only the work at the very end is under way; a run the
                       // agent has already written past is finished.
                       live={turn.status === "running" && index === groups.length - 1 && at === items.length - 1}
+                      onOpenProcess={onOpenProcess}
                     />
                   ) : block.kind === "user" ? (
                     <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
                   ) : (
-                    renderBlock(block, onDecide, block.id === streamingId)
+                    renderBlock(block, onDecide, block.id === streamingId, onOpenProcess)
                   ),
                 )}
                 {workedFooter(groups, index, turn)}
@@ -618,6 +638,7 @@ function renderBlock(
   block: Block,
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void,
   streaming: boolean,
+  onOpenProcess?: OpenProcess,
 ) {
   switch (block.kind) {
     case "user":
@@ -665,7 +686,7 @@ function renderBlock(
     case "tool":
       return (
         <div className="tools" key={block.id}>
-          <ToolRow block={block} />
+          <ToolRow block={block} onOpenProcess={onOpenProcess} />
         </div>
       );
     case "approval":
