@@ -292,30 +292,14 @@ fn stream_error(error: ErrorBody) -> LlmError {
 
 fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
     let messages = &request.messages;
-    // What the app says before the conversation, the conversation, and what
-    // it says after it — the checklist, which changes round to round.
+    // What the app says before the conversation, and the conversation. Nothing
+    // comes after it: the checklist lives in the history.
     let lead = messages.iter().take_while(|m| m.role == LlmRole::System).count();
-    let end = messages.iter().rposition(|m| m.role != LlmRole::System).map_or(lead, |i| i + 1);
 
     let mut system: Vec<Value> =
         messages[..lead].iter().filter_map(|m| text_block(m.content.as_deref())).collect();
-    let mut conversation = wire_messages(&messages[lead..end]);
+    let mut conversation = wire_messages(&messages[lead..]);
     mark_cache_points(&mut system, &mut conversation);
-
-    // After the cache points, so the next round still finds the prefix it
-    // wrote: that one had this round's results without the checklist.
-    let tail: Vec<Value> =
-        messages[end..].iter().filter_map(|m| text_block(m.content.as_deref())).collect();
-    if !tail.is_empty() {
-        match conversation.last_mut() {
-            Some(last) if last["role"] == "user" => {
-                if let Some(content) = last["content"].as_array_mut() {
-                    content.extend(tail);
-                }
-            }
-            _ => conversation.push(json!({ "role": "user", "content": tail })),
-        }
-    }
 
     let tools: Vec<Value> = request
         .tools
@@ -637,9 +621,8 @@ mod tests {
         assert_eq!(body["stream"], true);
     }
 
-    /// The three points, and the checklist after them: the round that
-    /// follows sends these results again without it, and must still find
-    /// the prefix this one wrote.
+    /// The three points: the end of the prompt, and the last two user
+    /// messages, where the next round finds the prefix this one wrote.
     #[test]
     fn the_cache_points_end_the_prompt_and_the_last_two_user_messages() {
         let messages = vec![
@@ -649,7 +632,6 @@ mod tests {
             LlmMessage::user("second"),
             LlmMessage::tool_requests(vec![call("c1", "{}")]),
             LlmMessage::tool_result("c1", "result"),
-            LlmMessage::system("## Checklist"),
         ];
         let body = body(&request(messages), 1, None);
         let cached = json!({"type":"ephemeral"});
@@ -661,21 +643,10 @@ mod tests {
         assert_eq!(
             wire[4]["content"],
             json!([
-                {"type":"tool_result","tool_use_id":"c1","content":"result","cache_control":{"type":"ephemeral"}},
-                {"type":"text","text":"## Checklist"}
+                {"type":"tool_result","tool_use_id":"c1","content":"result","cache_control":{"type":"ephemeral"}}
             ])
         );
         assert_eq!(wire.len(), 5);
-    }
-
-    /// Nothing to append it to: an assistant message last is never sent by
-    /// the loop, but the request must still alternate if it were.
-    #[test]
-    fn a_checklist_after_an_assistant_message_is_a_user_message_of_its_own() {
-        let messages = vec![LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::system("list")];
-        let wire = &body(&request(messages), 1, None)["messages"];
-        assert_eq!(wire[2], json!({"role":"user","content":[{"type":"text","text":"list"}]}));
-        assert_eq!(wire.as_array().unwrap().len(), 3);
     }
 
     #[test]

@@ -19,7 +19,6 @@
 //! as if each round started from nothing (`agent_bench`, `migrate-records`).
 //! A server that never sent reasoning never gets any back.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -106,7 +105,10 @@ impl OpenAiCompatibleProvider {
 
         WireRequest {
             model: &request.model,
-            messages: wire_messages(&request.messages),
+            // In the order it was built: the system messages lead, the only
+            // place several local chat templates accept one, and nothing adds
+            // one later — the checklist lives in the history.
+            messages: request.messages.iter().map(WireMessage::from).collect(),
             // Only sent when tools are actually offered: an empty `tools` with
             // `tool_choice: "auto"` is pointless, and some servers reject it.
             tool_choice: (!tools.is_empty()).then_some("auto"),
@@ -314,48 +316,6 @@ pub(super) fn header_value(value: &str) -> String {
     }
 }
 
-/// The request on the wire: system messages first, then the conversation,
-/// and anything the app says after it at the very end.
-///
-/// The chat templates of several local models refuse a system message
-/// anywhere but first, and DeepSeek's folds a later one into the system
-/// prompt, so a trailing one cannot go as one. Moved to the front with the
-/// others, it would change the start of every request it changed in — a
-/// provider that caches by prefix then reuses nothing past it — so it is
-/// appended to the last message instead, as Anthropic's protocol does it
-/// (`anthropic::body`). The turn loop itself sends nothing there any more:
-/// the checklist lives in the history (`llm_chat::restore_checklist`).
-fn wire_messages(messages: &[LlmMessage]) -> Vec<WireMessage<'_>> {
-    // With no conversation at all, every system message leads.
-    let end = messages.iter().rposition(|m| m.role != LlmRole::System).map_or(messages.len(), |i| i + 1);
-    let (conversation, tail) = messages.split_at(end);
-    let (system, rest): (Vec<&LlmMessage>, Vec<&LlmMessage>) =
-        conversation.iter().partition(|m| m.role == LlmRole::System);
-    let mut wire: Vec<WireMessage> = system.into_iter().chain(rest).map(WireMessage::from).collect();
-
-    let tail = tail.iter().filter_map(|m| m.content.as_deref()).collect::<Vec<_>>().join("\n\n");
-    if tail.is_empty() {
-        return wire;
-    }
-    match wire.last_mut() {
-        Some(last) if last.role == "user" || last.role == "tool" => {
-            last.content = Some(Cow::Owned(match last.content.take() {
-                Some(said) => format!("{said}\n\n{tail}"),
-                None => tail,
-            }));
-        }
-        _ => wire.push(WireMessage {
-            role: "user",
-            content: Some(Cow::Owned(tail)),
-            reasoning_content: None,
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: Vec::new(),
-        }),
-    }
-    wire
-}
-
 /// Reasoning this provider kept on `message` under `field`, if any.
 fn kept_reasoning<'a>(message: &'a LlmMessage, field: &str) -> Option<&'a str> {
     message.native_content.as_ref()?.get(field)?.as_str()
@@ -401,9 +361,8 @@ struct StreamOptions {
 #[derive(Serialize)]
 struct WireMessage<'a> {
     role: &'static str,
-    /// Owned only for the last message, which may carry the checklist.
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<Cow<'a, str>>,
+    content: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -418,7 +377,7 @@ impl<'a> From<&'a LlmMessage> for WireMessage<'a> {
     fn from(message: &'a LlmMessage) -> Self {
         Self {
             role: role_str(message.role),
-            content: message.content.as_deref().map(Cow::Borrowed),
+            content: message.content.as_deref(),
             // An object with these keys is ours; Anthropic's blocks are an array.
             reasoning_content: kept_reasoning(message, REASONING_CONTENT),
             reasoning: kept_reasoning(message, REASONING),
@@ -920,82 +879,6 @@ pub(super) mod tests {
         assert_eq!(cached.cached_tokens, 8);
         let silent = usage(r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":null}}"#);
         assert_eq!(silent.cached_tokens, 0);
-    }
-
-    fn wire_order(messages: Vec<LlmMessage>) -> Vec<(String, String)> {
-        let body = serde_json::to_value(
-            provider("http://unused".into()).body(&ChatRequest { messages, tools: vec![], model: "m".into() }, true),
-        )
-        .unwrap();
-        body["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|m| (m["role"].as_str().unwrap().to_string(), m["content"].as_str().unwrap_or("").to_string()))
-            .collect()
-    }
-
-    /// The checklist arrives after the conversation. A strict chat template
-    /// refuses a system message there, so it rides at the end of the last
-    /// message — never at the front, where every change to it would cost the
-    /// prompt cache everything after the system prompt.
-    #[test]
-    fn the_checklist_goes_at_the_end_of_the_last_message() {
-        let mut tool = LlmMessage::tool_result("c1", "a.txt: 3 lines");
-        tool.role = LlmRole::Tool;
-        let order = wire_order(vec![
-            LlmMessage::system("rules"),
-            LlmMessage::user("go"),
-            tool,
-            LlmMessage::system("## Checklist"),
-        ]);
-        assert_eq!(
-            order,
-            [
-                ("system".into(), "rules".into()),
-                ("user".into(), "go".into()),
-                ("tool".into(), "a.txt: 3 lines\n\n## Checklist".into()),
-            ]
-        );
-
-        let after_the_user = wire_order(vec![LlmMessage::system("rules"), LlmMessage::user("go"), LlmMessage::system("cl")]);
-        assert_eq!(after_the_user.last().unwrap(), &("user".to_string(), "go\n\ncl".to_string()));
-
-        // Nothing it could join: a message of its own, not a system one.
-        let after_an_answer = wire_order(vec![LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::system("cl")]);
-        assert_eq!(after_an_answer.last().unwrap(), &("user".to_string(), "cl".to_string()));
-    }
-
-    /// What the cache sees: a changed checklist changes the last message and
-    /// nothing before it.
-    #[test]
-    fn a_changed_checklist_leaves_the_prefix_alone() {
-        let conversation = || vec![LlmMessage::system("rules"), LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::user("next")];
-        let with = |checklist: &str| {
-            let mut messages = conversation();
-            messages.push(LlmMessage::system(checklist));
-            wire_order(messages)
-        };
-        let (first, second) = (with("[>] t1 read"), with("[x] t1 read\n[>] t2 fix"));
-        assert_eq!(first[..first.len() - 1], second[..second.len() - 1]);
-        assert_ne!(first.last(), second.last());
-    }
-
-    /// A middle system message — a compaction summary — still goes first, as
-    /// strict templates need; only the trailing ones are the tail.
-    #[test]
-    fn a_system_message_inside_the_conversation_still_goes_first() {
-        let order = wire_order(vec![
-            LlmMessage::system("rules"),
-            LlmMessage::user("go"),
-            LlmMessage::system("summary"),
-            LlmMessage::assistant("ok"),
-            LlmMessage::user("next"),
-        ]);
-        let contents: Vec<&str> = order.iter().map(|(_, content)| content.as_str()).collect();
-        assert_eq!(contents, ["rules", "summary", "go", "ok", "next"]);
-        let only_system = wire_order(vec![LlmMessage::system("rules")]);
-        assert_eq!(only_system, [("system".to_string(), "rules".to_string())]);
     }
 
     #[test]
