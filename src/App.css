@@ -40,7 +40,9 @@
 }
 
 /* A window narrower than every open panel's minimum cuts them at its edge,
-   rather than drawing past it. */
+   rather than drawing past it — only in a browser: the desktop window stops
+   at the width the rail, the chat and the file viewer need (tauri.conf.json),
+   and the other panels give way before that (App.tsx). */
 .body {
   flex: 1;
   display: flex;
@@ -49,12 +51,11 @@
   overflow-x: clip;
 }
 
-/* The chat keeps room to be read: the file viewer beside it shrinks first.
-   Relative in a window near its own minimum, where the rail, the chat and
-   the viewer at their fixed minimums would not fit side by side. */
+/* The chat keeps room to be read: the panels beside it shrink first, and
+   past their minimums give way (App.tsx). CHAT_MIN in usePanelSizes.ts. */
 .main {
   flex: 1;
-  min-width: min(400px, 50vw);
+  min-width: 400px;
   display: flex;
   flex-direction: column;
   gap: 10px;

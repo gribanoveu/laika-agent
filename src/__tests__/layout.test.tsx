@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { isBoolean, useStoredState } from "../hooks/useStoredState";
-import { PANEL_LIMITS, usePanelSizes } from "../hooks/usePanelSizes";
-import { useNarrowCollapse } from "../hooks/useNarrowCollapse";
+import { PANEL_LIMITS, roomFor, usePanelSizes } from "../hooks/usePanelSizes";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { PanelResizeHandle } from "../components/PanelResizeHandle";
 import { isAsideTab } from "../types";
 
@@ -115,31 +115,44 @@ describe("panel widths", () => {
   });
 });
 
-describe("a narrow window at start", () => {
+describe("room for the panels", () => {
+  /// What the desktop window's widths (tauri.conf.json) are set from: at its
+  /// minimum the chat and the file viewer fit beside the rail, and the
+  /// sidebar, the chat and the side panel side by side; at its default, all.
+  test("the smallest window holds the viewer beside the rail, or the side panel beside the sidebar", () => {
+    expect(roomFor({ rail: true, viewer: true, dock: false, frame: 2 })).toBe(940);
+    expect(roomFor({ rail: false, viewer: false, dock: true, frame: 2 })).toBe(882);
+    expect(roomFor({ rail: false, viewer: false, dock: false, frame: 2 })).toBe(612);
+  });
+
+  test("the default window holds every panel; narrower, the sidebar's rail or the side panel gives way", () => {
+    expect(roomFor({ rail: false, viewer: true, dock: true, frame: 2 })).toBe(1332);
+    expect(roomFor({ rail: true, viewer: true, dock: true, frame: 2 })).toBe(1210);
+    expect(roomFor({ rail: false, viewer: true, dock: false, frame: 0 })).toBe(1060);
+  });
+});
+
+describe("a media query", () => {
   const original = window.matchMedia;
   afterEach(() => {
     window.matchMedia = original;
   });
-  const withWidth = (matches: boolean) => {
+
+  test("answers now, and again when the window crosses it", () => {
+    let matches = false;
+    let changed = () => {};
     window.matchMedia = (() => ({
-      matches,
-      addEventListener: () => {},
+      get matches() {
+        return matches;
+      },
+      addEventListener: (_: string, fn: () => void) => (changed = fn),
       removeEventListener: () => {},
     })) as unknown as typeof window.matchMedia;
-  };
-
-  test("collapses the panel", () => {
-    withWidth(true);
-    const set: boolean[] = [];
-    renderHook(() => useNarrowCollapse("(max-width: 1px)", (v) => set.push(v)));
-    expect(set).toEqual([true]);
-  });
-
-  test("but a wide one does not reopen a panel closed last time", () => {
-    withWidth(false);
-    const set: boolean[] = [];
-    renderHook(() => useNarrowCollapse("(max-width: 1px)", (v) => set.push(v)));
-    expect(set).toEqual([]);
+    const { result } = renderHook(() => useMediaQuery("(min-width: 1px)"));
+    expect(result.current).toBe(false);
+    matches = true;
+    act(() => changed());
+    expect(result.current).toBe(true);
   });
 });
 

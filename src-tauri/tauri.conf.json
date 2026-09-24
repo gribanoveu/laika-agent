@@ -15,9 +15,9 @@
         "title": "Laika Agent",
         "decorations": false,
         "transparent": true,
-        "width": 1180,
+        "width": 1340,
         "height": 760,
-        "minWidth": 720,
+        "minWidth": 940,
         "minHeight": 520
       }
     ],

@@ -13,8 +13,10 @@
   /* No overflow:hidden here — it would clip the account menu, which deliberately
      sits outside the rail when collapsed. Clipping lives on the rows below. */
 }
+/* The rail never gives up width: squeezed any narrower, its buttons go. */
 .window.collapsed .sidebar {
   width: 58px;
+  flex: none;
   min-width: 0;
 }
 

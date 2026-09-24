@@ -8,7 +8,8 @@
 .dock-column {
   width: var(--aside-width, 300px);
   flex: 0 1 auto;
-  min-width: min(260px, 25vw);
+  /* Changes' commit buttons on one line; PANEL_LIMITS in usePanelSizes.ts. */
+  min-width: 260px;
   display: flex;
   flex-direction: column;
   gap: 10px;

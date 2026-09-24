@@ -4,7 +4,8 @@
    width before the chat goes under its minimum (App.css). */
 .file-viewer {
   flex: 0 5 var(--viewer-width, 560px);
-  min-width: min(320px, 30vw);
+  /* The heading's controls and a little of the path; PANEL_LIMITS in usePanelSizes.ts. */
+  min-width: 440px;
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);

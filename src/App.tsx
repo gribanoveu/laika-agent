@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
@@ -15,7 +15,7 @@ import { Toast } from "./components/Toast";
 import { WindowControls } from "./components/WindowControls";
 import { useAgentTurn } from "./hooks/useAgentTurn";
 import { useChatHistory } from "./hooks/useChatHistory";
-import { useNarrowCollapse } from "./hooks/useNarrowCollapse";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useIndexStatus } from "./hooks/useIndexStatus";
@@ -23,7 +23,7 @@ import { useMcp } from "./hooks/useMcp";
 import { useHooks } from "./hooks/useHooks";
 import { useSkills } from "./hooks/useSkills";
 import { useToolLog } from "./hooks/useToolLog";
-import { usePanelSizes } from "./hooks/usePanelSizes";
+import { roomFor, usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
 import { useChatFontSize } from "./hooks/useChatFontSize";
 import { useGitBranch } from "./hooks/useGitBranch";
@@ -79,8 +79,6 @@ export default function App() {
   const [tab, setTab] = useStoredState<AsideTab>("atlas-aside-tab", "changes", isPaneIn("right"));
   // The strip under the chat: closed when null.
   const [bottomTab, setBottomTab] = useStoredState<AsideTab | null>("atlas-bottom-tab", null, isBottomTab);
-  // On screen in either dock: what decides whether a pane's data is read.
-  const shown = (pane: AsideTab) => (tab === pane && !asideHidden) || bottomTab === pane;
   // Held here, not in the Changes pane: closing the pane, or moving it to the
   // other dock, would otherwise throw away a message half written. A different
   // folder is a different repository, and starts empty.
@@ -111,6 +109,20 @@ export default function App() {
   // On unless turned off in Settings: the viewer is a column beside the chat,
   // rarely wide enough for a long line.
   const [wrapLines, setWrapLines] = useStoredState("viewer-wrap", true, isBoolean);
+  // A window too narrow for every open panel at its minimum: the sidebar
+  // falls back to its rail first, then the column right of the viewer hides.
+  // Neither is stored — wider again, both come back as they were left.
+  const frame = nativeFrame ? 0 : 2;
+  const viewerOpen = viewer.active !== null;
+  const dockFits = useMediaQuery(`(min-width: ${roomFor({ rail: true, viewer: viewerOpen, dock: true, frame })}px)`);
+  // What the column shows: what was opened, while it fits.
+  const topHidden = asideHidden || !dockFits;
+  const bottomShown = dockFits ? bottomTab : null;
+  const dockShown = !topHidden || bottomShown !== null;
+  const sidebarFits = useMediaQuery(`(min-width: ${roomFor({ rail: false, viewer: viewerOpen, dock: dockShown, frame })}px)`);
+  const rail = collapsed || !sidebarFits;
+  // On screen in either dock: what decides whether a pane's data is read.
+  const shown = (pane: AsideTab) => (tab === pane && !topHidden) || bottomShown === pane;
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -134,29 +146,18 @@ export default function App() {
   const fontSize = useChatFontSize();
   const panels = usePanelSizes({
     sidebar: {
-      collapsed,
+      collapsed: rail,
       collapse: () => setCollapsed(true),
       expand: () => setCollapsed(false),
     },
   });
 
-  // Narrow window: the sidebar falls back to its rail and the side panel
-  // hides, rather than both squeezing the chat. Widening again does not bring
-  // the side panel back — it opens only when asked for.
-  useNarrowCollapse("(max-width: 760px)", setCollapsed);
-  const hideAsideWhenNarrow = useCallback(
-    (narrow: boolean) => {
-      if (!narrow) return;
-      setAsideHidden(true);
-      setBottomTab(null);
-    },
-    [setAsideHidden, setBottomTab],
-  );
-  useNarrowCollapse("(max-width: 900px)", hideAsideWhenNarrow);
-
   // Where each pane goes is `lib/docks.ts`'s rule; this only stores the answer.
-  const docks: Docks = { top: tab, topHidden: asideHidden, bottom: bottomTab };
+  const docks: Docks = { top: tab, topHidden, bottom: bottomShown };
   const setDocks = (next: Docks) => {
+    // A pane asked for where the viewer leaves the column no room: the viewer
+    // gives way, or the pane would open out of sight.
+    if (!dockFits && (!next.topHidden || next.bottom)) viewer.closeAll();
     setTab(next.top);
     setAsideHidden(next.topHidden);
     setBottomTab(next.bottom);
@@ -173,11 +174,11 @@ export default function App() {
       e.preventDefault();
       e.stopPropagation();
       (document.activeElement as HTMLElement | null)?.blur();
-      setDocks(toggleTerminal({ top: tab, topHidden: asideHidden, bottom: bottomTab }));
+      setDocks(toggleTerminal(docks));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [tab, asideHidden, bottomTab]);
+  }, [tab, topHidden, bottomShown, dockFits]);
 
   // A plan the agent has just finished writing is shown, once, when its turn
   // ends — not mid-turn, while it is still filling in the checklist.
@@ -301,7 +302,7 @@ export default function App() {
 
   return (
     <div
-      className={`window${nativeFrame ? " native-frame" : ""}${collapsed ? " collapsed" : ""}${asideHidden ? " aside-hidden" : ""}${bottomTab ? "" : " bottom-closed"}`}
+      className={`window${nativeFrame ? " native-frame" : ""}${rail ? " collapsed" : ""}${topHidden ? " aside-hidden" : ""}${bottomShown ? "" : " bottom-closed"}`}
       style={
         {
           "--sidebar-width": `${panels.widths.sidebar}px`,
@@ -324,7 +325,8 @@ export default function App() {
           activeChat={agent.chatId}
           onSelectChat={agent.open}
           onNewChat={newChat}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
+          // Held on its rail by the viewer beside the chat: opening it closes the viewer.
+          onToggleCollapse={() => (rail && !collapsed ? viewer.closeAll() : setCollapsed((v) => !v))}
           onOpenSettings={() => setSettingsOpen(true)}
           onOnboardingAction={openTab}
         />
@@ -345,7 +347,7 @@ export default function App() {
             onOpenRepo={chooseFolder}
             asideOpen={changesShown(docks)}
             onToggleAside={() => setDocks(toggleChanges(docks))}
-            terminalOpen={bottomTab === "terminal"}
+            terminalOpen={bottomShown === "terminal"}
             onToggleTerminal={() => setDocks(toggleTerminal(docks))}
             onOpenPanel={openTab}
             onExport={exportOpenChat}
@@ -411,7 +413,7 @@ export default function App() {
           </>
         )}
 
-        {(!asideHidden || bottomTab) && (
+        {dockShown && (
           <PanelResizeHandle
             invert
             ariaLabel="Resize the side panel"
@@ -427,12 +429,12 @@ export default function App() {
           <AsidePanel
             tab={tab}
             dock="right"
-            ctx={{ ...panes, active: !asideHidden }}
+            ctx={{ ...panes, active: !topHidden }}
             onClose={() => setAsideHidden(true)}
           />
-          {bottomTab && (
+          {bottomShown && (
             <>
-              {!asideHidden && (
+              {!topHidden && (
                 <PanelResizeHandle
                   axis="y"
                   invert
@@ -442,7 +444,7 @@ export default function App() {
                 />
               )}
               <AsidePanel
-                tab={bottomTab}
+                tab={bottomShown}
                 dock="bottom"
                 ctx={{ ...panes, active: true }}
                 onClose={() => setBottomTab(null)}

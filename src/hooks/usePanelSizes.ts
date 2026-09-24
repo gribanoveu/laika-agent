@@ -5,17 +5,46 @@ type PanelKey = "sidebar" | "aside" | "bottom" | "viewer";
 const KEYS: PanelKey[] = ["sidebar", "aside", "bottom", "viewer"];
 const zeros = (): Record<PanelKey, number> => ({ sidebar: 0, aside: 0, bottom: 0, viewer: 0 });
 
+// The minimums mirror the CSS (Sidebar.css, AsidePanel.css, FileViewer.css),
+// and each is what the panel's widest row needs on one line.
 export const PANEL_LIMITS: Record<PanelKey, { min: number; max: number; initial: number; rail?: number }> = {
-  // `rail` is the collapsed width — mirrors the CSS in Sidebar.css. The side
-  // panel has none: it is hidden from the chat header, never by dragging.
+  // `rail` is the collapsed width. The side panel has none: it is hidden from
+  // the chat header, never by dragging.
   sidebar: { min: 180, max: 420, initial: 248, rail: 58 },
+  // Changes' "Generate description" and "Commit" side by side: 246.
   aside: { min: 260, max: 560, initial: 300 },
   // A height: the lower pane of the right column. Like the side panel it stops
   // at its minimum — it closes from its own button, never by dragging.
   bottom: { min: 120, max: 640, initial: 240 },
-  // The file viewer beside the chat; it closes from its own button.
-  viewer: { min: 320, max: 1400, initial: 560 },
+  // The file viewer beside the chat; it closes from its own button. Its
+  // heading's badge, counts, Diff/File/Preview and the arrows take 400; the
+  // rest is the path's.
+  viewer: { min: 440, max: 1400, initial: 560 },
 };
+
+/** The chat's minimum (`.main` in App.css): it never gives up width to the panels beside it. */
+export const CHAT_MIN = 400;
+/** `.body`'s padding and each resize handle: the gaps between panels are this wide. */
+const GAP = 10;
+
+/**
+ * How wide the window must be to hold these panels side by side at their
+ * minimums: the sidebar (or its rail), the chat, and the file viewer and the
+ * column right of it when they are open. `frame` is the window's own border,
+ * both sides — none where the OS draws it.
+ */
+export function roomFor({ rail, viewer, dock, frame }: { rail: boolean; viewer: boolean; dock: boolean; frame: number }) {
+  const sidebar = rail ? (PANEL_LIMITS.sidebar.rail ?? 0) : PANEL_LIMITS.sidebar.min;
+  return (
+    frame +
+    2 * GAP +
+    sidebar +
+    GAP +
+    CHAT_MIN +
+    (viewer ? GAP + PANEL_LIMITS.viewer.min : 0) +
+    (dock ? GAP + PANEL_LIMITS.aside.min : 0)
+  );
+}
 
 const INITIAL = Object.fromEntries(KEYS.map((key) => [key, PANEL_LIMITS[key].initial])) as Record<PanelKey, number>;
 
