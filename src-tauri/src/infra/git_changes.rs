@@ -4,12 +4,12 @@
 //! The repository is discovered from the folder, so a folder inside a
 //! repository works. Paths go both ways relative to the repository root.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path};
 
 use git2::{Diff, DiffOptions, ErrorCode, Repository, Signature};
 
-use crate::domain::git_changes::{ChangeTotals, ChangedFile, GitChangesError, WorkingChanges};
+use crate::domain::git_changes::{ChangeTotals, ChangedFile, CommitSummary, GitChangesError, GitHistory, WorkingChanges};
 
 pub fn changes(root: &Path) -> Result<WorkingChanges, GitChangesError> {
     let repo = open(root)?;
@@ -112,6 +112,65 @@ pub fn commit(root: &Path, message: &str) -> Result<String, GitChangesError> {
     let parents: Vec<&git2::Commit> = parent.iter().collect();
     let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents).map_err(git)?;
     Ok(oid.to_string().chars().take(7).collect())
+}
+
+/// Where HEAD is and up to `limit` commits reachable from it, newest first;
+/// no commits before the first one.
+pub fn history(root: &Path, limit: usize) -> Result<GitHistory, GitChangesError> {
+    let repo = open(root)?;
+    let branch = crate::infra::git_head::current_branch(root);
+    let mut history = GitHistory { branch, upstream: None, ahead: 0, behind: 0, commits: Vec::new(), more: false };
+    if head_tree(&repo)?.is_none() {
+        return Ok(history);
+    }
+    let head = repo.head().map_err(git)?;
+    let head_id = head.target();
+    let checked_out = if head.is_branch() { head.name().ok().map(String::from) } else { None };
+    if head.is_branch() {
+        if let Ok(upstream) = git2::Branch::wrap(head).upstream() {
+            history.upstream = upstream.name().ok().flatten().map(String::from);
+            if let (Some(local), Some(remote)) = (head_id, upstream.get().target()) {
+                (history.ahead, history.behind) = repo.graph_ahead_behind(local, remote).map_err(git)?;
+            }
+        }
+    }
+
+    // Every branch and tag by the commit it points at; a remote's HEAD only
+    // repeats the branch it names.
+    let mut refs: HashMap<git2::Oid, Vec<String>> = HashMap::new();
+    for reference in repo.references().map_err(git)?.flatten() {
+        let name = reference.name().unwrap_or_default();
+        if reference.is_remote() && name.ends_with("/HEAD") || checked_out.as_deref() == Some(name) {
+            continue;
+        }
+        let (Ok(commit), Ok(short)) = (reference.peel_to_commit(), reference.shorthand()) else { continue };
+        if reference.is_branch() || reference.is_remote() || reference.is_tag() {
+            refs.entry(commit.id()).or_default().push(short.to_string());
+        }
+    }
+
+    let mut walk = repo.revwalk().map_err(git)?;
+    walk.push_head().map_err(git)?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME).map_err(git)?;
+    for id in walk {
+        if history.commits.len() == limit {
+            history.more = true;
+            break;
+        }
+        let commit = repo.find_commit(id.map_err(git)?).map_err(git)?;
+        let author = commit.author().name().unwrap_or_default().to_string();
+        let mut on_it = refs.remove(&commit.id()).unwrap_or_default();
+        on_it.sort();
+        history.commits.push(CommitSummary {
+            id: commit.id().to_string().chars().take(7).collect(),
+            summary: commit.summary().map_err(git)?.unwrap_or_default().to_string(),
+            author,
+            time: commit.time().seconds(),
+            head: Some(commit.id()) == head_id,
+            refs: on_it,
+        });
+    }
+    Ok(history)
 }
 
 /// The `.git` directory of the repository `root` is in — what staging and
@@ -221,6 +280,8 @@ mod tests {
         assert_eq!(staged.staged, vec![file("a.txt", 2, 0), file("new/b.txt", 1, 0)]);
         assert!(staged.unstaged.is_empty());
 
+        let empty = history(&dir, 10).unwrap();
+        assert!(empty.commits.is_empty() && !empty.more);
         let id = commit(&dir, "  first\n").unwrap();
         assert_eq!(id.len(), 7);
         assert_eq!(changes(&dir).unwrap(), WorkingChanges { staged: vec![], unstaged: vec![] });
@@ -295,6 +356,58 @@ mod tests {
         let after = changes(&dir).unwrap();
         assert!(after.staged.is_empty());
         assert_eq!(after.unstaged, vec![file("a.txt", 1, 0)]);
+    }
+
+    fn commit_file(dir: &Path, n: usize, message: &str) -> String {
+        fs::write(dir.join("a.txt"), format!("{n}\n")).unwrap();
+        stage(dir, &["a.txt".into()]).unwrap();
+        commit(dir, message).unwrap()
+    }
+
+    #[test]
+    fn the_history_lists_commits_newest_first_up_to_the_limit() {
+        let (dir, _repo) = repo();
+        for (n, message) in ["first", "second\n\nbody", "third"].iter().enumerate() {
+            commit_file(&dir, n, message);
+        }
+        let all = history(&dir, 10).unwrap();
+        let summaries: Vec<&str> = all.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(summaries, ["third", "second", "first"]);
+        assert_eq!(all.commits[0].author, "Test");
+        assert_eq!(all.commits[0].id.len(), 7);
+        assert!(all.commits[0].time > 0);
+        assert!(!all.more);
+        let two = history(&dir, 2).unwrap();
+        assert_eq!(two.commits.len(), 2);
+        assert!(two.more);
+        assert!(!history(&dir, 3).unwrap().more);
+        assert_eq!(history(&temp_dir("git-log-plain"), 10), Err(GitChangesError::NotARepository));
+    }
+
+    #[test]
+    fn marks_head_and_the_other_refs_and_counts_against_the_upstream() {
+        let (dir, repo) = repo();
+        let base = commit_file(&dir, 0, "base");
+        let base = repo.revparse_single(&base).unwrap().peel_to_commit().unwrap();
+        // Named to sort last, though git lists local branches first.
+        repo.branch("zeta", &base, false).unwrap();
+        repo.tag_lightweight("v1", base.as_object(), false).unwrap();
+        // A remote branch at the base, tracked by the checked-out one.
+        repo.reference("refs/remotes/origin/main", base.id(), false, "").unwrap();
+        repo.reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", false, "").unwrap();
+        let branch = repo.head().unwrap().shorthand().unwrap().to_string();
+        let mut config = repo.config().unwrap();
+        config.set_str(&format!("branch.{branch}.remote"), "origin").unwrap();
+        config.set_str(&format!("branch.{branch}.merge"), "refs/heads/main").unwrap();
+        repo.remote("origin", "https://example.com/repo.git").unwrap();
+        commit_file(&dir, 1, "tip");
+
+        let h = history(&dir, 10).unwrap();
+        assert_eq!(h.branch.as_deref(), Some(branch.as_str()));
+        assert_eq!(h.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((h.ahead, h.behind), (1, 0));
+        let marks: Vec<(bool, Vec<String>)> = h.commits.iter().map(|c| (c.head, c.refs.clone())).collect();
+        assert_eq!(marks, [(true, vec![]), (false, vec!["origin/main".into(), "v1".into(), "zeta".into()])]);
     }
 
     #[test]

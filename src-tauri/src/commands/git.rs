@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::chat::AgentState;
-use crate::domain::git_changes::{ChangeTotals, GitChangesError, WorkingChanges};
+use crate::domain::git_changes::{ChangeTotals, GitChangesError, GitHistory, WorkingChanges};
 use crate::infra::file_watcher::FileWatcher;
 use crate::infra::git_changes;
 
@@ -89,6 +89,12 @@ pub async fn git_unstage(paths: Vec<String>, state: State<'_, Arc<AgentState>>) 
 #[tauri::command]
 pub async fn git_commit(message: String, state: State<'_, Arc<AgentState>>) -> Result<String, String> {
     in_repo(&state, move |root| git_changes::commit(&root, &message)).await
+}
+
+/// Where HEAD is and the newest `limit` commits, for the History tab.
+#[tauri::command]
+pub async fn git_history(limit: usize, state: State<'_, Arc<AgentState>>) -> Result<GitHistory, String> {
+    in_repo(&state, move |root| git_changes::history(&root, limit)).await
 }
 
 #[cfg(test)]

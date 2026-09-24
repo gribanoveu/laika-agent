@@ -33,6 +33,41 @@ pub struct ChangeTotals {
     pub del: usize,
 }
 
+/// One commit of the History tab: its first line, who and when, and the
+/// branches and tags that point at it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSummary {
+    /// Short id, as `git commit` reports it.
+    pub id: String,
+    pub summary: String,
+    pub author: String,
+    /// Seconds since the epoch.
+    pub time: i64,
+    /// HEAD points at it.
+    pub head: bool,
+    /// Short names of the other branches, local and remote, and the tags on it.
+    /// The checked-out branch is left out: HEAD already says where it is.
+    pub refs: Vec<String>,
+}
+
+/// The History tab: where HEAD is, how it stands against its upstream, and
+/// the newest commits from it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistory {
+    /// The checked-out branch, or HEAD's short id when it is detached.
+    pub branch: Option<String>,
+    /// The branch it tracks, `None` when it tracks none.
+    pub upstream: Option<String>,
+    /// Commits on the branch that the upstream does not have, and the other way.
+    pub ahead: usize,
+    pub behind: usize,
+    pub commits: Vec<CommitSummary>,
+    /// Older commits are left beyond the limit asked for.
+    pub more: bool,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GitChangesError {
     #[error("the open folder is not in a git repository")]
