@@ -61,9 +61,12 @@ beforeEach(() => {
     ],
   };
   calls = [];
+  opened = [];
   commitFails = null;
   history = { branch: "main", upstream: null, ahead: 0, behind: 0, commits: [], more: false };
 });
+
+let opened: unknown[] = [];
 
 function panel(message = "", notes: string[] = [], messages: string[] = []) {
   return render(
@@ -71,6 +74,7 @@ function panel(message = "", notes: string[] = [], messages: string[] = []) {
       active
       workspace="/repo"
       onNotify={(note) => notes.push(note)}
+      onOpenFile={(target) => opened.push(target)}
       message={message}
       onMessage={(next) => messages.push(next)}
     />,
@@ -103,6 +107,18 @@ describe("ChangesPanel", () => {
     await settle();
     expect(calls.find((c) => c.command === "git_unstage")?.args).toEqual({ paths: ["src/main/tax/TaxProfileMapper.java"] });
     expect(screen.queryByTitle("Unstage")).toBeNull();
+  });
+
+  test("a file's name opens it in the viewer, against the side it is listed on", async () => {
+    repo = { ...repo, staged: [{ path: "src/Staged.java", add: 1, del: 0 }] };
+    panel();
+    await settle();
+    fireEvent.click(screen.getByText("README.md"));
+    fireEvent.click(screen.getByText("Staged.java"));
+    expect(opened).toEqual([
+      { path: "README.md", side: "unstaged" },
+      { path: "src/Staged.java", side: "staged" },
+    ]);
   });
 
   test("Stage all stages every unstaged file at once", async () => {
@@ -172,7 +188,9 @@ describe("ChangesPanel", () => {
     expect(reads()).toBe(before + 2);
 
     // Hidden, the tab stops listening.
-    view.rerender(<ChangesPanel active={false} workspace="/repo" onNotify={() => {}} message="" onMessage={() => {}} />);
+    view.rerender(
+      <ChangesPanel active={false} workspace="/repo" onNotify={() => {}} onOpenFile={() => {}} message="" onMessage={() => {}} />,
+    );
     await settle();
     act(() => emit("workspace-git:changed", { root: "/repo" }));
     await settle();

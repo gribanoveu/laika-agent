@@ -4,6 +4,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
 import { FolderTab } from "./components/FolderTab";
 import { AsidePanel } from "./components/AsidePanel";
+import { FileViewer } from "./components/FileViewer";
 import { PANES, type Dock, type PaneContext } from "./components/panes";
 import { Modal } from "./components/Modal";
 import { Settings } from "./components/Settings";
@@ -38,7 +39,7 @@ import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "./lib/docks";
-import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
+import { exportChat, setConversationMode, type ConversationMode, type FileTarget } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import { useFolderSwitch } from "./hooks/useFolderSwitch";
 import { FolderSwitchDialog } from "./components/FolderSwitchDialog";
@@ -88,6 +89,8 @@ export default function App() {
   const [processFocus, setProcessFocus] = useState<{ id: number } | null>(null);
   // A terminal selection on its way to the composer, from the other subtree.
   const [quote, setQuote] = useState<{ text: string; seq: number } | null>(null);
+  // The file the viewer beside the chat shows, opened from Changes or Files.
+  const [viewing, setViewing] = useState<FileTarget | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // The MCP and hooks files open as a whole (JSON) or one entry at a time
@@ -104,6 +107,7 @@ export default function App() {
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
   useEffect(() => setCommitMessage(""), [workspace.path]);
+  useEffect(() => setViewing(null), [workspace.path]);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -257,6 +261,7 @@ export default function App() {
     processFocus,
     onAddToChat: (text) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 })),
     chatBlocks: agent.turn.blocks,
+    onOpenFile: setViewing,
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
@@ -378,6 +383,8 @@ export default function App() {
             onCompact={compactNow}
           />
         </main>
+
+        {viewing && <FileViewer target={viewing} workspace={workspace.path} onClose={() => setViewing(null)} />}
 
         {(!asideHidden || bottomTab) && (
           <PanelResizeHandle

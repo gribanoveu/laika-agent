@@ -62,9 +62,13 @@ beforeEach(() => {
     "src/lib": { entries: [entry("src/lib/deep.rs")], more: 0 },
   };
   asked = [];
+  opened = [];
 });
 
-const tab = (active = true) => <FilesPanel active={active} workspace="/repo" blocks={[]} />;
+let opened: unknown[] = [];
+const tab = (active = true) => (
+  <FilesPanel active={active} workspace="/repo" blocks={[]} onOpenFile={(target) => opened.push(target)} />
+);
 
 /** The tab, on its "All files" view. */
 async function allFiles(active = true) {
@@ -232,5 +236,13 @@ describe("the folder tree", () => {
     delete folders[""];
     await allFiles();
     expect(screen.getByText("no folder")).toBeTruthy();
+  });
+
+  test("a file opens in the viewer by its path in the folder", async () => {
+    await allFiles();
+    fireEvent.click(screen.getByText("src"));
+    await settle();
+    fireEvent.click(screen.getByText("main.rs"));
+    expect(opened).toEqual([{ path: "src/main.rs", side: "worktree" }]);
   });
 });

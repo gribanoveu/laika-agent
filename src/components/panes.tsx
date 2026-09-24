@@ -16,7 +16,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { PlanPanel } from "./PlanPanel";
 import { useRules } from "../hooks/useRules";
 import { useSkills } from "../hooks/useSkills";
-import type { HooksView, McpServerState, McpView, RuleListItem, SkillListItem, SkillsView, Task } from "../lib/chat";
+import type { FileTarget, HooksView, McpServerState, McpView, RuleListItem, SkillListItem, SkillsView, Task } from "../lib/chat";
 import type { AsideTab, PanelItem } from "../types";
 import type { Block } from "../lib/chatTurnReducer";
 
@@ -39,6 +39,8 @@ export type PaneContext = {
   onAddToChat: (text: string) => void;
   /** The open chat's transcript, for the files its calls touched. */
   chatBlocks: Block[];
+  /** Shows a file in the viewer beside the chat. */
+  onOpenFile: (target: FileTarget) => void;
   mcp: McpListProps;
   hooks: HooksListProps;
   plan: {
@@ -343,8 +345,8 @@ function RulesPane({ active, workspace }: PaneContext) {
 // ─── Files ─────────────────────────────────────────────────────────────────
 
 // Filled by its own command wrapper once that command exists.
-function FilesPane({ active, workspace, chatBlocks }: PaneContext) {
-  return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} />;
+function FilesPane({ active, workspace, chatBlocks, onOpenFile }: PaneContext) {
+  return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} onOpenFile={onOpenFile} />;
 }
 
 // ─── The registry ──────────────────────────────────────────────────────────
@@ -354,7 +356,7 @@ function FilesPane({ active, workspace, chatBlocks }: PaneContext) {
 // names a pane. `dock` is where the menu opens it; each dock shows one pane. There is no tab strip: eight icons in a 300px column were
 // unreadable, and only one of them is opened often.
 export const PANES: PaneDef[] = [
-  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} {...commitDraft} /> },
+  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} onOpenFile={onOpenFile} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },

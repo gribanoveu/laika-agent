@@ -681,6 +681,22 @@ export async function gitHistory(limit: number): Promise<GitHistory> {
   return invoke<GitHistory>("git_history", { limit });
 }
 
+/**
+ * Mirrors `domain::git_changes::FileSide`: which two versions the viewer
+ * compares. `unstaged` and `staged` take the repository's paths, as Changes
+ * lists them; `worktree` takes the open folder's, as Files does.
+ */
+export type FileSide = "unstaged" | "staged" | "worktree";
+/** A file for the viewer to show, and against what. */
+export type FileTarget = { path: string; side: FileSide };
+/** Mirrors `domain::git_changes::FileView`: `null` on a side the file is not on. */
+export type FileView = { old: string | null; new: string | null; unviewable: "binary" | "tooLarge" | null };
+
+export async function fileView(target: FileTarget): Promise<FileView> {
+  requireBackend();
+  return invoke<FileView>("file_view", target);
+}
+
 // ---------------------------------------------------------------- file tree
 
 /** Mirrors `domain::file_tree`. A deleted file is not listed: it is not on disk. */

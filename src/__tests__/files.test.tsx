@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { Block } from "../lib/chatTurnReducer";
 import { touchedFiles } from "../lib/touchedFiles";
 import { FilesPanel } from "../components/FilesPanel";
@@ -92,6 +92,7 @@ describe("FilesPanel", () => {
           call("editFile", { path: "src/main/Tax.java" }, { path: "src/main/Tax.java", ...diff(4, 1) }),
           call("deleteFile", { path: "old.txt" }, { path: "old.txt", ...diff(0, 2) }),
         ]}
+        onOpenFile={() => {}}
       />,
     );
     const row = screen.getByTitle("src/main/Tax.java");
@@ -102,7 +103,21 @@ describe("FilesPanel", () => {
   });
 
   test("before the agent touches anything it says what will be here", () => {
-    render(<FilesPanel active={false} workspace="/repo" blocks={[]} />);
+    render(<FilesPanel active={false} workspace="/repo" blocks={[]} onOpenFile={() => {}} />);
     expect(screen.getByText(/Files the agent reads or changes/)).toBeTruthy();
+  });
+
+  test("a row opens its file in the viewer, against HEAD", () => {
+    const opened: unknown[] = [];
+    render(
+      <FilesPanel
+        active={false}
+        workspace="/repo"
+        blocks={[call("readFile", { path: "src/main/Tax.java" })]}
+        onOpenFile={(target) => opened.push(target)}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("src/main/Tax.java"));
+    expect(opened).toEqual([{ path: "src/main/Tax.java", side: "worktree" }]);
   });
 });

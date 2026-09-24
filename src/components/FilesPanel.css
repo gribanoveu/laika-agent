@@ -11,8 +11,15 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 6px 8px;
+  border: 0;
   border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .files-row:hover {
   background: var(--bg-hover);
@@ -92,6 +99,7 @@
   font-family: var(--font-ui);
   font-size: var(--fs-sm);
   text-align: left;
+  cursor: pointer;
 }
 .tree-row:hover {
   background: var(--bg-hover);

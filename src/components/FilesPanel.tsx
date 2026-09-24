@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
-import type { FileStatus, TreeEntry } from "../lib/chat";
+import type { FileStatus, FileTarget, TreeEntry } from "../lib/chat";
 import type { Block } from "../lib/chatTurnReducer";
 import { touchedFiles, type Touch, type TouchedFile } from "../lib/touchedFiles";
 import { useFileTree } from "../hooks/useFileTree";
@@ -13,6 +13,7 @@ type Props = {
   /** The open chat's transcript: what the agent did is read from its calls. */
   blocks: Block[];
   workspace: string | null;
+  onOpenFile: (target: FileTarget) => void;
 };
 
 /** As a file explorer marks them, with the word in the tooltip. */
@@ -23,7 +24,7 @@ const STATUS: Record<FileStatus, { letter: string; title: string }> = {
   conflicted: { letter: "!", title: "Conflicted" },
 };
 
-type Tree = ReturnType<typeof useFileTree>;
+type Tree = ReturnType<typeof useFileTree> & { open: (path: string) => void };
 
 /**
  * An unfolded folder and the run of folders under it that each hold only the
@@ -60,11 +61,13 @@ function TreeLevel({ dir, depth, tree }: { dir: string; depth: number; tree: Tre
         entry.isDir ? (
           <FolderRow key={entry.path} entry={entry} depth={depth} tree={tree} />
         ) : (
-          <div
+          <button
+            type="button"
             key={entry.path}
             className={`tree-row${entry.status ? ` ${entry.status}` : ""}`}
             style={indent}
             title={entry.path}
+            onClick={() => tree.open(entry.path)}
           >
             <span className="tree-chev" />
             <File className="tree-icon" size={13} aria-hidden />
@@ -74,7 +77,7 @@ function TreeLevel({ dir, depth, tree }: { dir: string; depth: number; tree: Tre
                 {STATUS[entry.status].letter}
               </span>
             )}
-          </div>
+          </button>
         ),
       )}
       {listing.more > 0 && (
@@ -130,11 +133,11 @@ const TOUCH_LABEL: Record<Touch, string> = {
 };
 
 /** The Files tab: the files the agent worked with in this chat, or the open folder as a tree. */
-export function FilesPanel({ active, blocks, workspace }: Props) {
+export function FilesPanel({ active, blocks, workspace, onOpenFile }: Props) {
   const [view, setView] = useState<"chat" | "folder">("chat");
   const files = touchedFiles(blocks, workspace);
   // The tree is read only while its own tab is the one showing.
-  const tree = useFileTree(active && view === "folder", workspace);
+  const tree = { ...useFileTree(active && view === "folder", workspace), open: (path: string) => onOpenFile({ path, side: "worktree" }) };
   return (
     <div className="panel-section">
       <Tabs
@@ -152,7 +155,9 @@ export function FilesPanel({ active, blocks, workspace }: Props) {
           files.length === 0 ? (
             <div className="files-empty">Files the agent reads or changes in this chat show up here.</div>
           ) : (
-            files.map((file) => <TouchedRow key={file.path} file={file} />)
+            files.map((file) => (
+              <TouchedRow key={file.path} file={file} onOpen={() => onOpenFile({ path: file.path, side: "worktree" })} />
+            ))
           )
         ) : tree.error ? (
           <div className="files-empty">{tree.error}</div>
@@ -164,12 +169,12 @@ export function FilesPanel({ active, blocks, workspace }: Props) {
   );
 }
 
-function TouchedRow({ file }: { file: TouchedFile }) {
+function TouchedRow({ file, onOpen }: { file: TouchedFile; onOpen: () => void }) {
   const cut = file.path.lastIndexOf("/");
   const dir = cut > 0 ? file.path.slice(0, cut) : null;
   const gone = file.touches[file.touches.length - 1] === "deleted";
   return (
-    <div className={`files-row${gone ? " gone" : ""}`} title={file.path}>
+    <button type="button" className={`files-row${gone ? " gone" : ""}`} title={file.path} onClick={onOpen}>
       <span className="files-label">
         <span className="files-name">{file.path.slice(cut + 1)}</span>
         {dir && (
@@ -191,6 +196,6 @@ function TouchedRow({ file }: { file: TouchedFile }) {
           {file.del > 0 && <span className="del">−{file.del}</span>}
         </span>
       )}
-    </div>
+    </button>
   );
 }

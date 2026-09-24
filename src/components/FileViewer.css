@@ -1,0 +1,103 @@
+/* The column between the chat and the side panel: a heading naming the file
+   and how to show it, then the file, scrolling on its own. */
+.file-viewer {
+  flex: 1 1 0;
+  min-width: 320px;
+  margin-left: 10px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  overflow: hidden;
+  animation: file-viewer-in 0.18s ease-out;
+}
+@keyframes file-viewer-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-viewer {
+    animation: none;
+  }
+}
+.file-viewer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.file-viewer-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.file-viewer-name {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text);
+}
+/* A long path is cut from its start: the folders nearest the file tell it apart. */
+.file-viewer-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.file-viewer-side {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.file-viewer-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.file-viewer-head .tabs {
+  flex: none;
+  width: 120px;
+  margin: 0;
+}
+.file-viewer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The diff fills the column here, rather than sitting as a card in the chat. */
+.file-viewer-body .diff-view {
+  flex: 1;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 6px 0;
+  font-size: var(--fs-sm);
+  overscroll-behavior: contain;
+}
+.file-viewer-note {
+  padding: 14px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}

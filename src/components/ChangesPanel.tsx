@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Minus, Plus, Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
-import type { ChangedFile } from "../lib/chat";
+import type { ChangedFile, FileTarget } from "../lib/chat";
 import { useGitHistory } from "../hooks/useGitHistory";
 import { HistoryView } from "./HistoryView";
 import { Tabs } from "./Tabs";
@@ -13,6 +13,7 @@ type Props = {
   /** The open folder, as the backend's events name it. */
   workspace: string | null;
   onNotify: (msg: string) => void;
+  onOpenFile: (target: FileTarget) => void;
   /** The commit message, held above the panel: it outlives the panel being closed or moved. */
   message: string;
   onMessage: (message: string) => void;
@@ -59,7 +60,7 @@ function StageRow({
   );
 }
 
-export function ChangesPanel({ active, workspace, onNotify, message, onMessage }: Props) {
+export function ChangesPanel({ active, workspace, onNotify, onOpenFile, message, onMessage }: Props) {
   const [view, setView] = useState<"changes" | "history">("changes");
   const { unstaged, staged, error, stage, unstage, commit } = useStaging(active, workspace);
   const history = useGitHistory(active && view === "history", workspace);
@@ -114,7 +115,7 @@ export function ChangesPanel({ active, workspace, onNotify, message, onMessage }
                   file={f}
                   staged={false}
                   onToggle={() => run(stage([f.path]))}
-                  onShowDiff={() => onNotify("Diff view is not wired yet")}
+                  onShowDiff={() => onOpenFile({ path: f.path, side: "unstaged" })}
                 />
               ))}
               {unstaged.length === 0 && <div className="stage-empty">No unstaged changes</div>}
@@ -133,7 +134,7 @@ export function ChangesPanel({ active, workspace, onNotify, message, onMessage }
                   file={f}
                   staged
                   onToggle={() => run(unstage([f.path]))}
-                  onShowDiff={() => onNotify("Diff view is not wired yet")}
+                  onShowDiff={() => onOpenFile({ path: f.path, side: "staged" })}
                 />
               ))}
               {staged.length === 0 && <div className="stage-empty">Stage files to commit</div>}
