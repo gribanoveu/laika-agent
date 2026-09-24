@@ -25,4 +25,5 @@ pub mod background;
 pub mod terminal;
 pub mod command_risk;
 pub mod git_changes;
+pub mod commit_message;
 pub mod file_tree;

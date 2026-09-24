@@ -16,6 +16,7 @@ use super::chat::AgentState;
 use crate::domain::git_changes::{ChangeTotals, FileSide, FileView, GitChangesError, GitHistory, WorkingChanges};
 use crate::infra::file_watcher::FileWatcher;
 use crate::infra::git_changes;
+use crate::services::{commit_message, llm_session};
 
 /// The open folder's repository changed its index, HEAD or refs.
 pub const GIT_EVENT: &str = "workspace-git:changed";
@@ -89,6 +90,20 @@ pub async fn git_unstage(paths: Vec<String>, state: State<'_, Arc<AgentState>>) 
 #[tauri::command]
 pub async fn git_commit(message: String, state: State<'_, Arc<AgentState>>) -> Result<String, String> {
     in_repo(&state, move |root| git_changes::commit(&root, &message)).await
+}
+
+/// A commit message for what is staged, written by the active provider's
+/// model; `draft` is what the box already holds.
+#[tauri::command]
+pub async fn git_commit_message(draft: String, state: State<'_, Arc<AgentState>>) -> Result<String, String> {
+    let root = state.workspace()?;
+    // A request to the provider, which would freeze the IPC loop for its duration.
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
+        commit_message::generate(&session, &root, &draft).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Where HEAD is and the newest `limit` commits, for the History tab.

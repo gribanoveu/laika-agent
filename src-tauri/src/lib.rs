@@ -102,6 +102,7 @@ pub fn run() {
             commands::git::git_stage,
             commands::git::git_unstage,
             commands::git::git_commit,
+            commands::git::git_commit_message,
             commands::git::git_history,
             commands::git::file_view,
             commands::files::workspace_list,

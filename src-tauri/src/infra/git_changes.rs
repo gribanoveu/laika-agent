@@ -7,8 +7,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path};
 
-use git2::{Diff, DiffOptions, ErrorCode, Repository, Signature};
+use git2::{Diff, DiffFormat, DiffOptions, ErrorCode, Repository, Signature};
 
+use crate::domain::commit_message::StagedPatch;
 use crate::domain::git_changes::{
     ChangeTotals, ChangedFile, CommitSummary, FileSide, FileView, GitChangesError, GitHistory, Unviewable, WorkingChanges,
 };
@@ -109,6 +110,36 @@ pub fn commit(root: &Path, message: &str) -> Result<String, GitChangesError> {
     let parents: Vec<&git2::Commit> = parent.iter().collect();
     let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents).map_err(git)?;
     Ok(oid.to_string().chars().take(7).collect())
+}
+
+/// What `commit` would record, file by file with its patch, sorted by path —
+/// what a commit message is written from. Empty when nothing is staged.
+pub fn staged_patches(root: &Path) -> Result<Vec<StagedPatch>, GitChangesError> {
+    let repo = open(root)?;
+    let head = head_tree(&repo)?;
+    let index = repo.index().map_err(git)?;
+    let diff = repo.diff_tree_to_index(head.as_ref(), Some(&index), None).map_err(git)?;
+    let mut patches: BTreeMap<String, StagedPatch> = files(&diff)?
+        .into_iter()
+        .map(|f| (f.path.clone(), StagedPatch { path: f.path, add: f.add, del: f.del, patch: Some(String::new()) }))
+        .collect();
+    diff.print(DiffFormat::Patch, |delta, _, line| {
+        let path = delta.new_file().path().or_else(|| delta.old_file().path());
+        let Some(entry) = path.and_then(|p| patches.get_mut(&*p.to_string_lossy())) else { return true };
+        match (line.origin(), entry.patch.as_mut()) {
+            // The path is already the entry's own header.
+            ('F', _) | (_, None) => {}
+            ('B', _) => entry.patch = None,
+            (origin @ ('+' | '-' | ' '), Some(patch)) => {
+                patch.push(origin);
+                patch.push_str(&String::from_utf8_lossy(line.content()));
+            }
+            (_, Some(patch)) => patch.push_str(&String::from_utf8_lossy(line.content())),
+        }
+        true
+    })
+    .map_err(git)?;
+    Ok(patches.into_values().collect())
 }
 
 /// Where HEAD is and up to `limit` commits reachable from it, newest first;
@@ -368,6 +399,28 @@ mod tests {
         let id = commit(&dir, "  first\n").unwrap();
         assert_eq!(id.len(), 7);
         assert_eq!(changes(&dir).unwrap(), WorkingChanges { staged: vec![], unstaged: vec![] });
+    }
+
+    #[test]
+    fn staged_patches_hold_the_index_not_the_disk() {
+        let (dir, _repo) = repo();
+        fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        fs::write(dir.join("logo.bin"), [0u8, 1, 2, 0]).unwrap();
+        stage(&dir, &["a.txt".into(), "logo.bin".into()]).unwrap();
+        commit(&dir, "first").unwrap();
+        assert!(staged_patches(&dir).unwrap().is_empty());
+
+        fs::write(dir.join("a.txt"), "one\n2\n").unwrap();
+        fs::write(dir.join("logo.bin"), [0u8, 9, 9, 0]).unwrap();
+        stage(&dir, &["a.txt".into(), "logo.bin".into()]).unwrap();
+        // Edited after staging: not what the commit records.
+        fs::write(dir.join("a.txt"), "one\n2\nunstaged\n").unwrap();
+
+        let patches = staged_patches(&dir).unwrap();
+        assert_eq!(patches.len(), 2);
+        assert_eq!((patches[0].path.as_str(), patches[0].add, patches[0].del), ("a.txt", 1, 1));
+        assert_eq!(patches[0].patch.as_deref(), Some("@@ -1,2 +1,2 @@\n one\n-two\n+2\n"));
+        assert_eq!((patches[1].path.as_str(), patches[1].patch.as_deref()), ("logo.bin", None));
     }
 
     #[test]
