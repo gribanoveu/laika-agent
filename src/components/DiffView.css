@@ -21,7 +21,8 @@
   min-width: 0;
 }
 .diff-no {
-  min-width: 3ch;
+  box-sizing: content-box;
+  min-width: var(--diff-digits, 3ch);
   padding: 0 6px;
   text-align: right;
   color: var(--text-faint);
