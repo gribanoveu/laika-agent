@@ -124,7 +124,16 @@ const components: Components = {
   em: ({ children }) => <em>{children}</em>,
   ul: ({ children }) => <ul className="md-ul">{children}</ul>,
   ol: ({ children }) => <ol className="md-ol">{children}</ol>,
-  li: ({ children }) => <li className="md-li">{children}</li>,
+  // A GFM task (`- [ ]`) is the one item that comes with a class: it gets
+  // no bullet, and its box is drawn here rather than by the platform.
+  li: ({ className, children }) => (
+    <li className={className === "task-list-item" ? "md-li md-task" : "md-li"}>{children}</li>
+  ),
+  input: ({ checked }) => (
+    <span className="md-check" role="checkbox" aria-checked={!!checked} aria-readonly>
+      {checked && <Check size={10} strokeWidth={3} aria-hidden />}
+    </span>
+  ),
   blockquote: ({ children }) => <blockquote className="md-quote">{children}</blockquote>,
   table: ({ children }) => (
     <div className="md-table-scroll">

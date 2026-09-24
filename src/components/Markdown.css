@@ -42,6 +42,27 @@
 .md-li {
   margin: 0.25em 0;
 }
+/* The box stands where the bullet would. */
+.md-task {
+  list-style: none;
+  margin-left: -1.3em;
+}
+.md-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.35em;
+  vertical-align: -0.12em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--accent-contrast);
+}
+.md-check[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
 .md-li > .md-p {
   margin: 0;
 }

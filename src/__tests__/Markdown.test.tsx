@@ -44,6 +44,14 @@ describe("Markdown", () => {
     expect(container.querySelector(".md-code-text")?.textContent).toBe("fn main() {");
   });
 
+  test("a task list draws its own boxes, without bullets; other items keep theirs", () => {
+    const { container } = render(<Markdown text={"- [ ] todo\n- [x] done\n- plain"} streaming={false} />);
+    expect(container.querySelector("input")).toBeNull();
+    const boxes = [...container.querySelectorAll(".md-check")].map((b) => b.getAttribute("aria-checked"));
+    expect(boxes).toEqual(["false", "true"]);
+    expect([...container.querySelectorAll("li")].map((li) => li.className)).toEqual(["md-li md-task", "md-li md-task", "md-li"]);
+  });
+
   test("a fence without a language is a block, its lines kept", () => {
     const { container } = render(<Markdown text={"```\nsrc/\n├── a/\n└── b/\n```"} streaming={false} />);
     expect(container.querySelector(".md-code-inline")).toBeNull();
