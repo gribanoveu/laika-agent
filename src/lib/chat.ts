@@ -663,6 +663,12 @@ export async function gitCommit(message: string): Promise<string> {
   return invoke<string>("git_commit", { message });
 }
 
+/** A message for what is staged, written by the model; `draft` is what the box already holds. */
+export async function gitCommitMessage(draft: string): Promise<string> {
+  requireBackend();
+  return invoke<string>("git_commit_message", { draft });
+}
+
 /** Mirrors `domain::git_changes::CommitSummary`; `time` is in seconds since the epoch. */
 export type CommitSummary = { id: string; summary: string; author: string; time: number; head: boolean; refs: string[] };
 /** Mirrors `domain::git_changes::GitHistory`. */

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Minus, Plus, Sparkles } from "lucide-react";
+import { Loader2, Minus, Plus, Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
 import type { ChangedFile, FileTarget } from "../lib/chat";
 import { useGitHistory } from "../hooks/useGitHistory";
@@ -72,9 +72,10 @@ function StageRow({
 
 export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile, message, onMessage }: Props) {
   const [view, setView] = useState<"changes" | "history">("changes");
-  const { unstaged, staged, error, stage, unstage, commit } = useStaging(active, workspace);
+  const { unstaged, staged, error, stage, unstage, commit, describe } = useStaging(active, workspace);
   const history = useGitHistory(active && view === "history", workspace);
   const [committing, setCommitting] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   const canCommit = staged.length > 0 && message.trim().length > 0 && !committing;
   // A failed action is said once, in a toast; the lists are read back either way.
@@ -89,6 +90,17 @@ export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile
       onNotify(String(e));
     } finally {
       setCommitting(false);
+    }
+  };
+
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      onMessage(await describe(message));
+    } catch (e) {
+      onNotify(String(e));
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -168,11 +180,11 @@ export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile
               <button
                 className="btn btn-ghost"
                 type="button"
-                disabled={staged.length === 0}
-                onClick={() => onNotify("Message generation is not wired yet")}
+                disabled={staged.length === 0 || generating}
+                onClick={generate}
               >
-                <Sparkles size={13} />
-                Generate description
+                {generating ? <Loader2 className="commit-gen-spin" size={13} /> : <Sparkles size={13} />}
+                {generating ? "Generating…" : "Generate description"}
               </button>
               <button className="btn btn-primary" type="button" disabled={!canCommit} onClick={commitNow}>
                 Commit

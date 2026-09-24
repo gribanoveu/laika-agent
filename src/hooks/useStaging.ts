@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   gitChanges,
   gitCommit,
+  gitCommitMessage,
   gitStage,
   gitUnstage,
   onGitChanged,
@@ -69,5 +70,7 @@ export function useStaging(visible: boolean, workspace: string | null) {
     stage: (paths: string[]) => act(() => gitStage(paths)),
     unstage: (paths: string[]) => act(() => gitUnstage(paths)),
     commit: (message: string) => act(() => gitCommit(message)),
+    // Changes nothing, so nothing to read back.
+    describe: (draft: string) => gitCommitMessage(draft),
   };
 }

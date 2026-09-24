@@ -138,3 +138,13 @@
 .commit-actions .btn-primary {
   margin-left: auto;
 }
+
+.commit-gen-spin {
+  animation: commit-gen-spin 1s linear infinite;
+}
+
+@keyframes commit-gen-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
