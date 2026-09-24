@@ -1,6 +1,9 @@
+/* As wide as it was dragged; when the window has no room for it and the
+   panels beside the chat, it gives up width too, down to its minimum. */
 .sidebar {
   width: var(--sidebar-width, 248px);
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 180px;
   position: relative;
   background: var(--bg-panel);
   border-radius: var(--radius);
@@ -12,6 +15,7 @@
 }
 .window.collapsed .sidebar {
   width: 58px;
+  min-width: 0;
 }
 
 .sidebar-top {

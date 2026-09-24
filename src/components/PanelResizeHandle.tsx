@@ -4,7 +4,9 @@ import "./PanelResizeHandle.css";
 type Props = {
   /** Positive delta grows the panel this handle belongs to (see invert). */
   onResize: (delta: number) => void;
-  onResizeEnd: () => void;
+  /** With the rendered size of the panel the handle sizes — the one beside it,
+      after it when `invert`. Held under what was dragged when there was no room. */
+  onResizeEnd: (size?: number) => void;
   /** True when the panel being sized sits to the right of (or below) the handle. */
   invert?: boolean;
   /** "y" for a handle between panels stacked one above the other. */
@@ -30,6 +32,7 @@ export function PanelResizeHandle({
   ariaLabel,
 }: Props) {
   const [active, setActive] = useState(false);
+  const self = useRef<HTMLDivElement>(null);
   const last = useRef(0);
   const axisRef = useRef(axis);
   const activeRef = useRef(false);
@@ -47,8 +50,12 @@ export function PanelResizeHandle({
     if (!activeRef.current) return;
     activeRef.current = false;
     setActive(false);
+    // Measured before the drag styles go: they hold the panels' transitions,
+    // and the size read must be the one reached, not one mid-animation.
+    const panel = invertRef.current ? self.current?.nextElementSibling : self.current?.previousElementSibling;
+    const rect = panel?.getBoundingClientRect();
     clearDragStyles();
-    onResizeEndRef.current();
+    onResizeEndRef.current(rect ? (axisRef.current === "y" ? rect.height : rect.width) : undefined);
   }, []);
 
   useEffect(() => {
@@ -88,6 +95,7 @@ export function PanelResizeHandle({
 
   return (
     <div
+      ref={self}
       className={`panel-resize-handle${axis === "y" ? " axis-y" : ""}${active ? " is-active" : ""}`}
       role="separator"
       aria-orientation={axis === "y" ? "horizontal" : "vertical"}

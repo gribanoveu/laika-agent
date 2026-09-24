@@ -332,7 +332,7 @@ export default function App() {
         <PanelResizeHandle
           ariaLabel="Resize the chat list"
           onResize={panels.resizeSidebarBy}
-          onResizeEnd={panels.endResize}
+          onResizeEnd={(size) => panels.endResize("sidebar", size)}
         />
 
         <main className="main">
@@ -395,7 +395,7 @@ export default function App() {
               invert
               ariaLabel="Resize the file viewer"
               onResize={panels.resizeViewerBy}
-              onResizeEnd={panels.endResize}
+              onResizeEnd={(size) => panels.endResize("viewer", size)}
             />
             <FileViewer
               files={viewer.files}
@@ -416,7 +416,7 @@ export default function App() {
             invert
             ariaLabel="Resize the side panel"
             onResize={panels.resizeAsideBy}
-            onResizeEnd={panels.endResize}
+            onResizeEnd={(size) => panels.endResize("aside", size)}
           />
         )}
 
@@ -438,7 +438,7 @@ export default function App() {
                   invert
                   ariaLabel="Resize the bottom panel"
                   onResize={panels.resizeBottomBy}
-                  onResizeEnd={panels.endResize}
+                  onResizeEnd={(size) => panels.endResize("bottom", size)}
                 />
               )}
               <AsidePanel

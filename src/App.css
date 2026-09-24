@@ -39,16 +39,22 @@
   color: var(--text-dim);
 }
 
+/* A window narrower than every open panel's minimum cuts them at its edge,
+   rather than drawing past it. */
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
   padding: 0 10px 10px;
+  overflow-x: clip;
 }
 
+/* The chat keeps room to be read: the file viewer beside it shrinks first.
+   Relative in a window near its own minimum, where the rail, the chat and
+   the viewer at their fixed minimums would not fit side by side. */
 .main {
   flex: 1;
-  min-width: 0;
+  min-width: min(400px, 50vw);
   display: flex;
   flex-direction: column;
   gap: 10px;

@@ -134,9 +134,20 @@ export function usePanelSizes(controls: Partial<Record<PanelKey, PanelControl>>)
     resizeAsideBy: useCallback((delta: number) => resize("aside", delta), [resize]),
     resizeBottomBy: useCallback((delta: number) => resize("bottom", delta), [resize]),
     resizeViewerBy: useCallback((delta: number) => resize("viewer", delta), [resize]),
-    endResize: useCallback(() => {
-      overshoot.current = zeros();
-      catchUp.current = zeros();
-    }, []),
+    /**
+     * The drag is over. `size` is how large the panel came out: when the
+     * window had no room for what was dragged, the panel stopped short, and
+     * its width is brought down to that — or the next drag would first have
+     * to take back width that never showed.
+     */
+    endResize: useCallback(
+      (key?: PanelKey, size?: number) => {
+        overshoot.current = zeros();
+        catchUp.current = zeros();
+        if (!key || size === undefined || controlsRef.current[key]?.collapsed) return;
+        if (size < widthsRef.current[key] - 0.5) apply(key, Math.round(size));
+      },
+      [apply],
+    ),
   };
 }

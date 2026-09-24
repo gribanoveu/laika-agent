@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { isBoolean, useStoredState } from "../hooks/useStoredState";
 import { PANEL_LIMITS, usePanelSizes } from "../hooks/usePanelSizes";
 import { useNarrowCollapse } from "../hooks/useNarrowCollapse";
+import { PanelResizeHandle } from "../components/PanelResizeHandle";
 import { isAsideTab } from "../types";
 
 afterEach(() => localStorage.clear());
@@ -83,6 +84,30 @@ describe("panel widths", () => {
     expect(result.current.widths.aside).toBe(400);
   });
 
+  /// Dragged wider than the window has room for, the panel stops short; its
+  /// width comes down to where it stopped, or the next drag back would first
+  /// take back width that never showed.
+  test("a drag that ran out of room leaves the width where the panel stopped", () => {
+    const { result } = renderHook(() => usePanelSizes({}));
+    act(() => result.current.resizeAsideBy(200));
+    expect(result.current.widths.aside).toBe(PANEL_LIMITS.aside.initial + 200);
+    act(() => result.current.endResize("aside", 331.6));
+    expect(result.current.widths.aside).toBe(332);
+    // A panel drawn as wide as asked, or wider, keeps what was asked.
+    act(() => result.current.endResize("aside", 900));
+    expect(result.current.widths.aside).toBe(332);
+    act(() => result.current.endResize());
+    expect(result.current.widths.aside).toBe(332);
+  });
+
+  test("a collapsed panel's width is not brought down to its rail", () => {
+    const { result } = renderHook(() =>
+      usePanelSizes({ sidebar: { collapsed: true, collapse: () => {}, expand: () => {} } }),
+    );
+    act(() => result.current.endResize("sidebar", 58));
+    expect(result.current.widths.sidebar).toBe(PANEL_LIMITS.sidebar.initial);
+  });
+
   test("outside today's limits are not trusted", () => {
     localStorage.setItem("atlas-panel-widths", JSON.stringify({ sidebar: 9999, aside: 300 }));
     const { result } = renderHook(() => usePanelSizes(controls));
@@ -115,5 +140,34 @@ describe("a narrow window at start", () => {
     const set: boolean[] = [];
     renderHook(() => useNarrowCollapse("(max-width: 1px)", (v) => set.push(v)));
     expect(set).toEqual([]);
+  });
+});
+
+describe("the resize handle", () => {
+  /// It sizes the panel beside it — after it when `invert` — and says how
+  /// large that panel came out once the drag ends.
+  test("ends a drag with the size of the panel it sizes", () => {
+    const ends: (number | undefined)[] = [];
+    const panel = (width: number) => (el: HTMLDivElement | null) => {
+      if (el) el.getBoundingClientRect = () => ({ width, height: width / 2 }) as DOMRect;
+    };
+    render(
+      <div>
+        <div ref={panel(111)} />
+        <PanelResizeHandle ariaLabel="left" onResize={() => {}} onResizeEnd={(size) => ends.push(size)} />
+        <div ref={panel(222)} />
+        <PanelResizeHandle ariaLabel="right" invert onResize={() => {}} onResizeEnd={(size) => ends.push(size)} />
+        <div ref={panel(333)} />
+        <PanelResizeHandle ariaLabel="down" axis="y" invert onResize={() => {}} onResizeEnd={(size) => ends.push(size)} />
+        <div ref={panel(444)} />
+      </div>,
+    );
+    for (const name of ["left", "right", "down"]) {
+      fireEvent.pointerDown(screen.getByRole("separator", { name }), { clientX: 0, clientY: 0 });
+      act(() => {
+        window.dispatchEvent(new Event("pointerup"));
+      });
+    }
+    expect(ends).toEqual([111, 333, 222]);
   });
 });

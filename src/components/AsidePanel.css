@@ -1,8 +1,14 @@
 /* Right of the chat, as wide as it was dragged: the right dock on top, the
    bottom dock under it. */
+/* As wide as it was dragged, but never pushing the window's edge out: past
+   the room there is, it gives up width down to its minimum — the file viewer
+   first (flex-shrink 5 there), the chat not at all (App.css). Whole shrink
+   factors: flexbox hands out only that fraction of the missing width when
+   the factors left add up to less than one. */
 .dock-column {
   width: var(--aside-width, 300px);
-  flex: none;
+  flex: 0 1 auto;
+  min-width: min(260px, 25vw);
   display: flex;
   flex-direction: column;
   gap: 10px;

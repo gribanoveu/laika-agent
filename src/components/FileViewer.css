@@ -1,11 +1,10 @@
 /* The column between the chat and the side panel: a heading naming the file
    and how to show it, then the file, scrolling on its own. */
-/* As wide as it was dragged, but never so wide the chat is squeezed out. */
+/* As wide as it was dragged, and narrower when the window is: it gives up
+   width before the chat goes under its minimum (App.css). */
 .file-viewer {
-  flex: none;
-  width: var(--viewer-width, 560px);
-  min-width: 320px;
-  max-width: 60%;
+  flex: 0 5 var(--viewer-width, 560px);
+  min-width: min(320px, 30vw);
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
