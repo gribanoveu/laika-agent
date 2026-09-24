@@ -13,7 +13,9 @@
  */
 
 const TREE_CHARS = /[├└│─┌┐┘┬┴┼]/;
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/** CommonMark: a backtick fence's info string holds no backtick, or the line
+ * is inline code, not a fence. */
+const FENCE_RE = /^ {0,3}(`{3,}(?!.*`)|~{3,})(.*)$/;
 /** A bare root-label line directly above the first tree line, e.g. `specs/`
  * or `repository` — absorbed into the fence so the label stays attached to
  * its diagram instead of being left outside as its own paragraph. */
@@ -30,10 +32,13 @@ export function wrapAsciiTrees(content: string): string {
     const line = lines[i];
     const fenceMatch = FENCE_RE.exec(line);
     if (fenceMatch) {
+      const [, marker, info] = fenceMatch;
       if (!inFence) {
         inFence = true;
-        [, fenceMarker] = fenceMatch;
-      } else if (line.trimStart().startsWith(fenceMarker)) {
+        fenceMarker = marker;
+      } else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length && info.trim() === "") {
+        // Only a bare run of the same character, at least as long, closes it:
+        // a "```bash" inside the block is its text.
         inFence = false;
       }
       out.push(line);

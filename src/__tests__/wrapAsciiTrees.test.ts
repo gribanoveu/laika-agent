@@ -47,6 +47,16 @@ describe("wrapAsciiTrees", () => {
     expect(wrapAsciiTrees(input)).toBe(input);
   });
 
+  test("a fence tag inside a block does not close it", () => {
+    const input = ["```", "```bash", "```", "", "```", "src/  # frontend", "├── a/", "└── b/", "```"].join("\n");
+    expect(wrapAsciiTrees(input)).toBe(input);
+  });
+
+  test("a line of inline code is not a fence", () => {
+    const input = ["```run `bun test` first```", "├── a.txt"].join("\n");
+    expect(wrapAsciiTrees(input)).toBe(["```run `bun test` first```", "```text", "├── a.txt", "```"].join("\n"));
+  });
+
   test("handles a tree diagram with no preceding root-label line", () => {
     const input = ["├── a.txt", "└── b.txt"].join("\n");
     expect(wrapAsciiTrees(input)).toBe(["```text", "├── a.txt", "└── b.txt", "```"].join("\n"));
