@@ -74,6 +74,7 @@ describe("FileViewer", () => {
     expect(screen.getByText("+1")).toBeTruthy();
     expect(screen.getByText("-1")).toBeTruthy();
     expect(rows()).toHaveLength(9); // the hunk header, three lines each side, the line removed and added
+    expect(document.querySelector(".diff-view")?.classList.contains("diff-view-plain")).toBe(false);
   });
 
   test("File shows every line with the change in place", async () => {
@@ -87,6 +88,8 @@ describe("FileViewer", () => {
     view = { old: "a\n", new: "a\n", unviewable: null };
     await open({ path: "a.txt", side: "worktree" });
     expect(rows()).toEqual(["11 a"]);
+    // One number column, not the same number twice.
+    expect(document.querySelector(".diff-view")?.classList.contains("diff-view-plain")).toBe(true);
     expect((screen.getByRole("tab", { name: "Diff" }) as HTMLButtonElement).disabled).toBe(true);
     // The open folder's files carry no side label.
     expect(document.querySelector(".file-viewer-side")).toBeNull();

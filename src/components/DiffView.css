@@ -20,6 +20,13 @@
   grid-template-columns: max-content max-content 1.5ch 1fr;
   min-width: 0;
 }
+.diff-view-plain .diff-row {
+  grid-template-columns: max-content 1fr;
+}
+.diff-view-plain .diff-no + .diff-no,
+.diff-view-plain .diff-sign {
+  display: none;
+}
 .diff-no {
   box-sizing: content-box;
   min-width: var(--diff-digits, 3ch);
@@ -30,6 +37,9 @@
 }
 .diff-sign {
   user-select: none;
+}
+.diff-view-plain .diff-text {
+  padding-left: 1.5ch;
 }
 .diff-text {
   padding-right: 9px;
@@ -86,4 +96,58 @@
 }
 :root:not([data-theme="light"]) .diff-text [style] {
   color: var(--shiki-dark);
+}
+
+/* Drawn a screenful at a time: the view scrolls, the rows sit at fixed
+   places in a box as tall as all of them. Each row is one line — a long one
+   scrolls sideways — so every row is exactly as tall as the next. */
+.diff-view-virtual {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.diff-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.diff-rows {
+  position: relative;
+}
+.diff-view-virtual .diff-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.diff-view-virtual .diff-text {
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 4;
+}
+.diff-view-virtual .diff-hunk {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* The line numbers and the sign stay put while a long line is scrolled
+   sideways. They are drawn opaque, so the code passes under them — in the
+   row's own tint where it has one. */
+.diff-view-virtual .diff-no,
+.diff-view-virtual .diff-sign {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-panel);
+}
+.diff-view-virtual .diff-no + .diff-no {
+  left: calc(var(--diff-digits) + 12px);
+}
+.diff-view-virtual .diff-sign {
+  left: calc(2 * (var(--diff-digits) + 12px));
+}
+.diff-view-virtual .diff-add :is(.diff-no, .diff-sign) {
+  background: color-mix(in srgb, var(--green) 10%, var(--bg-panel));
+}
+.diff-view-virtual .diff-del :is(.diff-no, .diff-sign) {
+  background: color-mix(in srgb, var(--red) 10%, var(--bg-panel));
 }

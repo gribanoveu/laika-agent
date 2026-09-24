@@ -237,7 +237,7 @@ export function FileViewer({
         ) : rows.length === 0 ? (
           <div className="file-viewer-note">Empty file.</div>
         ) : (
-          <DiffView rows={rows} />
+          <DiffView rows={rows} virtual />
         )}
       </div>
     </section>
