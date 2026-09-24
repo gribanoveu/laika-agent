@@ -6,7 +6,7 @@ import {
   Plug,
   Sparkles,
   SquareTerminal,
-  GitCompareArrows,
+  FileDiff,
   Webhook,
 } from "lucide-react";
 import { ChangesPanel } from "./ChangesPanel";
@@ -60,7 +60,7 @@ export type Dock = "right" | "bottom";
 export type PaneDef = {
   id: AsideTab;
   label: string;
-  icon: typeof GitCompareArrows;
+  icon: typeof FileDiff;
   dock: Dock;
   Component: (ctx: PaneContext) => ReactNode;
 };
@@ -358,7 +358,7 @@ function FilesPane({ active, workspace, chatBlocks, openFile, onOpenFile }: Pane
 // names a pane. `dock` is where the menu opens it; each dock shows one pane. There is no tab strip: eight icons in a 300px column were
 // unreadable, and only one of them is opened often.
 export const PANES: PaneDef[] = [
-  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, openFile, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} openFile={openFile} onOpenFile={onOpenFile} {...commitDraft} /> },
+  { id: "changes", label: "Changes", icon: FileDiff, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, openFile, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} openFile={openFile} onOpenFile={onOpenFile} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },

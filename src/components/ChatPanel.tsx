@@ -6,7 +6,7 @@ import {
   ChevronRight,
   FileText,
   Folder,
-  GitCompareArrows,
+  FileDiff,
   FolderTree,
   GitBranch,
   ListTodo,
@@ -586,7 +586,7 @@ export function ChatPanel({
               aria-pressed={asideOpen}
               onClick={onToggleAside}
             >
-              <GitCompareArrows size={15} />
+              <FileDiff size={15} />
             </button>
           )}
         </div>
