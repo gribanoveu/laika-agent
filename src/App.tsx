@@ -39,9 +39,10 @@ import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "./lib/docks";
-import { exportChat, setConversationMode, type ConversationMode, type FileTarget } from "./lib/chat";
+import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import { useFolderSwitch } from "./hooks/useFolderSwitch";
+import { useOpenFiles } from "./hooks/useOpenFiles";
 import { FolderSwitchDialog } from "./components/FolderSwitchDialog";
 import "./App.css";
 
@@ -89,8 +90,6 @@ export default function App() {
   const [processFocus, setProcessFocus] = useState<{ id: number } | null>(null);
   // A terminal selection on its way to the composer, from the other subtree.
   const [quote, setQuote] = useState<{ text: string; seq: number } | null>(null);
-  // The file the viewer beside the chat shows, opened from Changes or Files.
-  const [viewing, setViewing] = useState<FileTarget | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // The MCP and hooks files open as a whole (JSON) or one entry at a time
@@ -107,7 +106,8 @@ export default function App() {
   const workspace = useWorkspace();
   const index = useIndexStatus(workspace.path);
   useEffect(() => setCommitMessage(""), [workspace.path]);
-  useEffect(() => setViewing(null), [workspace.path]);
+  // The files open in the viewer beside the chat, from Changes or Files.
+  const viewer = useOpenFiles(workspace.path);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -261,8 +261,8 @@ export default function App() {
     processFocus,
     onAddToChat: (text) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 })),
     chatBlocks: agent.turn.blocks,
-    openFile: viewing,
-    onOpenFile: setViewing,
+    openFile: viewer.active,
+    onOpenFile: viewer.open,
     mcp: {
       view: mcp.view,
       error: mcpEditing ? null : mcp.error,
@@ -386,7 +386,7 @@ export default function App() {
           />
         </main>
 
-        {viewing && (
+        {viewer.active && (
           <>
             <PanelResizeHandle
               invert
@@ -394,7 +394,14 @@ export default function App() {
               onResize={panels.resizeViewerBy}
               onResizeEnd={panels.endResize}
             />
-            <FileViewer target={viewing} workspace={workspace.path} onClose={() => setViewing(null)} />
+            <FileViewer
+              files={viewer.files}
+              active={viewer.active}
+              workspace={workspace.path}
+              onActivate={viewer.open}
+              onClose={viewer.close}
+              onCloseAll={viewer.closeAll}
+            />
           </>
         )}
 

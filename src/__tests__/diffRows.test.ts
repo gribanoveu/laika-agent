@@ -119,6 +119,7 @@ describe("a file's language", () => {
     expect(languageOf("src/main.rs")).toBe("rust");
     expect(languageOf("a/b/App.tsx")).toBe("tsx");
     expect(languageOf("include/x.h")).toBe("c");
+    expect(languageOf("docs/README.md")).toBe("markdown");
     expect(languageOf("Dockerfile")).toBe("dockerfile");
     expect(languageOf("docker/Makefile")).toBe("makefile");
     expect(languageOf(".gitignore")).toBe(null);

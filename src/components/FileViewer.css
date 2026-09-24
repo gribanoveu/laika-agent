@@ -24,39 +24,106 @@
     animation: none;
   }
 }
+/* The open files, one tab each, scrolling sideways when they do not fit. */
+.file-viewer-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 0 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.file-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.file-tabs::-webkit-scrollbar {
+  display: none;
+}
+.file-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  max-width: 220px;
+  border-radius: 7px 7px 0 0;
+  color: var(--text-faint);
+}
+.file-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+.file-tab.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.file-tab-name {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 6px 4px 6px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.file-tab-side {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+.file-tab-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+}
+.file-tab:hover .file-tab-close,
+.file-tab.active .file-tab-close,
+.file-tab-close:focus-visible {
+  opacity: 1;
+}
+.file-tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .file-viewer-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 8px 8px 14px;
+  padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--border-soft);
 }
+/* The file's path; a long one is cut from its start, where it says least. */
 .file-viewer-title {
   flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.file-viewer-name {
-  flex: none;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-md);
-  font-weight: 500;
-  color: var(--text);
-}
-/* A long path is cut from its start: the folders nearest the file tell it apart. */
-.file-viewer-dir {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;
   text-align: left;
+  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--text-faint);
 }
@@ -78,8 +145,10 @@
 }
 .file-viewer-head .tabs {
   flex: none;
-  width: 120px;
   margin: 0;
+}
+.file-viewer-head .tab {
+  padding: 3px 10px;
 }
 .file-viewer-body {
   flex: 1;
@@ -102,4 +171,15 @@
   padding: 14px;
   font-size: var(--fs-sm);
   color: var(--text-faint);
+}
+/* A Markdown file as it reads, at the chat's measure. */
+.file-viewer-preview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 22px 24px;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  color: var(--text);
 }

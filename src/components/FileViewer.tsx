@@ -1,14 +1,67 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useFileView } from "../hooks/useFileView";
 import { fileRows, paintRows, type Painted } from "../lib/diffRows";
 import { highlight, languageOf } from "../lib/highlight";
 import type { FileSide, FileTarget } from "../lib/chat";
 import { DiffView } from "./DiffView";
+import { Markdown } from "./Markdown";
+import { sameFile } from "../hooks/useOpenFiles";
 import { Tabs } from "./Tabs";
 import "./FileViewer.css";
 
 const SIDE: Record<FileSide, string | null> = { unstaged: "Unstaged", staged: "Staged", worktree: null };
+const SIDE_LETTER: Record<FileSide, string | null> = { unstaged: "U", staged: "S", worktree: null };
+
+type Mode = "diff" | "file" | "preview";
+
+const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** The strip of open files: a click shows one, its cross or a middle click closes it. */
+function FileTabs({
+  files,
+  active,
+  onActivate,
+  onClose,
+}: {
+  files: FileTarget[];
+  active: FileTarget;
+  onActivate: (target: FileTarget) => void;
+  onClose: (target: FileTarget) => void;
+}) {
+  const shown = useRef<HTMLDivElement>(null);
+  // A block, not an expression: Chromium's scrollIntoView returns a promise,
+  // which React would take for the effect's cleanup.
+  useEffect(() => {
+    shown.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active]);
+  return (
+    <div className="file-tabs" role="tablist" aria-label="Open files">
+      {files.map((file) => {
+        const on = sameFile(file, active);
+        // The side is said only when the same file is open from both.
+        const twin = files.some((f) => f !== file && f.path === file.path);
+        return (
+          <div
+            key={`${file.side}:${file.path}`}
+            ref={on ? shown : undefined}
+            className={`file-tab${on ? " active" : ""}`}
+            title={file.path}
+            onAuxClick={(e) => e.button === 1 && onClose(file)}
+          >
+            <button type="button" role="tab" aria-selected={on} className="file-tab-name" onClick={() => onActivate(file)}>
+              {fileName(file.path)}
+              {twin && SIDE_LETTER[file.side] && <span className="file-tab-side">{SIDE_LETTER[file.side]}</span>}
+            </button>
+            <button type="button" className="file-tab-close" title="Close" onClick={() => onClose(file)}>
+              <X size={12} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ponytail: past this the file stays uncoloured — Shiki's JavaScript engine
 // takes seconds on a huge file; colour in chunks or a worker if that matters.
@@ -35,47 +88,55 @@ function useColours(old: string | null, next: string | null, path: string) {
 }
 
 /**
- * The column beside the chat that shows one file: what changed in it, or the
- * whole of it with the changes in place. Opened from Changes and Files; the
- * next file opened replaces it.
+ * The column beside the chat that shows the open files, one at a time: what
+ * changed in it, the whole of it with the changes in place, or — Markdown —
+ * the file as it reads. Opened from Changes and Files, a tab per file.
  */
 export function FileViewer({
-  target,
+  files,
+  active: target,
   workspace,
+  onActivate,
   onClose,
+  onCloseAll,
 }: {
-  target: FileTarget;
+  files: FileTarget[];
+  active: FileTarget;
   workspace: string | null;
-  onClose: () => void;
+  onActivate: (target: FileTarget) => void;
+  onClose: (target: FileTarget) => void;
+  onCloseAll: () => void;
 }) {
   const { view, error } = useFileView(target, workspace);
-  const [mode, setMode] = useState<"diff" | "file">("diff");
+  const [mode, setMode] = useState<Mode>("diff");
   const text = view && !view.unviewable ? view : null;
   const changed = !!text && text.old !== text.new;
-  // A file with nothing changed has only one way to be shown.
-  const shown = changed ? mode : "file";
+  const markdown = languageOf(target.path) === "markdown";
+  // Only the ways this file can be shown: no diff without changes, no preview
+  // but for Markdown — which, unchanged, reads best as it renders.
+  const shown: Mode =
+    mode === "diff" && !changed ? (markdown ? "preview" : "file") : mode === "preview" && !markdown ? "file" : mode;
   const colours = useColours(text?.old ?? null, text?.new ?? null, target.path);
-  const plain = useMemo(() => (text ? fileRows(text.old ?? "", text.new ?? "", shown === "file") : []), [text, shown]);
+  const plain = useMemo(() => (text ? fileRows(text.old ?? "", text.new ?? "", shown !== "diff") : []), [text, shown]);
   const rows = useMemo(() => (colours ? paintRows(plain, colours.old, colours.next) : plain), [plain, colours]);
   const add = rows.filter((row) => row.kind === "add").length;
   const del = rows.filter((row) => row.kind === "del").length;
 
-  const cut = target.path.lastIndexOf("/");
-  const dir = cut > 0 ? target.path.slice(0, cut) : null;
   return (
     <section
       className="file-viewer"
-      aria-label={target.path}
-      onKeyDown={(e) => e.key === "Escape" && !e.defaultPrevented && onClose()}
+      aria-label="File viewer"
+      onKeyDown={(e) => e.key === "Escape" && !e.defaultPrevented && onCloseAll()}
     >
+      <div className="file-viewer-tabs">
+        <FileTabs files={files} active={target} onActivate={onActivate} onClose={onClose} />
+        <button type="button" className="iconbtn" title="Close all" onClick={onCloseAll}>
+          <X size={14} />
+        </button>
+      </div>
       <div className="file-viewer-head">
         <div className="file-viewer-title" title={target.path}>
-          <span className="file-viewer-name">{target.path.slice(cut + 1)}</span>
-          {dir && (
-            <span className="file-viewer-dir">
-              <bdi>{dir}</bdi>
-            </span>
-          )}
+          <bdi>{target.path}</bdi>
         </div>
         {SIDE[target.side] && <span className="file-viewer-side">{SIDE[target.side]}</span>}
         <span className="file-viewer-stat">
@@ -89,11 +150,9 @@ export function FileViewer({
           tabs={[
             { id: "diff", label: "Diff", disabled: !changed, title: changed ? undefined : "No changes" },
             { id: "file", label: "File" },
+            ...(markdown ? [{ id: "preview" as const, label: "Preview" }] : []),
           ]}
         />
-        <button type="button" className="iconbtn" title="Close" onClick={onClose}>
-          <X size={14} />
-        </button>
       </div>
       <div className="file-viewer-body">
         {error ? (
@@ -104,6 +163,14 @@ export function FileViewer({
           <div className="file-viewer-note">Too large to show here.</div>
         ) : view.old === null && view.new === null ? (
           <div className="file-viewer-note">Not on disk.</div>
+        ) : shown === "preview" ? (
+          view.new === null ? (
+            <div className="file-viewer-note">Deleted — nothing to preview.</div>
+          ) : (
+            <div className="file-viewer-preview">
+              <Markdown text={view.new} streaming={false} />
+            </div>
+          )
         ) : rows.length === 0 ? (
           <div className="file-viewer-note">Empty file.</div>
         ) : (

@@ -43,8 +43,17 @@ beforeEach(() => {
   asked = [];
 });
 
-async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged" }, onClose = () => {}) {
-  const shown = render(<FileViewer target={target} workspace="/repo" onClose={onClose} />);
+async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged" }, onCloseAll = () => {}) {
+  const shown = render(
+    <FileViewer
+      files={[target]}
+      active={target}
+      workspace="/repo"
+      onActivate={() => {}}
+      onClose={() => {}}
+      onCloseAll={onCloseAll}
+    />,
+  );
   await settle();
   return shown;
 }
@@ -54,7 +63,8 @@ describe("FileViewer", () => {
   test("asks for the file on its side and shows what changed, named and counted", async () => {
     await open();
     expect(asked).toEqual([{ path: "src/main.rs", side: "unstaged" }]);
-    expect(document.querySelector(".file-viewer-title")?.textContent).toBe("main.rssrc");
+    expect(document.querySelector(".file-viewer-title")?.textContent).toBe("src/main.rs");
+    expect(screen.getByRole("tab", { name: "main.rs" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Unstaged")).toBeTruthy();
     expect(screen.getByText("+1")).toBeTruthy();
     expect(screen.getByText("-1")).toBeTruthy();
@@ -83,7 +93,7 @@ describe("FileViewer", () => {
     expect(screen.getByText("A binary file — not shown.")).toBeTruthy();
   });
 
-  test("Escape closes it", async () => {
+  test("Escape closes it all", async () => {
     let closed = 0;
     await open(undefined, () => closed++);
     fireEvent.keyDown(document.querySelector(".file-viewer")!, { key: "Escape" });
@@ -102,5 +112,70 @@ describe("FileViewer", () => {
     await settle();
     expect(asked).toHaveLength(3);
     expect(rows().some((row) => row?.includes("two"))).toBe(true);
+  });
+
+  test("a tab per open file: a click shows it, the cross or a middle click closes it", async () => {
+    const a: FileTarget = { path: "src/a.rs", side: "unstaged" };
+    const b: FileTarget = { path: "src/a.rs", side: "staged" };
+    const c: FileTarget = { path: "README.md", side: "worktree" };
+    const shown: FileTarget[] = [];
+    const closed: FileTarget[] = [];
+    render(
+      <FileViewer
+        files={[a, b, c]}
+        active={b}
+        workspace="/repo"
+        onActivate={(t) => shown.push(t)}
+        onClose={(t) => closed.push(t)}
+        onCloseAll={() => {}}
+      />,
+    );
+    await settle();
+    // The same file from both sides says which is which; the other needs no letter.
+    expect(screen.getAllByRole("tab").slice(0, 3).map((t) => t.textContent)).toEqual(["a.rsU", "a.rsS", "README.md"]);
+    expect(asked).toEqual([{ path: "src/a.rs", side: "staged" }]);
+    fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
+    expect(shown).toEqual([c]);
+    fireEvent.click(screen.getAllByTitle("Close")[0]);
+    fireEvent(document.querySelectorAll(".file-tab")[2], new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(closed).toEqual([a, c]);
+  });
+
+  test("Markdown also reads as it renders, and unchanged opens that way", async () => {
+    view = { old: "# Title\n\nSome *text*.\n", new: "# Title\n\nSome *text*.\n", unviewable: null };
+    await open({ path: "docs/README.md", side: "worktree" });
+    expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector(".file-viewer-preview h1")?.textContent).toBe("Title");
+    fireEvent.click(screen.getByRole("tab", { name: "File" }));
+    expect(rows()).toHaveLength(3);
+  });
+
+  test("a file that is not Markdown offers no preview", async () => {
+    await open();
+    expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
+  });
+
+  /// Chromium's scrollIntoView returns a promise; returned from the effect,
+  /// React took it for the cleanup and threw on the next tab.
+  test("showing another tab scrolls it into view and keeps working", async () => {
+    const scroll = HTMLElement.prototype.scrollIntoView;
+    const scrolled: string[] = [];
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      scrolled.push(this.title);
+      return Promise.resolve() as unknown as void;
+    };
+    try {
+      const a: FileTarget = { path: "a.rs", side: "worktree" };
+      const b: FileTarget = { path: "b.rs", side: "worktree" };
+      const props = { files: [a, b], workspace: "/repo", onActivate: () => {}, onClose: () => {}, onCloseAll: () => {} };
+      const shown = render(<FileViewer {...props} active={a} />);
+      await settle();
+      shown.rerender(<FileViewer {...props} active={b} />);
+      await settle();
+      expect(scrolled).toEqual(["a.rs", "b.rs"]);
+      expect(screen.getByRole("tab", { name: "b.rs" }).getAttribute("aria-selected")).toBe("true");
+    } finally {
+      HTMLElement.prototype.scrollIntoView = scroll;
+    }
   });
 });

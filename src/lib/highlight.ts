@@ -21,6 +21,7 @@ const ALIASES: Record<string, string> = {
   yml: "yaml",
   docker: "dockerfile",
   make: "makefile",
+  md: "markdown",
   h: "c",
   hpp: "cpp",
   mjs: "javascript",
