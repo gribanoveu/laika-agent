@@ -4,6 +4,7 @@ import type { FileStatus, TreeEntry } from "../lib/chat";
 import type { Block } from "../lib/chatTurnReducer";
 import { touchedFiles, type Touch, type TouchedFile } from "../lib/touchedFiles";
 import { useFileTree } from "../hooks/useFileTree";
+import { Tabs } from "./Tabs";
 import "./FilesPanel.css";
 
 type Props = {
@@ -136,29 +137,15 @@ export function FilesPanel({ active, blocks, workspace }: Props) {
   const tree = useFileTree(active && view === "folder", workspace);
   return (
     <div className="panel-section">
-      <div className="files-tabs" role="tablist" aria-label="Files">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={view === "chat"}
-          className={`files-tab${view === "chat" ? " active" : ""}`}
-          onClick={() => setView("chat")}
-        >
-          In this chat
-          {files.length > 0 && <span className="files-tab-count">{files.length}</span>}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={view === "folder"}
-          className={`files-tab${view === "folder" ? " active" : ""}`}
-          title={workspace ?? undefined}
-          disabled={!workspace}
-          onClick={() => setView("folder")}
-        >
-          All files
-        </button>
-      </div>
+      <Tabs
+        label="Files"
+        value={view}
+        onChange={setView}
+        tabs={[
+          { id: "chat", label: "In this chat", count: files.length },
+          { id: "folder", label: "All files", title: workspace ?? undefined, disabled: !workspace },
+        ]}
+      />
 
       <div role="tabpanel">
         {view === "chat" ? (
