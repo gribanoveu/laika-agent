@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Brain,
@@ -325,10 +325,41 @@ function WorkingClock({ since, before }: { since: number; before: number }) {
   }, []);
   return (
     <div className="turn-clock live" role="timer">
-      <span className="turn-clock-dot" aria-hidden="true" />
-      Working… {formatDuration(before + Math.max(0, now - since))}
+      <PawLoader />
+      <span className="turn-clock-text">Working…</span>{" "}
+      <span className="turn-clock-time">{formatDuration(before + Math.max(0, now - since))}</span>
     </div>
   );
+}
+
+/** A paw stepping in place while the agent works; still under reduced motion. */
+function PawLoader() {
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    let anim: { destroy(): void } | undefined;
+    let gone = false;
+    // Loaded on first use: the player is only needed while a turn runs, and
+    // it touches <canvas> on import, which the test DOM does not have.
+    Promise.all([import("lottie-web/build/player/lottie_light"), import("../assets/paw-loader.json")])
+      .then(([{ default: lottie }, { default: animationData }]) => {
+        if (gone || !box.current) return;
+        anim = lottie.loadAnimation({
+          container: box.current,
+          renderer: "svg",
+          loop: true,
+          autoplay: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+          animationData,
+          // The paw fills only the middle of its 1080×1080 canvas.
+          rendererSettings: { viewBoxSize: "220 307 640 640" },
+        });
+      })
+      .catch(() => {}); // no paw is fine: the words still say it is working
+    return () => {
+      gone = true;
+      anim?.destroy();
+    };
+  }, []);
+  return <span ref={box} className="turn-clock-paw" aria-hidden="true" />;
 }
 
 /** The message that started the turn a group belongs to. */

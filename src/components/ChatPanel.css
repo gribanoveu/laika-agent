@@ -202,17 +202,21 @@
   margin-top: 14px;
   color: var(--text-dim);
 }
-.turn-clock-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: turn-clock-pulse 1.2s ease-in-out infinite;
+.turn-clock-paw {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  transform: translateY(3px);
 }
-@keyframes turn-clock-pulse {
-  50% {
-    opacity: 0.3;
-  }
+/* The file's own purple gives way to the theme's accent. */
+.turn-clock-paw path {
+  fill: var(--accent);
+}
+.turn-clock-text {
+  color: var(--text);
+}
+.turn-clock-time {
+  color: var(--text-faint);
 }
 .role {
   font-size: var(--fs-xs);
