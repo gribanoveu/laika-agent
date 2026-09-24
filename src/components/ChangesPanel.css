@@ -42,6 +42,10 @@
 .stage-file:hover {
   background: var(--bg-hover);
 }
+/* The file the viewer beside the chat shows. */
+.stage-file.open {
+  background: var(--bg-active);
+}
 .stage-btn {
   width: 20px;
   height: 20px;

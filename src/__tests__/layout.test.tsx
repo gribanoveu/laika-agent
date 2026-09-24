@@ -72,6 +72,17 @@ describe("panel widths", () => {
     expect(result.current.widths.bottom).toBe(PANEL_LIMITS.bottom.min + 30);
   });
 
+  test("the file viewer is sized too, and widths stored before it existed are kept", () => {
+    localStorage.setItem("atlas-panel-widths", JSON.stringify({ sidebar: 300, aside: 400, bottom: 200 }));
+    const { result } = renderHook(() => usePanelSizes({}));
+    expect(result.current.widths).toEqual({ sidebar: 300, aside: 400, bottom: 200, viewer: PANEL_LIMITS.viewer.initial });
+    act(() => result.current.resizeViewerBy(100));
+    expect(result.current.widths.viewer).toBe(PANEL_LIMITS.viewer.initial + 100);
+    act(() => result.current.resizeViewerBy(-5000));
+    expect(result.current.widths.viewer).toBe(PANEL_LIMITS.viewer.min);
+    expect(result.current.widths.aside).toBe(400);
+  });
+
   test("outside today's limits are not trusted", () => {
     localStorage.setItem("atlas-panel-widths", JSON.stringify({ sidebar: 9999, aside: 300 }));
     const { result } = renderHook(() => usePanelSizes(controls));

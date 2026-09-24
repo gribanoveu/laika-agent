@@ -1,9 +1,9 @@
 import { useCallback, useRef } from "react";
 import { useStoredState } from "./useStoredState";
 
-type PanelKey = "sidebar" | "aside" | "bottom";
-const KEYS: PanelKey[] = ["sidebar", "aside", "bottom"];
-const zeros = (): Record<PanelKey, number> => ({ sidebar: 0, aside: 0, bottom: 0 });
+type PanelKey = "sidebar" | "aside" | "bottom" | "viewer";
+const KEYS: PanelKey[] = ["sidebar", "aside", "bottom", "viewer"];
+const zeros = (): Record<PanelKey, number> => ({ sidebar: 0, aside: 0, bottom: 0, viewer: 0 });
 
 export const PANEL_LIMITS: Record<PanelKey, { min: number; max: number; initial: number; rail?: number }> = {
   // `rail` is the collapsed width — mirrors the CSS in Sidebar.css. The side
@@ -13,19 +13,26 @@ export const PANEL_LIMITS: Record<PanelKey, { min: number; max: number; initial:
   // A height: the lower pane of the right column. Like the side panel it stops
   // at its minimum — it closes from its own button, never by dragging.
   bottom: { min: 120, max: 640, initial: 240 },
+  // The file viewer beside the chat; it closes from its own button.
+  viewer: { min: 320, max: 1400, initial: 560 },
 };
+
+const INITIAL = Object.fromEntries(KEYS.map((key) => [key, PANEL_LIMITS[key].initial])) as Record<PanelKey, number>;
 
 /** How far past the minimum the drag must continue before the panel snaps shut. */
 const COLLAPSE_OVERSHOOT_RATIO = 0.4;
 /** How far a collapsed panel must be pulled out before it opens again. */
 const EXPAND_THRESHOLD = 40;
 
-// Within the limits too: they may have changed since the width was stored.
-const isWidths = (value: unknown): value is Record<PanelKey, number> => {
-  const v = value as Record<PanelKey, unknown> | null;
+// Within the limits too: they may have changed since the width was stored. A
+// panel added since is missing, and starts at its initial size.
+const isWidths = (value: unknown): value is Partial<Record<PanelKey, number>> => {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<PanelKey, unknown>;
   return KEYS.every(
     (key) =>
-      typeof v?.[key] === "number" && v[key] >= PANEL_LIMITS[key].min && v[key] <= PANEL_LIMITS[key].max,
+      v[key] === undefined ||
+      (typeof v[key] === "number" && v[key] >= PANEL_LIMITS[key].min && v[key] <= PANEL_LIMITS[key].max),
   );
 };
 
@@ -46,11 +53,8 @@ const clamp = (key: PanelKey, width: number) =>
  * A panel without a control only stops at its minimum.
  */
 export function usePanelSizes(controls: Partial<Record<PanelKey, PanelControl>>) {
-  const [widths, setWidths] = useStoredState(
-    "atlas-panel-widths",
-    { sidebar: PANEL_LIMITS.sidebar.initial, aside: PANEL_LIMITS.aside.initial, bottom: PANEL_LIMITS.bottom.initial },
-    isWidths,
-  );
+  const [stored, setWidths] = useStoredState<Partial<Record<PanelKey, number>>>("atlas-panel-widths", INITIAL, isWidths);
+  const widths: Record<PanelKey, number> = { ...INITIAL, ...stored };
   const widthsRef = useRef(widths);
   const overshoot = useRef(zeros());
   // Distance the pointer still has to travel before it meets the panel edge
@@ -129,6 +133,7 @@ export function usePanelSizes(controls: Partial<Record<PanelKey, PanelControl>>)
     resizeSidebarBy: useCallback((delta: number) => resize("sidebar", delta), [resize]),
     resizeAsideBy: useCallback((delta: number) => resize("aside", delta), [resize]),
     resizeBottomBy: useCallback((delta: number) => resize("bottom", delta), [resize]),
+    resizeViewerBy: useCallback((delta: number) => resize("viewer", delta), [resize]),
     endResize: useCallback(() => {
       overshoot.current = zeros();
       catchUp.current = zeros();

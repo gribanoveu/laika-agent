@@ -261,6 +261,7 @@ export default function App() {
     processFocus,
     onAddToChat: (text) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 })),
     chatBlocks: agent.turn.blocks,
+    openFile: viewing,
     onOpenFile: setViewing,
     mcp: {
       view: mcp.view,
@@ -303,6 +304,7 @@ export default function App() {
           "--sidebar-width": `${panels.widths.sidebar}px`,
           "--aside-width": `${panels.widths.aside}px`,
           "--bottom-height": `${panels.widths.bottom}px`,
+          "--viewer-width": `${panels.widths.viewer}px`,
         } as React.CSSProperties
       }
     >
@@ -384,7 +386,17 @@ export default function App() {
           />
         </main>
 
-        {viewing && <FileViewer target={viewing} workspace={workspace.path} onClose={() => setViewing(null)} />}
+        {viewing && (
+          <>
+            <PanelResizeHandle
+              invert
+              ariaLabel="Resize the file viewer"
+              onResize={panels.resizeViewerBy}
+              onResizeEnd={panels.endResize}
+            />
+            <FileViewer target={viewing} workspace={workspace.path} onClose={() => setViewing(null)} />
+          </>
+        )}
 
         {(!asideHidden || bottomTab) && (
           <PanelResizeHandle

@@ -24,6 +24,11 @@
 .files-row:hover {
   background: var(--bg-hover);
 }
+/* The file the viewer beside the chat shows. */
+.files-row.open,
+.tree-row.open {
+  background: var(--bg-active);
+}
 .files-label {
   flex: 1;
   min-width: 0;

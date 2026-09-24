@@ -13,6 +13,8 @@ type Props = {
   /** The open chat's transcript: what the agent did is read from its calls. */
   blocks: Block[];
   workspace: string | null;
+  /** The file the viewer shows: its row is marked. */
+  openFile: FileTarget | null;
   onOpenFile: (target: FileTarget) => void;
 };
 
@@ -24,7 +26,7 @@ const STATUS: Record<FileStatus, { letter: string; title: string }> = {
   conflicted: { letter: "!", title: "Conflicted" },
 };
 
-type Tree = ReturnType<typeof useFileTree> & { open: (path: string) => void };
+type Tree = ReturnType<typeof useFileTree> & { open: (path: string) => void; shown: string | null };
 
 /**
  * An unfolded folder and the run of folders under it that each hold only the
@@ -64,9 +66,10 @@ function TreeLevel({ dir, depth, tree }: { dir: string; depth: number; tree: Tre
           <button
             type="button"
             key={entry.path}
-            className={`tree-row${entry.status ? ` ${entry.status}` : ""}`}
+            className={`tree-row${entry.status ? ` ${entry.status}` : ""}${tree.shown === entry.path ? " open" : ""}`}
             style={indent}
             title={entry.path}
+            aria-current={tree.shown === entry.path || undefined}
             onClick={() => tree.open(entry.path)}
           >
             <span className="tree-chev" />
@@ -133,11 +136,16 @@ const TOUCH_LABEL: Record<Touch, string> = {
 };
 
 /** The Files tab: the files the agent worked with in this chat, or the open folder as a tree. */
-export function FilesPanel({ active, blocks, workspace, onOpenFile }: Props) {
+export function FilesPanel({ active, blocks, workspace, openFile, onOpenFile }: Props) {
+  const shown = openFile?.side === "worktree" ? openFile.path : null;
   const [view, setView] = useState<"chat" | "folder">("chat");
   const files = touchedFiles(blocks, workspace);
   // The tree is read only while its own tab is the one showing.
-  const tree = { ...useFileTree(active && view === "folder", workspace), open: (path: string) => onOpenFile({ path, side: "worktree" }) };
+  const tree = {
+    ...useFileTree(active && view === "folder", workspace),
+    open: (path: string) => onOpenFile({ path, side: "worktree" }),
+    shown,
+  };
   return (
     <div className="panel-section">
       <Tabs
@@ -156,7 +164,12 @@ export function FilesPanel({ active, blocks, workspace, onOpenFile }: Props) {
             <div className="files-empty">Files the agent reads or changes in this chat show up here.</div>
           ) : (
             files.map((file) => (
-              <TouchedRow key={file.path} file={file} onOpen={() => onOpenFile({ path: file.path, side: "worktree" })} />
+              <TouchedRow
+                key={file.path}
+                file={file}
+                open={shown === file.path}
+                onOpen={() => onOpenFile({ path: file.path, side: "worktree" })}
+              />
             ))
           )
         ) : tree.error ? (
@@ -169,12 +182,18 @@ export function FilesPanel({ active, blocks, workspace, onOpenFile }: Props) {
   );
 }
 
-function TouchedRow({ file, onOpen }: { file: TouchedFile; onOpen: () => void }) {
+function TouchedRow({ file, open, onOpen }: { file: TouchedFile; open: boolean; onOpen: () => void }) {
   const cut = file.path.lastIndexOf("/");
   const dir = cut > 0 ? file.path.slice(0, cut) : null;
   const gone = file.touches[file.touches.length - 1] === "deleted";
   return (
-    <button type="button" className={`files-row${gone ? " gone" : ""}`} title={file.path} onClick={onOpen}>
+    <button
+      type="button"
+      className={`files-row${gone ? " gone" : ""}${open ? " open" : ""}`}
+      title={file.path}
+      aria-current={open || undefined}
+      onClick={onOpen}
+    >
       <span className="files-label">
         <span className="files-name">{file.path.slice(cut + 1)}</span>
         {dir && (

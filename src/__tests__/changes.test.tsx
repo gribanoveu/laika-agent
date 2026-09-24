@@ -121,6 +121,25 @@ describe("ChangesPanel", () => {
     ]);
   });
 
+  test("the file the viewer shows is marked, on its own side only", async () => {
+    repo = { ...repo, staged: [{ path: "README.md", add: 1, del: 0 }] };
+    render(
+      <ChangesPanel
+        active
+        workspace="/repo"
+        onNotify={() => {}}
+        openFile={{ path: "README.md", side: "staged" }}
+        onOpenFile={() => {}}
+        message=""
+        onMessage={() => {}}
+      />,
+    );
+    await settle();
+    const marked = [...document.querySelectorAll(".stage-file.open")];
+    expect(marked).toHaveLength(1);
+    expect(marked[0].querySelector(".stage-btn")?.getAttribute("title")).toBe("Unstage");
+  });
+
   test("Stage all stages every unstaged file at once", async () => {
     panel();
     await settle();

@@ -13,6 +13,8 @@ type Props = {
   /** The open folder, as the backend's events name it. */
   workspace: string | null;
   onNotify: (msg: string) => void;
+  /** The file the viewer shows: its row is marked. */
+  openFile: FileTarget | null;
   onOpenFile: (target: FileTarget) => void;
   /** The commit message, held above the panel: it outlives the panel being closed or moved. */
   message: string;
@@ -22,11 +24,13 @@ type Props = {
 function StageRow({
   file,
   staged,
+  open,
   onToggle,
   onShowDiff,
 }: {
   file: ChangedFile;
   staged: boolean;
+  open: boolean;
   onToggle: () => void;
   onShowDiff: () => void;
 }) {
@@ -35,7 +39,7 @@ function StageRow({
   const name = file.path.slice(cut + 1);
   const dir = cut > 0 ? file.path.slice(0, cut) : null;
   return (
-    <div className="stage-file">
+    <div className={`stage-file${open ? " open" : ""}`} aria-current={open || undefined}>
       <button
         type="button"
         className={`stage-btn${staged ? " unstage" : ""}`}
@@ -60,7 +64,7 @@ function StageRow({
   );
 }
 
-export function ChangesPanel({ active, workspace, onNotify, onOpenFile, message, onMessage }: Props) {
+export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile, message, onMessage }: Props) {
   const [view, setView] = useState<"changes" | "history">("changes");
   const { unstaged, staged, error, stage, unstage, commit } = useStaging(active, workspace);
   const history = useGitHistory(active && view === "history", workspace);
@@ -114,6 +118,7 @@ export function ChangesPanel({ active, workspace, onNotify, onOpenFile, message,
                   key={f.path}
                   file={f}
                   staged={false}
+                  open={openFile?.side === "unstaged" && openFile.path === f.path}
                   onToggle={() => run(stage([f.path]))}
                   onShowDiff={() => onOpenFile({ path: f.path, side: "unstaged" })}
                 />
@@ -133,6 +138,7 @@ export function ChangesPanel({ active, workspace, onNotify, onOpenFile, message,
                   key={f.path}
                   file={f}
                   staged
+                  open={openFile?.side === "staged" && openFile.path === f.path}
                   onToggle={() => run(unstage([f.path]))}
                   onShowDiff={() => onOpenFile({ path: f.path, side: "staged" })}
                 />

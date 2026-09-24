@@ -39,6 +39,8 @@ export type PaneContext = {
   onAddToChat: (text: string) => void;
   /** The open chat's transcript, for the files its calls touched. */
   chatBlocks: Block[];
+  /** The file the viewer beside the chat shows, marked where it is listed. */
+  openFile: FileTarget | null;
   /** Shows a file in the viewer beside the chat. */
   onOpenFile: (target: FileTarget) => void;
   mcp: McpListProps;
@@ -345,8 +347,8 @@ function RulesPane({ active, workspace }: PaneContext) {
 // ─── Files ─────────────────────────────────────────────────────────────────
 
 // Filled by its own command wrapper once that command exists.
-function FilesPane({ active, workspace, chatBlocks, onOpenFile }: PaneContext) {
-  return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} onOpenFile={onOpenFile} />;
+function FilesPane({ active, workspace, chatBlocks, openFile, onOpenFile }: PaneContext) {
+  return <FilesPanel active={active} blocks={chatBlocks} workspace={workspace} openFile={openFile} onOpenFile={onOpenFile} />;
 }
 
 // ─── The registry ──────────────────────────────────────────────────────────
@@ -356,7 +358,7 @@ function FilesPane({ active, workspace, chatBlocks, onOpenFile }: PaneContext) {
 // names a pane. `dock` is where the menu opens it; each dock shows one pane. There is no tab strip: eight icons in a 300px column were
 // unreadable, and only one of them is opened often.
 export const PANES: PaneDef[] = [
-  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} onOpenFile={onOpenFile} {...commitDraft} /> },
+  { id: "changes", label: "Changes", icon: GitCompareArrows, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, openFile, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} openFile={openFile} onOpenFile={onOpenFile} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },

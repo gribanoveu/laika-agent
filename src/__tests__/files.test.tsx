@@ -120,4 +120,18 @@ describe("FilesPanel", () => {
     fireEvent.click(screen.getByTitle("src/main/Tax.java"));
     expect(opened).toEqual([{ path: "src/main/Tax.java", side: "worktree" }]);
   });
+
+  test("the file the viewer shows is marked", () => {
+    render(
+      <FilesPanel
+        active={false}
+        workspace="/repo"
+        blocks={[call("readFile", { path: "a.ts" }), call("readFile", { path: "b.ts" })]}
+        openFile={{ path: "b.ts", side: "worktree" }}
+        onOpenFile={() => {}}
+      />,
+    );
+    expect(screen.getByTitle("b.ts").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTitle("a.ts").getAttribute("aria-current")).toBeNull();
+  });
 });
