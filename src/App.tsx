@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { Composer } from "./components/Composer";
@@ -86,6 +86,13 @@ export default function App() {
   // Which background process a chat row asked the Terminal tab to show. The
   // row and the tab are in different subtrees, so it passes through here.
   const [processFocus, setProcessFocus] = useState<{ id: number } | null>(null);
+  // A shell block an answer asked to put in a shell, until the Terminal tab
+  // takes it. Kept only till then: an ask still held when the tab is drawn
+  // again would be pasted again. `pasteInTerminal` is stable, so the answers'
+  // Markdown does not re-render with every App render.
+  const [terminalPaste, setTerminalPaste] = useState<{ command: string } | null>(null);
+  const pasteInTerminal = useCallback((command: string) => setTerminalPaste({ command }), []);
+  const terminalPasted = useCallback(() => setTerminalPaste(null), []);
   // A terminal selection on its way to the composer, from the other subtree.
   const [quote, setQuote] = useState<{ text: string; seq: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -164,6 +171,11 @@ export default function App() {
   };
   const openTab = (next: AsideTab) =>
     setDocks(openPane(docks, next, PANES.find((p) => p.id === next)?.dock ?? "right"));
+  // A command sent to a shell shows the shell.
+  useEffect(() => {
+    if (terminalPaste) openTab("terminal");
+    // Once per ask: not again when the layout changes.
+  }, [terminalPaste]);
 
   // Ctrl+` shows and hides the Terminal, as in VS Code. Caught before the
   // terminal itself sees it, which would send the shell a NUL. Focus leaves
@@ -263,6 +275,8 @@ export default function App() {
     onNotify: toast.show,
     commitDraft: { message: commitMessage, onMessage: setCommitMessage },
     processFocus,
+    terminalPaste,
+    onTerminalPasted: terminalPasted,
     onAddToChat: (text) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 })),
     chatBlocks: agent.turn.blocks,
     openFile: viewer.active,
@@ -357,6 +371,7 @@ export default function App() {
               openTab("terminal");
               setProcessFocus({ id });
             }}
+            onPasteCommand={workspace.path ? pasteInTerminal : undefined}
             branchable={agent.branchable}
             onBranch={agent.branch}
           />

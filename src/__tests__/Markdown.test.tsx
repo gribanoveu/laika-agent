@@ -44,6 +44,26 @@ describe("Markdown", () => {
     expect(container.querySelector(".md-code-text")?.textContent).toBe("fn main() {");
   });
 
+  test("a fence without a language is a block, its lines kept", () => {
+    const { container } = render(<Markdown text={"```\nsrc/\n├── a/\n└── b/\n```"} streaming={false} />);
+    expect(container.querySelector(".md-code-inline")).toBeNull();
+    expect(container.querySelectorAll(".md-code-line")).toHaveLength(3);
+  });
+
+  test("a shell block hands its command to the terminal; other blocks and unfinished ones do not", () => {
+    const pasted: string[] = [];
+    const text = "```bash\nbun test\n```\n\n```ts\nconst a = 1;\n```";
+    const { container, getAllByLabelText, rerender } = render(<Markdown text={text} streaming={false} onPaste={(c) => pasted.push(c)} />);
+    const run = getAllByLabelText("Paste into terminal");
+    expect(run).toHaveLength(1);
+    run[0].click();
+    expect(pasted).toEqual(["bun test"]);
+    rerender(<Markdown text={"```bash\nrm -rf bu"} streaming onPaste={(c) => pasted.push(c)} />);
+    expect(container.querySelector('[aria-label="Paste into terminal"]')).toBeNull();
+    rerender(<Markdown text={text} streaming={false} />);
+    expect(container.querySelector('[aria-label="Paste into terminal"]')).toBeNull();
+  });
+
   test("a fence still streaming stays plain, not re-coloured on every delta", async () => {
     const { container } = render(<Markdown text={"Code:\n```rust\nfn main() {"} streaming={true} />);
     // The grammar is loaded and the highlighter answers — and still no colour.

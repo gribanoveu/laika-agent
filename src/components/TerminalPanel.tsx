@@ -4,6 +4,7 @@ import { ProcessList } from "./ProcessList";
 import { useProcesses } from "../hooks/useProcesses";
 import { useTerminals } from "../hooks/useTerminals";
 import { useTerminalScreen } from "../hooks/useTerminalScreen";
+import { queuePaste } from "../lib/pasteAtPrompt";
 import { terminalQuote, terminalTitle, type TerminalInfo } from "../lib/terminal";
 import "./TerminalPanel.css";
 
@@ -12,6 +13,10 @@ type Props = {
   workspace: string | null;
   /** The background process a chat row asked to see; a new object each ask. */
   processFocus: { id: number } | null;
+  /** A command an answer asked to put in a shell; a new object each ask. */
+  terminalPaste: { command: string } | null;
+  /** Says the ask was taken, so it is not taken again when the pane is drawn anew. */
+  onTerminalPasted: () => void;
   /** Puts text into the message being written. */
   onAddToChat: (text: string) => void;
 };
@@ -49,17 +54,37 @@ function TerminalView({ terminal, onAddToChat }: { terminal: TerminalInfo; onAdd
  * background processes as the last tab. Opening the pane gives a shell, as a
  * terminal window does — once per folder, not again after the last is closed.
  */
-export function TerminalPanel({ active, workspace, processFocus, onAddToChat }: Props) {
+export function TerminalPanel({ active, workspace, processFocus, terminalPaste, onTerminalPasted, onAddToChat }: Props) {
   const { processes, error: processError, stop } = useProcesses(active);
   const shells = useTerminals(active);
   const [picked, setPicked] = useState<Shown | null>(null);
   const openedFor = useRef<string | null>(null);
+  // The ask taken from App. App lets go of it once told, but StrictMode runs
+  // this effect a second time before App has heard.
+  const taken = useRef<object | null>(null);
 
   useEffect(() => {
-    if (!active || !workspace || !shells.loaded || openedFor.current === workspace) return;
+    if (!active || !workspace || !shells.loaded) return;
+    const first = openedFor.current !== workspace;
     openedFor.current = workspace;
-    if (shells.terminals.length === 0) void shells.open().then((t) => t && setPicked(t.id));
-  }, [active, workspace, shells.loaded, shells.terminals.length, shells.open]);
+    const ask = terminalPaste && taken.current !== terminalPaste ? terminalPaste : null;
+    if (!ask) {
+      if (first && shells.terminals.length === 0) void shells.open().then((t) => t && setPicked(t.id));
+      return;
+    }
+    taken.current = ask;
+    onTerminalPasted();
+    // The shell on screen while it still runs, else the newest that does, else a new one.
+    const live = shells.terminals.filter((t) => t.state.state === "running");
+    const target = live.find((t) => t.id === picked) ?? live[live.length - 1];
+    // Queued by the terminal's id: whichever screen draws it pastes it.
+    const show = (id: number) => {
+      queuePaste(id, ask.command);
+      setPicked(id);
+    };
+    if (target) show(target.id);
+    else void shells.open().then((t) => t && show(t.id));
+  }, [active, workspace, shells.loaded, shells.terminals, shells.open, terminalPaste, onTerminalPasted, picked]);
 
   useEffect(() => {
     if (processFocus) setPicked("processes");

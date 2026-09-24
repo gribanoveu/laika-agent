@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { pasteAtPrompt } from "../lib/pasteAtPrompt";
 import { terminalAttach, terminalResize, terminalWrite } from "../lib/terminal";
 import "@xterm/xterm/css/xterm.css";
 
@@ -82,6 +83,8 @@ export function useTerminalScreen(
     shown.current = term;
 
     const input = term.onData((data) => void terminalWrite(id, data));
+    // What an answer asked to put in this shell (`queuePaste`), at its prompt.
+    const stopPasting = pasteAtPrompt(term, id);
     const selection = term.onSelectionChange(() => selected.current(term.getSelection()));
     let settling: ReturnType<typeof setTimeout> | undefined;
     const resized = term.onResize(({ cols, rows }) => {
@@ -124,6 +127,7 @@ export function useTerminalScreen(
       live = false;
       detach?.();
       shown.current = null;
+      stopPasting();
       input.dispose();
       selection.dispose();
       resized.dispose();

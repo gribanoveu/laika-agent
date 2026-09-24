@@ -70,6 +70,8 @@ afterAll(() => {
 const { terminalAttach, terminalQuote, terminalTitle } = await import("../lib/terminal");
 const { useTerminals } = await import("../hooks/useTerminals");
 const { TerminalPanel } = await import("../components/TerminalPanel");
+const { pasteAtPrompt } = await import("../lib/pasteAtPrompt");
+const { Terminal } = await import("@xterm/xterm");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 const asked = (command: string) => calls.filter((c) => c.command === command);
 
@@ -146,7 +148,7 @@ describe("useTerminals", () => {
 
 describe("TerminalPanel", () => {
   const panel = (props: Partial<Parameters<typeof TerminalPanel>[0]> = {}) => (
-    <TerminalPanel active workspace="/work/laika" processFocus={null} onAddToChat={() => {}} {...props} />
+    <TerminalPanel active workspace="/work/laika" processFocus={null} terminalPaste={null} onTerminalPasted={() => {}} onAddToChat={() => {}} {...props} />
   );
 
   test("opening the tab with no shell gives one, and draws it", async () => {
@@ -214,4 +216,76 @@ describe("TerminalPanel", () => {
     rerender(panel({ processFocus: { id: 4 } }));
     expect(screen.getByRole("tab", { name: "Processes" }).getAttribute("aria-selected")).toBe("true");
   });
+
+  /** What a screen of terminal `id` pastes at its prompt — the screen hook is
+   * mocked here, so a real xterm.js stands in for it. */
+  const pastedAt = async (id: number) => {
+    const term = new Terminal();
+    term.open(document.body.appendChild(document.createElement("div")));
+    let sent = "";
+    term.onData((data) => (sent += data));
+    const stop = pasteAtPrompt(term, id);
+    await new Promise<void>((resolve) => term.write("\x1b[?2004h% ", resolve));
+    stop();
+    term.dispose();
+    return sent;
+  };
+  const bracketed = (text: string) => `\x1b[200~${text}\x1b[201~`;
+
+  test("a command from the chat is pasted, not run, in the running shell on screen, once", async () => {
+    listed = [
+      { id: 1, shell: "zsh", state: { state: "running" } },
+      { id: 2, shell: "bash", state: { state: "exited", code: 0 } },
+    ];
+    const ask = { command: "bun test\nbun run tsc --noEmit" };
+    let taken = 0;
+    const { rerender } = render(panel());
+    await settle();
+    rerender(panel({ terminalPaste: ask, onTerminalPasted: () => taken++ }));
+    await settle();
+    expect(taken).toBe(1);
+    expect(drawn.at(-1)).toBe(1);
+    expect(asked("terminal_open")).toEqual([]);
+    expect(asked("terminal_write")).toEqual([]);
+    // Drawn again before App has let go of it: not queued a second time.
+    rerender(panel({ terminalPaste: ask, onTerminalPasted: () => taken++ }));
+    await settle();
+    expect(taken).toBe(1);
+    expect(await pastedAt(1)).toBe(bracketed("bun test\rbun run tsc --noEmit"));
+    expect(await pastedAt(1)).toBe("");
+  });
+
+  test("of two running shells, the one picked on screen takes the command", async () => {
+    listed = [
+      { id: 1, shell: "zsh", state: { state: "running" } },
+      { id: 2, shell: "bash", state: { state: "running" } },
+    ];
+    const { rerender } = render(panel());
+    await settle();
+    fireEvent.click(screen.getByRole("tab", { name: "zsh" }));
+    rerender(panel({ terminalPaste: { command: "ls" } }));
+    await settle();
+    expect(await pastedAt(2)).toBe("");
+    expect(await pastedAt(1)).toBe(bracketed("ls"));
+  });
+
+  test("with no shell a command gets a new one, only one, and is pasted there", async () => {
+    render(panel({ terminalPaste: { command: "ls" } }));
+    await settle();
+    await settle();
+    expect(asked("terminal_open")).toHaveLength(1);
+    expect(drawn).toEqual([10]);
+    expect(await pastedAt(10)).toBe(bracketed("ls"));
+  });
+
+  test("with only ended shells a command gets a new one", async () => {
+    listed = [{ id: 1, shell: "zsh", state: { state: "exited", code: 0 } }];
+    render(panel({ terminalPaste: { command: "ls" } }));
+    await settle();
+    await settle();
+    expect(asked("terminal_open")).toHaveLength(1);
+    expect(await pastedAt(1)).toBe("");
+    expect(await pastedAt(10)).toBe(bracketed("ls"));
+  });
+
 });

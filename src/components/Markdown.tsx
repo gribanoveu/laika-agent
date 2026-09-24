@@ -1,5 +1,5 @@
-import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { cloneElement, isValidElement, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, Copy, SquareTerminal } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Streamdown, useIsCodeFenceIncomplete, type Components } from "streamdown";
 import { highlight, splitLines, type Token } from "../lib/highlight";
@@ -23,7 +23,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className={`md-copy${copied ? " copied" : ""}`}
+      className={`md-code-action${copied ? " copied" : ""}`}
       title={label}
       aria-label={label}
       onClick={() => {
@@ -40,11 +40,26 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Fences whose text a shell runs as it stands — not `console`, which carries prompts and output. */
+const SHELLS = new Set(["bash", "sh", "zsh", "shell"]);
+
 /** A fenced block: numbered lines, colours once the fence is closed — so a
  * streaming block stays plain and synchronous instead of re-highlighting on
- * every delta. Without a language tag it is inline code. */
-function Code({ className, children }: { className?: string; children?: ReactNode }) {
-  const lang = /language-(\S+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? null;
+ * every delta. `block` is what tells it from inline code: a fence without a
+ * language tag has no class, and is a block all the same. A shell block
+ * offers `onPaste` — pasted, not run — once its fence is closed — half a command is not one. */
+function Code({
+  className,
+  block,
+  onPaste,
+  children,
+}: {
+  className?: string;
+  block: boolean;
+  onPaste?: (command: string) => void;
+  children?: ReactNode;
+}) {
+  const lang = block ? (/language-(\S+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "text") : null;
   const source = lang === null ? "" : textOf(children);
   const incomplete = useIsCodeFenceIncomplete();
   const [tokens, setTokens] = useState<Token[][] | null>(null);
@@ -63,7 +78,14 @@ function Code({ className, children }: { className?: string; children?: ReactNod
 
   return (
     <div className="md-code" data-lang={lang}>
-      <CopyButton text={source} />
+      <div className="md-code-actions">
+        {onPaste && SHELLS.has(lang) && !incomplete && (
+          <button type="button" className="md-code-action" title="Paste into terminal" aria-label="Paste into terminal" onClick={() => onPaste(source.replace(/\n$/, ""))}>
+            <SquareTerminal size={13} aria-hidden />
+          </button>
+        )}
+        <CopyButton text={source} />
+      </div>
       <div className="md-code-scroll">
         <div className="md-code-body">
         {splitLines(source).map((line, index) => (
@@ -135,8 +157,8 @@ const components: Components = {
       {children}
     </a>
   ),
-  pre: ({ children }) => <>{children}</>,
-  code: ({ className, children }) => <Code className={className}>{children}</Code>,
+  // A `<code>` under `<pre>` is a fenced block; Streamdown marks it the same way.
+  pre: ({ children }) => (isValidElement(children) ? cloneElement(children, { "data-block": "true" } as object) : children),
 };
 
 /**
@@ -151,14 +173,34 @@ const components: Components = {
  * `memo`: every delta re-renders the transcript, and past answers must not
  * re-parse and re-highlight for a token that changed only the last one.
  */
-export const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming: boolean }) {
+export const Markdown = memo(function Markdown({
+  text,
+  streaming,
+  onPaste,
+}: {
+  text: string;
+  streaming: boolean;
+  /** A shell block's terminal button hands its command here; without it there is no button. */
+  onPaste?: (command: string) => void;
+}) {
+  const withCode = useMemo<Components>(
+    () => ({
+      ...components,
+      code: ({ className, children, ...rest }) => (
+        <Code className={className} block={"data-block" in rest} onPaste={onPaste}>
+          {children}
+        </Code>
+      ),
+    }),
+    [onPaste],
+  );
   return (
     <Streamdown
       className="md"
       isAnimating={streaming}
       parseIncompleteMarkdown={streaming}
       linkSafety={{ enabled: false }}
-      components={components}
+      components={withCode}
     >
       {wrapAsciiTrees(text)}
     </Streamdown>

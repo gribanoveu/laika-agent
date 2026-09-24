@@ -483,6 +483,8 @@ type Props = {
   onOpenPlan?: () => void;
   /** Opens the Terminal tab on a background process a call started. */
   onOpenProcess?: (id: number) => void;
+  /** Puts a shell block from an answer at a prompt in the Terminal tab, not run. Kept stable: every answer re-renders when it changes. */
+  onPasteCommand?: (command: string) => void;
   /** Bubbles a branch can start at; `null` while a turn runs. */
   branchable?: ReadonlySet<string> | null;
   onBranch?: (bubbleId: string) => void;
@@ -504,6 +506,7 @@ export function ChatPanel({
   onImplement,
   onOpenPlan,
   onOpenProcess,
+  onPasteCommand,
   branchable = null,
   onBranch,
 }: Props) {
@@ -617,7 +620,7 @@ export function ChatPanel({
                   ) : block.kind === "user" ? (
                     <UserBubble key={block.id} block={block} branchable={branchable} onBranch={onBranch} />
                   ) : (
-                    renderBlock(block, onDecide, block.id === streamingId, onOpenProcess)
+                    renderBlock(block, onDecide, block.id === streamingId, onOpenProcess, onPasteCommand)
                   ),
                 )}
                 {workedFooter(groups, index, turn)}
@@ -697,6 +700,7 @@ function renderBlock(
   onDecide: (decisions: ToolCallDecision[], always: string[]) => void,
   streaming: boolean,
   onOpenProcess?: OpenProcess,
+  onPasteCommand?: (command: string) => void,
 ) {
   switch (block.kind) {
     case "user":
@@ -725,7 +729,7 @@ function renderBlock(
     case "message":
       return (
         <div className="msg" key={block.id}>
-          <Markdown text={block.text} streaming={streaming} />
+          <Markdown text={block.text} streaming={streaming} onPaste={onPasteCommand} />
         </div>
       );
     case "reasoning":
