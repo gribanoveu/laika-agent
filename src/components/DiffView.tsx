@@ -55,7 +55,7 @@ export function rowStarts(rows: DiffRow[], wrap: { cols: number; headerCols: num
 }
 
 /** The last row starting at or before `line`. */
-function rowAt(starts: number[], line: number) {
+export function rowAt(starts: number[], line: number) {
   let [lo, hi] = [0, starts.length - 2];
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;

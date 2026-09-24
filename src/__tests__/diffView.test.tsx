@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
-import { DiffView, rowStarts } from "../components/DiffView";
+import { DiffView, rowAt, rowStarts } from "../components/DiffView";
 import { fileRows } from "../lib/diffRows";
 
 // The viewer's DiffView draws only the rows in view: a file thousands of lines
@@ -59,5 +59,43 @@ describe("where wrapped rows start", () => {
     expect(hunk[0].kind).toBe("hunk");
     const header = "@@ -2,7 +2,7 @@".length;
     expect(rowStarts(hunk, { cols: 100, headerCols: 5 })[1]).toBe(Math.ceil(header / 5));
+  });
+});
+
+describe("the row at a line", () => {
+  // Rows starting at lines 0, 3, 5, 6; 7 lines in all.
+  const starts = [0, 3, 5, 6, 7];
+
+  test("is the last row starting at or before it — a row's own first line is that row", () => {
+    expect([0, 1, 2, 3, 4, 5, 6].map((line) => rowAt(starts, line))).toEqual([0, 0, 0, 1, 1, 2, 3]);
+    expect(rowAt(starts, 2.5)).toBe(0);
+    expect(rowAt(starts, 99)).toBe(3);
+  });
+});
+
+describe("DiffView, virtual and wrapped", () => {
+  test("a long line takes as many rows of height as it wraps into, and the rows after it move down", () => {
+    // What the layout would measure: 8px characters, a 400px view, 18px lines.
+    const rect = HTMLElement.prototype.getBoundingClientRect;
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const w = this.textContent === "0".repeat(64) ? 64 * 8 : 0;
+      return { width: w, height: 0, top: 0, left: 0, right: w, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    };
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 400 });
+    try {
+      // Two number columns of 3 digits, the sign and the padding leave 38 columns.
+      const long = "x".repeat(100);
+      render(<DiffView rows={fileRows("a\n", `${long}\nb\n`, true)} wrap virtual />);
+      const rows = drawn();
+      const tops = rows.map((row) => parseFloat(row.style.top));
+      const heights = rows.map((row) => parseFloat(row.style.height));
+      expect(heights).toEqual([18, 54, 18]); // "a" removed, the long line added in 3, "b"
+      expect(tops).toEqual([0, 18, 72]);
+      expect(parseFloat(document.querySelector<HTMLElement>(".diff-rows")!.style.height)).toBe(90);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect;
+      if (width) Object.defineProperty(HTMLElement.prototype, "clientWidth", width);
+    }
   });
 });

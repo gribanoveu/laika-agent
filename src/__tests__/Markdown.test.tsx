@@ -71,6 +71,8 @@ describe("highlight", () => {
     const first = highlight("const same = 1;", "ts");
     expect(highlight("const same = 1;", "typescript")).toBe(first);
     expect(highlight("const other = 1;", "ts")).not.toBe(first);
+    // The same text in another language is another answer.
+    expect(highlight("const same = 1;", "rust")).not.toBe(first);
     expect((await first)?.[0]?.map((t) => t.content).join("")).toBe("const same = 1;");
   });
 
