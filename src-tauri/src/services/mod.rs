@@ -12,6 +12,8 @@ pub mod workspace_index;
 pub mod code_search;
 #[cfg(test)]
 mod search_bench;
+#[cfg(test)]
+mod agent_bench;
 pub mod skills;
 pub mod project_rules;
 pub mod mcp_servers;

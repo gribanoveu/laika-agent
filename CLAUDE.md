@@ -64,6 +64,16 @@ Run it after touching ranking in `services/code_search.rs`:
 cd src-tauri && cargo test --release search_bench -- --ignored --nocapture
 ```
 
+The agent as a whole has one too: small broken repositories in `src-tauri/bench/agent-tasks/`,
+a real model working on each, a hidden check of the result, and pass rate, rounds, tool
+errors and tokens per run. Run it after touching the loop, the prompt or a tool, with
+the same model as before — the provider comes from `AGENT_BENCH_*` variables, listed
+at the top of `services/agent_bench.rs`:
+
+```bash
+cd src-tauri && AGENT_BENCH_API_KEY=… AGENT_BENCH_MODEL=… AGENT_BENCH_RUNS=3 cargo test --release agent_bench -- --ignored --nocapture
+```
+
 ## Mutation testing
 
 New backend code is not done when `cargo test` is green — the tests have to be shown to

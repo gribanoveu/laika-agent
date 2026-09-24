@@ -1,0 +1,12 @@
+{"id": 101, "name": "  Berg ,  Anna Maria ", "email": "a@b.c", "signup": "01/02/2003", "country": "fr"}
+{"id": 102, "name": "De Gaulle", "email": "de@gaulle.fr", "signup": "2001-01-01", "country": "France"}
+{"id": 103, "name": "Maria de la Cruz", "email": "maria@cruz.es", "signup": 0, "country": "ES", "tags": "B,a,b"}
+{"id": 104, "name": null, "email": "blank@name.io", "signup": "2010-10-10", "country": "RUSSIA"}
+{"id": 105, "name": "Same Day", "email": "same@day.io", "signup": "2020-05-05"}
+{"id": 99, "name": "Same Day Earlier Id", "email": "SAME@day.io", "signup": "05/05/2020"}
+{"id": 106, "name": "No Date", "email": "tie@x.io"}
+{"id": 107, "name": "Has Date", "email": "tie@x.io", "signup": "2030-01-01"}
+{"id": 108, "name": "Solo", "email": null}
+{"id": 109, "name": "Vincent van Gogh", "email": "vincent@gogh.nl", "signup": "1234567890", "country": "Netherlands", "tags": [" art", "", "ART"]}
+{"id": 110, "name": "Lee   Harvey  Oswald", "email": "lee@o.us", "signup": 1700000000, "country": "United States", "tags": " "}
+{"id": 111, "email": "noname@x.io", "country": "uk"}

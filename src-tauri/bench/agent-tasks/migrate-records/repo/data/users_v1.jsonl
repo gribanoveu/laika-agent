@@ -1,0 +1,10 @@
+{"id": 1, "name": "Doe, Jane", "email": " Jane.Doe@Example.COM ", "signup": "04/03/2021", "country": "de", "tags": "b, a"}
+{"id": 2, "name": "John Smith", "email": "john@smith.io", "signup": "2020-01-15", "country": "Germany", "tags": ["x", "X", " y "]}
+{"id": 3, "name": "Anna van der Berg", "email": "anna@berg.nl", "signup": 1609459200, "country": "NL", "tags": null}
+{"id": 4, "name": "Plato", "email": "plato@academy.gr", "signup": null, "country": null}
+{"id": 5, "name": "Jürgen   Müller", "email": "JUERGEN@mueller.de", "signup": "1614816000", "country": "germany", "tags": ""}
+{"id": 6, "name": "No Email", "email": "  ", "signup": "2020-01-01"}
+{"id": 7, "name": "John Smith", "email": "JOHN@smith.io", "signup": "2019-12-31", "country": "US"}
+{"id": 8, "name": "Ludwig von Mises", "email": "ludwig@mises.at", "signup": "29/09/1881", "country": "Austria", "tags": "econ,,econ"}
+{"id": 9, "email": "anon@example.com", "signup": "2022-02-02", "country": "united kingdom"}
+{"id": 10, "name": "Mary-Jane O'Neil", "email": "mj@oneil.ie", "signup": "2021-07-07", "country": "ie", "tags": ["Irish", "irish "]}

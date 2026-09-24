@@ -1,0 +1,1 @@
+A customer report: an invoice for a customer in Germany with a single item at 100.00 shows a total of 141.61. It should be 119.00 — 19% VAT. Customers in the US are billed correctly. Find the cause and fix it.

@@ -1,0 +1,1 @@
+Write `migrate.py`, which converts a users file from format v1 to v2 exactly as MIGRATION.md describes: `python3 migrate.py IN OUT`. Standard library only. Then use it to produce `data/users_v2.jsonl` from `data/users_v1.jsonl`.
