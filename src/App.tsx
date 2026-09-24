@@ -108,6 +108,9 @@ export default function App() {
   useEffect(() => setCommitMessage(""), [workspace.path]);
   // The files open in the viewer beside the chat, from Changes or Files.
   const viewer = useOpenFiles(workspace.path);
+  // On unless turned off in Settings: the viewer is a column beside the chat,
+  // rarely wide enough for a long line.
+  const [wrapLines, setWrapLines] = useStoredState("viewer-wrap", true, isBoolean);
   const toolLog = useToolLog(logOpen);
   const history = useChatHistory(workspace.path);
   // The list is redrawn from disk after every save rather than guessed at
@@ -403,6 +406,7 @@ export default function App() {
               onPin={viewer.pin}
               onClose={viewer.close}
               onCloseAll={viewer.closeAll}
+              wrap={wrapLines}
             />
           </>
         )}
@@ -477,6 +481,8 @@ export default function App() {
           onTheme={theme.setPreference}
           fontSize={fontSize.size}
           onFontSize={fontSize.setSize}
+          wrapLines={wrapLines}
+          onWrapLines={setWrapLines}
           onOpenLog={() => {
             setSettingsOpen(false);
             setLogOpen(true);

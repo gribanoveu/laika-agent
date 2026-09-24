@@ -70,6 +70,9 @@ type Props = {
   onTheme: (theme: ThemePreference) => void;
   fontSize: FontSize;
   onFontSize: (size: FontSize) => void;
+  /** The file viewer's long lines: wrapped, or scrolled sideways. */
+  wrapLines: boolean;
+  onWrapLines: (wrap: boolean) => void;
   onOpenLog: () => void;
   policy: ComponentProps<typeof DataPolicy>;
 };
@@ -85,6 +88,8 @@ export function Settings({
   onTheme,
   fontSize,
   onFontSize,
+  wrapLines,
+  onWrapLines,
   onOpenLog,
   policy,
 }: Props) {
@@ -148,6 +153,28 @@ export function Settings({
                     onClick={() => onFontSize(name)}
                   >
                     {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-field">
+              <label>Long lines in the file viewer</label>
+              <div className="segmented" role="radiogroup" aria-label="Long lines in the file viewer">
+                {(
+                  [
+                    ["wrap", true],
+                    ["scroll sideways", false],
+                  ] as const
+                ).map(([label, value]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    role="radio"
+                    aria-checked={wrapLines === value}
+                    className={`segment${wrapLines === value ? " active" : ""}`}
+                    onClick={() => onWrapLines(value)}
+                  >
+                    {label}
                   </button>
                 ))}
               </div>

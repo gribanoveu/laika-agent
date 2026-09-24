@@ -147,14 +147,6 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
-.file-viewer-wrap {
-  width: 26px;
-  height: 26px;
-}
-.file-viewer-wrap.on {
-  background: var(--bg-active);
-  color: var(--text);
-}
 /* Up and down the changed files, and where this one is among them — last
    in the heading, so the Preview a Markdown file adds does not move it. */
 .file-viewer-step {

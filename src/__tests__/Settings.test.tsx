@@ -16,6 +16,7 @@ const SOURCES: SkillsView["sources"] = [
 const dialog = (debugLogging = false) => {
   const logging: boolean[] = [];
   const sizes: string[] = [];
+  const wraps: boolean[] = [];
   const sources: [string, boolean][] = [];
   let logOpened = 0;
   render(
@@ -39,11 +40,13 @@ const dialog = (debugLogging = false) => {
       onTheme={() => {}}
       fontSize="large"
       onFontSize={(size) => sizes.push(size)}
+      wrapLines
+      onWrapLines={(wrap) => wraps.push(wrap)}
       onOpenLog={() => logOpened++}
       policy={{ provider: null, debugLogging, mcpServers: [], hooks: [] }}
     />,
   );
-  return { logging, sizes, sources, logOpened: () => logOpened };
+  return { logging, sizes, wraps, sources, logOpened: () => logOpened };
 };
 
 describe("the settings dialog", () => {
@@ -79,6 +82,15 @@ describe("the settings dialog", () => {
     expect(screen.getByRole("radio", { name: "large" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(screen.getByRole("radio", { name: "small" }));
     expect(sizes).toEqual(["small"]);
+  });
+
+  test("the file viewer's long lines are picked under Appearance", () => {
+    const { wraps } = dialog();
+    fireEvent.click(screen.getByText("Appearance"));
+    const group = screen.getByRole("radiogroup", { name: "Long lines in the file viewer" });
+    expect(group.querySelector('[aria-checked="true"]')?.textContent).toBe("wrap");
+    fireEvent.click(screen.getByRole("radio", { name: "scroll sideways" }));
+    expect(wraps).toEqual([false]);
   });
 
   test("the request log is off unless it was turned on", () => {

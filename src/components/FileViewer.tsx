@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, WrapText, X } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useFileView } from "../hooks/useFileView";
 import { fileRows, paintRows, type Painted } from "../lib/diffRows";
 import { highlight, languageOf } from "../lib/highlight";
@@ -8,7 +8,6 @@ import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 import { sameFile, stepThrough } from "../hooks/useOpenFiles";
 import { useStaging } from "../hooks/useStaging";
-import { isBoolean, useStoredState } from "../hooks/useStoredState";
 import { Tabs } from "./Tabs";
 import "./FileViewer.css";
 
@@ -112,6 +111,7 @@ export function FileViewer({
   onPin,
   onClose,
   onCloseAll,
+  wrap,
 }: {
   files: FileTarget[];
   active: FileTarget;
@@ -123,6 +123,8 @@ export function FileViewer({
   onPin: (target: FileTarget) => void;
   onClose: (target: FileTarget) => void;
   onCloseAll: () => void;
+  /** Long lines wrap rather than scroll sideways — Settings → Appearance. */
+  wrap: boolean;
 }) {
   const { view, error } = useFileView(target, workspace);
   // The changed files, in the order the Changes panel lists them, to step
@@ -138,7 +140,6 @@ export function FileViewer({
     if (next) onActivate(next);
   };
   const [mode, setMode] = useState<Mode>("diff");
-  const [wrap, setWrap] = useStoredState("viewer-wrap", false, isBoolean);
   const text = view && !view.unviewable ? view : null;
   const changed = !!text && text.old !== text.new;
   const markdown = languageOf(target.path) === "markdown";
@@ -195,17 +196,6 @@ export function FileViewer({
           {add > 0 && <span className="add">+{add}</span>}
           {del > 0 && <span className="del">-{del}</span>}
         </span>
-        {shown !== "preview" && (
-          <button
-            type="button"
-            className={`iconbtn file-viewer-wrap${wrap ? " on" : ""}`}
-            title={wrap ? "Don't wrap long lines" : "Wrap long lines"}
-            aria-pressed={wrap}
-            onClick={() => setWrap(!wrap)}
-          >
-            <WrapText size={14} />
-          </button>
-        )}
         <Tabs
           label="Show"
           value={shown}

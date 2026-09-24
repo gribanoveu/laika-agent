@@ -46,7 +46,7 @@ beforeEach(() => {
   changes = { staged: [], unstaged: [] };
 });
 
-async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged" }, onCloseAll = () => {}) {
+async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged" }, onCloseAll = () => {}, wrap = true) {
   const shown = render(
     <FileViewer
       files={[target]}
@@ -57,6 +57,7 @@ async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged"
       onPin={() => {}}
       onClose={() => {}}
       onCloseAll={onCloseAll}
+      wrap={wrap}
     />,
   );
   await settle();
@@ -139,6 +140,7 @@ describe("FileViewer", () => {
         onPin={(t) => pinned.push(t)}
         onClose={(t) => closed.push(t)}
         onCloseAll={() => {}}
+        wrap
       />,
     );
     await settle();
@@ -191,6 +193,7 @@ describe("FileViewer", () => {
         onPin: () => {},
         onClose: () => {},
         onCloseAll: () => {},
+        wrap: true,
       };
       const shown = render(<FileViewer {...props} active={a} />);
       await settle();
@@ -218,6 +221,7 @@ describe("FileViewer", () => {
         onPin={() => {}}
         onClose={() => {}}
         onCloseAll={() => {}}
+        wrap
       />,
     );
     await settle();
@@ -235,5 +239,14 @@ describe("FileViewer", () => {
   test("with nothing changed there is nothing to step through", async () => {
     await open();
     expect(document.querySelector(".file-viewer-step")).toBeNull();
+  });
+
+  test("long lines wrap as Settings says", async () => {
+    const wrapped = () => document.querySelector(".diff-view")?.classList.contains("diff-view-wrap");
+    const shown = await open();
+    expect(wrapped()).toBe(true);
+    shown.unmount();
+    await open(undefined, () => {}, false);
+    expect(wrapped()).toBe(false);
   });
 });
