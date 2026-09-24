@@ -103,6 +103,7 @@ pub fn run() {
             commands::git::git_unstage,
             commands::git::git_commit,
             commands::git::git_history,
+            commands::git::file_view,
             commands::files::workspace_list,
             commands::chat::workspace_recent,
             commands::chat::workspace_index_status,

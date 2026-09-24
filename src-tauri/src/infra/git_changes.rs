@@ -9,7 +9,9 @@ use std::path::{Component, Path};
 
 use git2::{Diff, DiffOptions, ErrorCode, Repository, Signature};
 
-use crate::domain::git_changes::{ChangeTotals, ChangedFile, CommitSummary, GitChangesError, GitHistory, WorkingChanges};
+use crate::domain::git_changes::{
+    ChangeTotals, ChangedFile, CommitSummary, FileSide, FileView, GitChangesError, GitHistory, Unviewable, WorkingChanges,
+};
 
 pub fn changes(root: &Path) -> Result<WorkingChanges, GitChangesError> {
     let repo = open(root)?;
@@ -37,12 +39,7 @@ pub fn totals(root: &Path) -> Result<ChangeTotals, GitChangesError> {
     let head = head_tree(&repo)?;
     let mut options = DiffOptions::new();
     options.show_untracked_content(true).recurse_untracked_dirs(true);
-    let workdir = repo.workdir().ok_or(GitChangesError::NotARepository)?;
-    let inside = root.canonicalize().ok().and_then(|root| {
-        let workdir = workdir.canonicalize().ok()?;
-        Some(root.strip_prefix(workdir).ok()?.to_path_buf())
-    });
-    if let Some(folder) = inside.filter(|folder| !folder.as_os_str().is_empty()) {
+    if let Some(folder) = folder_in_repo(&repo, root).filter(|folder| !folder.as_os_str().is_empty()) {
         options.pathspec(folder);
     }
     let diff = repo.diff_tree_to_workdir_with_index(head.as_ref(), Some(&mut options)).map_err(git)?;
@@ -171,6 +168,92 @@ pub fn history(root: &Path, limit: usize) -> Result<GitHistory, GitChangesError>
         });
     }
     Ok(history)
+}
+
+/// Largest side the viewer is sent; past it the file is named, not drawn.
+const MAX_VIEW_BYTES: usize = 1 << 20;
+
+/// The two versions of `path` that `side` compares.
+pub fn file_view(root: &Path, path: &str, side: FileSide) -> Result<FileView, GitChangesError> {
+    let rel = relative(path)?;
+    let (old, new) = match side {
+        FileSide::Worktree => {
+            let new = read_under(root, rel, path)?;
+            let old = match Repository::discover(root) {
+                Ok(repo) => match folder_in_repo(&repo, root) {
+                    Some(folder) => head_blob(&repo, &folder.join(rel))?,
+                    None => None,
+                },
+                Err(_) => None,
+            };
+            (old, new)
+        }
+        FileSide::Unstaged => {
+            let repo = open(root)?;
+            let workdir = repo.workdir().ok_or(GitChangesError::NotARepository)?;
+            (index_blob(&repo, rel)?, read_under(workdir, rel, path)?)
+        }
+        FileSide::Staged => {
+            let repo = open(root)?;
+            (head_blob(&repo, rel)?, index_blob(&repo, rel)?)
+        }
+    };
+    let unviewable = [&old, &new].into_iter().flatten().find_map(|bytes| {
+        if bytes.len() > MAX_VIEW_BYTES {
+            Some(Unviewable::TooLarge)
+        } else if bytes.iter().take(8000).any(|&b| b == 0) {
+            // Git's own test: a NUL near the start means binary.
+            Some(Unviewable::Binary)
+        } else {
+            None
+        }
+    });
+    let text = |bytes: Option<Vec<u8>>| bytes.map(|b| String::from_utf8_lossy(&b).into_owned());
+    Ok(match unviewable {
+        Some(_) => FileView { old: None, new: None, unviewable },
+        None => FileView { old: text(old), new: text(new), unviewable },
+    })
+}
+
+/// A file under `base`, `None` when there is none. A symlink leading out of
+/// `base` is refused, as is a folder.
+fn read_under(base: &Path, rel: &Path, shown: &str) -> Result<Option<Vec<u8>>, GitChangesError> {
+    let refused = || GitChangesError::InvalidPath(shown.to_string());
+    let full = match base.join(rel).canonicalize() {
+        Ok(full) => full,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(GitChangesError::Read(shown.to_string())),
+    };
+    let base = base.canonicalize().map_err(|_| refused())?;
+    if !full.starts_with(&base) || full.is_dir() {
+        return Err(refused());
+    }
+    std::fs::read(&full).map(Some).map_err(|_| GitChangesError::Read(shown.to_string()))
+}
+
+fn head_blob(repo: &Repository, rel: &Path) -> Result<Option<Vec<u8>>, GitChangesError> {
+    let Some(tree) = head_tree(repo)? else { return Ok(None) };
+    let entry = match tree.get_path(rel) {
+        Ok(entry) => entry,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(None),
+        Err(e) => return Err(git(e)),
+    };
+    let blob = entry.to_object(repo).and_then(|o| o.peel_to_blob()).map_err(git)?;
+    Ok(Some(blob.content().to_vec()))
+}
+
+fn index_blob(repo: &Repository, rel: &Path) -> Result<Option<Vec<u8>>, GitChangesError> {
+    let index = repo.index().map_err(git)?;
+    let Some(entry) = index.get_path(rel, 0) else { return Ok(None) };
+    let blob = repo.find_blob(entry.id).map_err(git)?;
+    Ok(Some(blob.content().to_vec()))
+}
+
+/// `root` relative to the repository's working tree — empty when they are the
+/// same folder. `None` when that cannot be told.
+fn folder_in_repo(repo: &Repository, root: &Path) -> Option<std::path::PathBuf> {
+    let workdir = repo.workdir()?.canonicalize().ok()?;
+    Some(root.canonicalize().ok()?.strip_prefix(workdir).ok()?.to_path_buf())
 }
 
 /// The `.git` directory of the repository `root` is in — what staging and
@@ -408,6 +491,76 @@ mod tests {
         assert_eq!((h.ahead, h.behind), (1, 0));
         let marks: Vec<(bool, Vec<String>)> = h.commits.iter().map(|c| (c.head, c.refs.clone())).collect();
         assert_eq!(marks, [(true, vec![]), (false, vec!["origin/main".into(), "v1".into(), "zeta".into()])]);
+    }
+
+    fn view(old: Option<&str>, new: Option<&str>) -> FileView {
+        FileView { old: old.map(String::from), new: new.map(String::from), unviewable: None }
+    }
+
+    #[test]
+    fn the_viewer_compares_each_side_of_the_index() {
+        let (dir, _repo) = repo();
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        // Untracked: nothing in the index, nothing in HEAD.
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Unstaged), Ok(view(None, Some("one\n"))));
+        stage(&dir, &["a.txt".into()]).unwrap();
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Staged), Ok(view(None, Some("one\n"))));
+        commit(&dir, "first").unwrap();
+
+        fs::write(dir.join("a.txt"), "two\n").unwrap();
+        stage(&dir, &["a.txt".into()]).unwrap();
+        fs::write(dir.join("a.txt"), "three\n").unwrap();
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Staged), Ok(view(Some("one\n"), Some("two\n"))));
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Unstaged), Ok(view(Some("two\n"), Some("three\n"))));
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Worktree), Ok(view(Some("one\n"), Some("three\n"))));
+
+        fs::remove_file(dir.join("a.txt")).unwrap();
+        assert_eq!(file_view(&dir, "a.txt", FileSide::Unstaged), Ok(view(Some("two\n"), None)));
+    }
+
+    #[test]
+    fn the_worktree_side_takes_the_open_folders_paths_in_or_out_of_a_repository() {
+        let (dir, _repo) = repo();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/b.txt"), "old\n").unwrap();
+        stage(&dir, &["sub/b.txt".into()]).unwrap();
+        commit(&dir, "first").unwrap();
+        fs::write(dir.join("sub/b.txt"), "new\n").unwrap();
+        assert_eq!(file_view(&dir.join("sub"), "b.txt", FileSide::Worktree), Ok(view(Some("old\n"), Some("new\n"))));
+        // New since the commit: HEAD has a tree, just not this file.
+        fs::write(dir.join("sub/fresh.txt"), "f\n").unwrap();
+        assert_eq!(file_view(&dir.join("sub"), "fresh.txt", FileSide::Worktree), Ok(view(None, Some("f\n"))));
+
+        let plain = temp_dir("git-view-plain");
+        fs::write(plain.join("c.txt"), "c\n").unwrap();
+        assert_eq!(file_view(&plain, "c.txt", FileSide::Worktree), Ok(view(None, Some("c\n"))));
+        assert_eq!(file_view(&plain, "c.txt", FileSide::Staged), Err(GitChangesError::NotARepository));
+    }
+
+    #[test]
+    fn the_viewer_names_binary_and_huge_files_and_refuses_what_leaves_the_folder() {
+        let (dir, _repo) = repo();
+        fs::write(dir.join("bin"), [b'a', 0, b'b']).unwrap();
+        assert_eq!(file_view(&dir, "bin", FileSide::Worktree).unwrap().unviewable, Some(Unviewable::Binary));
+        fs::write(dir.join("big"), "x".repeat(MAX_VIEW_BYTES + 1)).unwrap();
+        let big = file_view(&dir, "big", FileSide::Worktree).unwrap();
+        assert_eq!((big.unviewable, big.new), (Some(Unviewable::TooLarge), None));
+        fs::write(dir.join("edge"), "x".repeat(MAX_VIEW_BYTES)).unwrap();
+        assert_eq!(file_view(&dir, "edge", FileSide::Worktree).unwrap().unviewable, None);
+
+        for bad in ["../x", "/etc/passwd", ""] {
+            assert_eq!(file_view(&dir, bad, FileSide::Worktree), Err(GitChangesError::InvalidPath(bad.into())));
+        }
+        fs::create_dir(dir.join("folder")).unwrap();
+        assert_eq!(file_view(&dir, "folder", FileSide::Worktree), Err(GitChangesError::InvalidPath("folder".into())));
+        #[cfg(unix)]
+        {
+            let outside = temp_dir("git-view-outside");
+            fs::write(outside.join("secret"), "s").unwrap();
+            std::os::unix::fs::symlink(outside.join("secret"), dir.join("link")).unwrap();
+            assert_eq!(file_view(&dir, "link", FileSide::Worktree), Err(GitChangesError::InvalidPath("link".into())));
+        }
+        assert_eq!(file_view(&dir, "missing", FileSide::Worktree), Ok(view(None, None)));
     }
 
     #[test]

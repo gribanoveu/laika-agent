@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::chat::AgentState;
-use crate::domain::git_changes::{ChangeTotals, GitChangesError, GitHistory, WorkingChanges};
+use crate::domain::git_changes::{ChangeTotals, FileSide, FileView, GitChangesError, GitHistory, WorkingChanges};
 use crate::infra::file_watcher::FileWatcher;
 use crate::infra::git_changes;
 
@@ -95,6 +95,13 @@ pub async fn git_commit(message: String, state: State<'_, Arc<AgentState>>) -> R
 #[tauri::command]
 pub async fn git_history(limit: usize, state: State<'_, Arc<AgentState>>) -> Result<GitHistory, String> {
     in_repo(&state, move |root| git_changes::history(&root, limit)).await
+}
+
+/// The two versions of a file the viewer diffs; see [`FileSide`] for which
+/// and what `path` is relative to.
+#[tauri::command]
+pub async fn file_view(path: String, side: FileSide, state: State<'_, Arc<AgentState>>) -> Result<FileView, String> {
+    in_repo(&state, move |root| git_changes::file_view(&root, &path, side)).await
 }
 
 #[cfg(test)]

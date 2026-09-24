@@ -1,7 +1,7 @@
 //! The working tree's changes as the Changes panel shows them: what is staged,
 //! what is not, and how many lines each file adds and removes.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// One changed file. `path` is relative to the repository, which is also what
@@ -68,6 +68,39 @@ pub struct GitHistory {
     pub more: bool,
 }
 
+/// Which two versions of a file the viewer compares, and what its path is
+/// relative to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileSide {
+    /// The index against the working tree; the path is the repository's.
+    Unstaged,
+    /// HEAD against the index; the path is the repository's.
+    Staged,
+    /// HEAD against the disk; the path is the open folder's, which may be
+    /// outside any repository — then there is nothing to compare against.
+    Worktree,
+}
+
+/// Why a file is named but not drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Unviewable {
+    Binary,
+    TooLarge,
+}
+
+/// The two versions of a file, for the viewer to diff. `None` on a side the
+/// file does not exist on: `old` for a new file, `new` for a deleted one.
+/// Both are `None` when `unviewable` says why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileView {
+    pub old: Option<String>,
+    pub new: Option<String>,
+    pub unviewable: Option<Unviewable>,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GitChangesError {
     #[error("the open folder is not in a git repository")]
@@ -80,6 +113,8 @@ pub enum GitChangesError {
     NothingStaged,
     #[error("git user.name and user.email are not set; set them with git config")]
     MissingIdentity,
+    #[error("could not read {0}")]
+    Read(String),
     #[error("git: {0}")]
     Git(String),
 }
