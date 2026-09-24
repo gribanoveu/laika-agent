@@ -78,6 +78,27 @@ describe("Markdown", () => {
     expect(container.querySelector(".md-code")).not.toBeNull();
     expect(container.querySelectorAll(".md-code-line")).toHaveLength(3);
   });
+  test("a link to a file opens it in the viewer, and a web link still goes to the browser", () => {
+    const opened: string[] = [];
+    const { getByText } = render(
+      <Markdown
+        text={"See [mutation](docs/11-mutation-testing.md), [readme](README.md:42) and [site](https://example.com)."}
+        streaming={false}
+        onOpenFile={(link) => opened.push(link)}
+      />,
+    );
+    getByText("mutation").click();
+    getByText("readme").click();
+    getByText("site").click();
+    expect(opened).toEqual(["docs/11-mutation-testing.md", "README.md:42"]);
+    expect(getByText("site").getAttribute("href")).toBe("https://example.com/");
+  });
+
+  test("without a handler a file link is plain text, not a blocked one", () => {
+    const { container } = render(<Markdown text={"See [notes](docs/notes.md)."} streaming={false} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toBe("See notes.");
+  });
 });
 
 describe("highlight", () => {

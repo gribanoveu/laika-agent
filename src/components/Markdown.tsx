@@ -1,7 +1,7 @@
 import { cloneElement, isValidElement, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Streamdown, useIsCodeFenceIncomplete, type Components } from "streamdown";
+import { defaultRemarkPlugins, Streamdown, useIsCodeFenceIncomplete, type Components } from "streamdown";
 import { highlight, splitLines, type Token } from "../lib/highlight";
 import { wrapAsciiTrees } from "../lib/wrapAsciiTrees";
 import "./Markdown.css";
@@ -141,25 +141,27 @@ const components: Components = {
   sub: ({ children }) => <sub>{children}</sub>,
   // The CSP lets no outside image load; alt text is what is left of one.
   img: ({ src, alt }) => <img className="md-img" src={typeof src === "string" ? src : undefined} alt={alt} />,
-  // Opened in the system browser, never in this window. The address is the
-  // tooltip: a link the model wrote can carry anything in its query string,
-  // and the user should see where a click sends it.
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      title={href}
-      className="md-link"
-      onClick={(event) => {
-        event.preventDefault();
-        if (href) void openUrl(href);
-      }}
-    >
-      {children}
-    </a>
-  ),
   // A `<code>` under `<pre>` is a fenced block; Streamdown marks it the same way.
   pre: ({ children }) => (isValidElement(children) ? cloneElement(children, { "data-block": "true" } as object) : children),
 };
+
+/** A link to a file in the open folder, carried as a fragment: Streamdown's
+ * link hardening drops an href it cannot read as a URL — a bare `docs/x.md`
+ * is not one — and a fragment is the one relative form it keeps as written. */
+const FILE_HREF = "#file:";
+const EXTERNAL = /^(https?:|mailto:|tel:|#)/i;
+
+type MdNode = { type: string; url?: string; children?: MdNode[] };
+function fileLinks() {
+  const walk = (node: MdNode) => {
+    if ((node.type === "link" || node.type === "definition") && node.url && !EXTERNAL.test(node.url)) {
+      node.url = FILE_HREF + encodeURIComponent(node.url);
+    }
+    node.children?.forEach(walk);
+  };
+  return walk;
+}
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), fileLinks];
 
 /**
  * The model's answer as Markdown.
@@ -177,22 +179,46 @@ export const Markdown = memo(function Markdown({
   text,
   streaming,
   onPaste,
+  onOpenFile,
 }: {
   text: string;
   streaming: boolean;
   /** A shell block's terminal button hands its command here; without it there is no button. */
   onPaste?: (command: string) => void;
+  /** A link to a file hands its target here, as written; without it the link is plain text. */
+  onOpenFile?: (link: string) => void;
 }) {
-  const withCode = useMemo<Components>(
+  const bound = useMemo<Components>(
     () => ({
       ...components,
+      // A web link opens in the system browser, never in this window. The
+      // address is the tooltip: a link the model wrote can carry anything in
+      // its query string, and the user should see where a click sends it.
+      a: ({ href, children }) => {
+        const file = href?.startsWith(FILE_HREF) ? decodeURIComponent(href.slice(FILE_HREF.length)) : null;
+        if (file !== null && !onOpenFile) return <span>{children}</span>;
+        return (
+          <a
+            href={href}
+            title={file ?? href}
+            className="md-link"
+            onClick={(event) => {
+              event.preventDefault();
+              if (file !== null) onOpenFile?.(file);
+              else if (href) void openUrl(href);
+            }}
+          >
+            {children}
+          </a>
+        );
+      },
       code: ({ className, children, ...rest }) => (
         <Code className={className} block={"data-block" in rest} onPaste={onPaste}>
           {children}
         </Code>
       ),
     }),
-    [onPaste],
+    [onPaste, onOpenFile],
   );
   return (
     <Streamdown
@@ -200,7 +226,8 @@ export const Markdown = memo(function Markdown({
       isAnimating={streaming}
       parseIncompleteMarkdown={streaming}
       linkSafety={{ enabled: false }}
-      components={withCode}
+      remarkPlugins={remarkPlugins}
+      components={bound}
     >
       {wrapAsciiTrees(text)}
     </Streamdown>

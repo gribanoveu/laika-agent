@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openFilesReducer, stepThrough, type OpenFiles } from "../hooks/useOpenFiles";
+import { fileLinkPath, openFilesReducer, stepThrough, type OpenFiles } from "../hooks/useOpenFiles";
 import type { FileTarget } from "../lib/chat";
 
 // The viewer's tabs: one per file and side, a single preview tab that the
@@ -73,4 +73,23 @@ describe("stepping through changed files", () => {
     expect(stepThrough(list, c, -1)).toEqual(b);
     expect(stepThrough([], a, 1)).toBeNull();
   });
+});
+
+describe("fileLinkPath", () => {
+  const root = "/Users/me/repo";
+  const cases: Array<[link: string, path: string | null]> = [
+    ["src/a.ts", "src/a.ts"],
+    ["./src/a.ts", "src/a.ts"],
+    ["src/a.ts:42", "src/a.ts"],
+    ["README.md:42:7", "README.md"],
+    ["src/a.ts#L42", "src/a.ts"],
+    ["/Users/me/repo/src/a.ts", "src/a.ts"],
+    ["file:///Users/me/repo/src/a.ts", "src/a.ts"],
+    ["my%20notes.md", "my notes.md"],
+    ["/etc/passwd", null],
+    ["../other/a.ts", null],
+    ["src/../../a.ts", null],
+    ["./", null],
+  ];
+  for (const [link, path] of cases) test(`${link} → ${path}`, () => expect(fileLinkPath(link, root)).toBe(path));
 });

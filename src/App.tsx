@@ -42,7 +42,7 @@ import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } fro
 import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import { useFolderSwitch } from "./hooks/useFolderSwitch";
-import { useOpenFiles } from "./hooks/useOpenFiles";
+import { fileLinkPath, useOpenFiles } from "./hooks/useOpenFiles";
 import { FolderSwitchDialog } from "./components/FolderSwitchDialog";
 import "./App.css";
 
@@ -113,6 +113,13 @@ export default function App() {
   useEffect(() => setCommitMessage(""), [workspace.path]);
   // The files open in the viewer beside the chat, from Changes or Files.
   const viewer = useOpenFiles(workspace.path);
+  const openFileLink = useCallback(
+    (link: string) => {
+      const path = workspace.path && fileLinkPath(link, workspace.path);
+      if (path) viewer.open({ path, side: "worktree" });
+    },
+    [workspace.path, viewer.open],
+  );
   // On unless turned off in Settings: the viewer is a column beside the chat,
   // rarely wide enough for a long line.
   const [wrapLines, setWrapLines] = useStoredState("viewer-wrap", true, isBoolean);
@@ -372,6 +379,7 @@ export default function App() {
               setProcessFocus({ id });
             }}
             onPasteCommand={workspace.path ? pasteInTerminal : undefined}
+            onOpenFile={workspace.path ? openFileLink : undefined}
             branchable={agent.branchable}
             onBranch={agent.branch}
           />

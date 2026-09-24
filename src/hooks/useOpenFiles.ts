@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useMemo, useReducer } from "react";
 import type { FileTarget } from "../lib/chat";
 
 /**
@@ -72,12 +72,35 @@ export function openFilesReducer(state: OpenFiles, action: Action): OpenFiles {
 export function useOpenFiles(workspace: string | null) {
   const [state, dispatch] = useReducer(openFilesReducer, none);
   useEffect(() => dispatch({ kind: "closeAll" }), [workspace]);
-  return {
-    ...state,
-    /** A single click previews; `pin`, from a double click, keeps the tab. */
-    open: (target: FileTarget, pin = false) => dispatch({ kind: "open", target, pin }),
-    pin: (target: FileTarget) => dispatch({ kind: "pin", target }),
-    close: (target: FileTarget) => dispatch({ kind: "close", target }),
-    closeAll: () => dispatch({ kind: "closeAll" }),
-  };
+  // Stable, so a callback built on them does not re-render every answer.
+  const actions = useMemo(
+    () => ({
+      /** A single click previews; `pin`, from a double click, keeps the tab. */
+      open: (target: FileTarget, pin = false) => dispatch({ kind: "open", target, pin }),
+      pin: (target: FileTarget) => dispatch({ kind: "pin", target }),
+      close: (target: FileTarget) => dispatch({ kind: "close", target }),
+      closeAll: () => dispatch({ kind: "closeAll" }),
+    }),
+    [],
+  );
+  return { ...state, ...actions };
+}
+
+/**
+ * The path in the open folder a link in an answer names — `src/a.ts`,
+ * `./src/a.ts`, the absolute path, `file://` — or `null` for one outside it.
+ * A line reference (`:42`, `:42:7`, `#L42`) is dropped: the viewer opens the file.
+ */
+export function fileLinkPath(link: string, workspace: string): string | null {
+  let path = link.replace(/^file:\/\//, "").replace(/#.*$/, "").replace(/(:\d+)+$/, "");
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    return null;
+  }
+  const root = workspace.replace(/\/+$/, "") + "/";
+  if (path.startsWith(root)) path = path.slice(root.length);
+  const parts = path.split("/").filter((part) => part !== "" && part !== ".");
+  if (path.startsWith("/") || parts.length === 0 || parts.includes("..")) return null;
+  return parts.join("/");
 }
