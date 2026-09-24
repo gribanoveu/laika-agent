@@ -31,9 +31,11 @@ export function DiffView({ unified, rows: given }: { unified?: string; rows?: Di
             <span className="diff-no">{row.newNo ?? ""}</span>
             <span className="diff-sign">{SIGN[row.kind]}</span>
             <span className="diff-text">
-              {row.parts.map((part, j) =>
-                part.changed ? <mark key={j}>{part.text}</mark> : part.text,
-              )}
+              {row.parts.map((part, j) => {
+                const style = part.style as CSSProperties | undefined;
+                if (part.changed) return <mark key={j} style={style}>{part.text}</mark>;
+                return style ? <span key={j} style={style}>{part.text}</span> : part.text;
+              })}
             </span>
           </div>
         ),

@@ -1,7 +1,13 @@
 import { diffWords, parsePatch, structuredPatch, type StructuredPatchHunk } from "diff";
 
-/** A run of text on a changed line; `changed` is the part that differs from its pair. */
-export type DiffPart = { text: string; changed: boolean };
+/**
+ * A run of text on a changed line; `changed` is the part that differs from its
+ * pair. `style` is a syntax colour, as Shiki gives it, once the file is coloured.
+ */
+export type DiffPart = { text: string; changed: boolean; style?: Record<string, string> };
+
+/** A coloured file: per line, its tokens in order. */
+export type Painted = { text: string; style?: Record<string, string> }[][];
 
 export type DiffRow =
   | { kind: "file" | "hunk"; text: string }
@@ -37,6 +43,39 @@ export function fileRows(old: string, next: string, full: boolean): DiffRow[] {
   const { hunks } = structuredPatch("", "", old, next, "", "", { context: full ? Number.MAX_SAFE_INTEGER : 3 });
   // One hunk holds the whole file: its header says nothing.
   return hunkRows(hunks).filter((row) => !full || row.kind !== "hunk");
+}
+
+/**
+ * The rows with syntax colours laid over them: a removed line takes the old
+ * file's colours, every other line the new one's. The word marks stay, cut at
+ * the token boundaries. A line whose text does not match its tokens — the
+ * colouring was of other text — stays as it was.
+ */
+export function paintRows(rows: DiffRow[], old: Painted | null, next: Painted | null): DiffRow[] {
+  return rows.map((row) => {
+    if (!("parts" in row)) return row;
+    const tokens = row.kind === "del" ? old?.[row.oldNo! - 1] : next?.[row.newNo! - 1];
+    return tokens ? { ...row, parts: paint(row.parts, tokens) } : row;
+  });
+}
+
+function paint(parts: DiffPart[], line: Painted[number]): DiffPart[] {
+  const tokens = line.filter((token) => token.text);
+  if (parts.map((p) => p.text).join("") !== tokens.map((t) => t.text).join("")) return parts;
+  const out: DiffPart[] = [];
+  let at = 0; // into tokens[t]
+  let t = 0;
+  for (const part of parts) {
+    for (let rest = part.text; rest; ) {
+      const token = tokens[t];
+      const take = Math.min(token.text.length - at, rest.length);
+      out.push({ text: rest.slice(0, take), changed: part.changed, style: token.style });
+      rest = rest.slice(take);
+      at += take;
+      if (at === token.text.length) [t, at] = [t + 1, 0];
+    }
+  }
+  return out;
 }
 
 /** A file's lines, without the empty one after its last newline. */

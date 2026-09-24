@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { diffRows, fileRows, type DiffRow } from "../lib/diffRows";
+import { diffRows, fileRows, paintRows, type DiffRow, type Painted } from "../lib/diffRows";
+import { languageOf } from "../lib/highlight";
 
 // How a unified diff becomes the rows the approval card draws: which line is
 // which on both sides, and which words of an edited line actually changed.
@@ -81,5 +82,46 @@ describe("rows of a file", () => {
     expect(lines(fileRows("a\nb", "a\nb", false))).toEqual(["1 1 context a", "2 2 context b"]);
     expect(lines(fileRows("", "x\ny\n", true))).toEqual([". 1 add x", ". 2 add y"]);
     expect(fileRows("", "", false)).toEqual([]);
+  });
+});
+
+describe("colours over the rows", () => {
+  const red = { c: "red" };
+  const blue = { c: "blue" };
+  /** Each part as text, [changed], and its colour after a slash. */
+  const painted = (rows: DiffRow[]) =>
+    rows.map((row) =>
+      "parts" in row ? row.parts.map((p) => `${p.changed ? `[${p.text}]` : p.text}/${p.style?.c ?? "-"}`).join(" ") : row.text,
+    );
+
+  test("a removed line takes the old file's colours, the rest the new one's, cut where the words changed", () => {
+    const old: Painted = [[{ text: "let ", style: blue }, { text: "a", style: red }]];
+    const next: Painted = [[{ text: "let ", style: blue }, { text: "ab", style: red }]];
+    const rows = paintRows(fileRows("let a\n", "let ab\n", false), old, next);
+    expect(painted(rows)).toEqual(["@@ -1,1 +1,1 @@", "let /blue [a]/red", "let /blue [ab]/red"]);
+  });
+
+  test("a word mark across two tokens is cut in two, each coloured", () => {
+    const next: Painted = [[{ text: "", style: red }, { text: "ab", style: red }, { text: "cd", style: blue }]];
+    const rows = paintRows([{ kind: "add", oldNo: null, newNo: 1, parts: [{ text: "a", changed: false }, { text: "bcd", changed: true }] }], null, next);
+    expect(painted(rows)).toEqual(["a/red [b]/red [cd]/blue"]);
+  });
+
+  test("a line whose text is not its tokens' stays plain, and so does one with no colours", () => {
+    const next: Painted = [[{ text: "other", style: red }]];
+    const rows = paintRows(fileRows("x\n", "x\ny\n", true), null, next);
+    expect(painted(rows)).toEqual(["x/-", "y/-"]);
+  });
+});
+
+describe("a file's language", () => {
+  test("by its extension, or by its name when it has none", () => {
+    expect(languageOf("src/main.rs")).toBe("rust");
+    expect(languageOf("a/b/App.tsx")).toBe("tsx");
+    expect(languageOf("include/x.h")).toBe("c");
+    expect(languageOf("Dockerfile")).toBe("dockerfile");
+    expect(languageOf("docker/Makefile")).toBe("makefile");
+    expect(languageOf(".gitignore")).toBe(null);
+    expect(languageOf("notes.unknownext")).toBe(null);
   });
 });

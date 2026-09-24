@@ -21,6 +21,12 @@ const ALIASES: Record<string, string> = {
   yml: "yaml",
   docker: "dockerfile",
   make: "makefile",
+  h: "c",
+  hpp: "cpp",
+  mjs: "javascript",
+  cjs: "javascript",
+  mts: "typescript",
+  cts: "typescript",
 };
 
 export function resolveLanguage(raw: string | null): BundledLanguage | null {
@@ -28,6 +34,14 @@ export function resolveLanguage(raw: string | null): BundledLanguage | null {
   const name = raw.trim().toLowerCase();
   const id = ALIASES[name] ?? name;
   return id in bundledLanguages ? (id as BundledLanguage) : null;
+}
+
+/** A file's language by its extension, or by its name for the ones that have
+ * none (`Dockerfile`, `Makefile`). */
+export function languageOf(path: string): BundledLanguage | null {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  return (dot > 0 ? resolveLanguage(name.slice(dot + 1)) : null) ?? resolveLanguage(name);
 }
 
 /** Lines of a fence body, without the newline that closes it. */

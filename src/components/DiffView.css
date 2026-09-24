@@ -78,3 +78,12 @@
 .diff-del mark {
   background: color-mix(in srgb, var(--red) 28%, transparent);
 }
+/* Syntax colours, where the file was coloured: Shiki gives each token both
+   themes' colours and the app's theme picks one. The row's tint still says
+   added or removed. */
+:root[data-theme="light"] .diff-text [style] {
+  color: var(--shiki-light);
+}
+:root:not([data-theme="light"]) .diff-text [style] {
+  color: var(--shiki-dark);
+}
