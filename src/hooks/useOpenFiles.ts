@@ -18,6 +18,17 @@ type Action =
 /** The same file on the same side: one tab, however often it is opened. */
 export const sameFile = (a: FileTarget, b: FileTarget) => a.path === b.path && a.side === b.side;
 
+/**
+ * The file `step` places from `current` in `list`, going round at the ends.
+ * From a file not in the list, forward is the first and back the last.
+ */
+export function stepThrough(list: FileTarget[], current: FileTarget, step: 1 | -1): FileTarget | null {
+  if (list.length === 0) return null;
+  const at = list.findIndex((f) => sameFile(f, current));
+  if (at < 0) return step > 0 ? list[0] : list[list.length - 1];
+  return list[(at + step + list.length) % list.length];
+}
+
 const none: OpenFiles = { files: [], active: null, preview: null };
 const unpin = (preview: FileTarget | null, target: FileTarget) => (preview && sameFile(preview, target) ? null : preview);
 

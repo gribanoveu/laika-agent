@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useFileView } from "../hooks/useFileView";
 import { fileRows, paintRows, type Painted } from "../lib/diffRows";
 import { highlight, languageOf } from "../lib/highlight";
 import type { FileSide, FileTarget } from "../lib/chat";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
-import { sameFile } from "../hooks/useOpenFiles";
+import { sameFile, stepThrough } from "../hooks/useOpenFiles";
+import { useStaging } from "../hooks/useStaging";
 import { Tabs } from "./Tabs";
 import "./FileViewer.css";
 
@@ -116,12 +117,25 @@ export function FileViewer({
   /** The tab the next single click reuses, if one is. */
   preview: FileTarget | null;
   workspace: string | null;
+  /** Shows a file: its tab if open, else in the preview tab. */
   onActivate: (target: FileTarget) => void;
   onPin: (target: FileTarget) => void;
   onClose: (target: FileTarget) => void;
   onCloseAll: () => void;
 }) {
   const { view, error } = useFileView(target, workspace);
+  // The changed files, in the order the Changes panel lists them, to step
+  // through without going back to it.
+  const { unstaged, staged } = useStaging(true, workspace);
+  const changes: FileTarget[] = [
+    ...unstaged.map((f) => ({ path: f.path, side: "unstaged" as const })),
+    ...staged.map((f) => ({ path: f.path, side: "staged" as const })),
+  ];
+  const at = changes.findIndex((f) => sameFile(f, target));
+  const step = (by: 1 | -1) => {
+    const next = stepThrough(changes, target, by);
+    if (next) onActivate(next);
+  };
   const [mode, setMode] = useState<Mode>("diff");
   const text = view && !view.unviewable ? view : null;
   const changed = !!text && text.old !== text.new;
@@ -148,7 +162,14 @@ export function FileViewer({
     <section
       className="file-viewer"
       aria-label="File viewer"
-      onKeyDown={(e) => e.key === "Escape" && !e.defaultPrevented && onCloseAll()}
+      onKeyDown={(e) => {
+        if (e.defaultPrevented) return;
+        if (e.key === "Escape") onCloseAll();
+        else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+          e.preventDefault();
+          step(e.key === "ArrowDown" ? 1 : -1);
+        }
+      }}
     >
       <div className="file-viewer-tabs">
         <FileTabs
@@ -182,6 +203,19 @@ export function FileViewer({
             ...(markdown ? [{ id: "preview" as const, label: "Preview" }] : []),
           ]}
         />
+        {changes.length > 0 && (
+          <span className="file-viewer-step">
+            <button type="button" className="iconbtn" title="Previous changed file (Alt+↑)" onClick={() => step(-1)}>
+              <ChevronUp size={14} />
+            </button>
+            <span className="file-viewer-step-count">
+              {at < 0 ? "–" : at + 1} / {changes.length}
+            </span>
+            <button type="button" className="iconbtn" title="Next changed file (Alt+↓)" onClick={() => step(1)}>
+              <ChevronDown size={14} />
+            </button>
+          </span>
+        )}
       </div>
       <div className="file-viewer-body">
         {error ? (

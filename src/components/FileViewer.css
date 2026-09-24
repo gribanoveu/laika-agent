@@ -147,6 +147,26 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
+/* Up and down the changed files, and where this one is among them — last
+   in the heading, so the Preview a Markdown file adds does not move it. */
+.file-viewer-step {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.file-viewer-step .iconbtn {
+  width: 24px;
+  height: 24px;
+}
+.file-viewer-step-count {
+  /* "99 / 99" fits: the arrows stay put as the count changes. */
+  min-width: 7ch;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .file-viewer-head .tabs {
   flex: none;
   margin: 0;

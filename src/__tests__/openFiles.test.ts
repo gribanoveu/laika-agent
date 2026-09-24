@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openFilesReducer, type OpenFiles } from "../hooks/useOpenFiles";
+import { openFilesReducer, stepThrough, type OpenFiles } from "../hooks/useOpenFiles";
 import type { FileTarget } from "../lib/chat";
 
 // The viewer's tabs: one per file and side, a single preview tab that the
@@ -55,5 +55,22 @@ describe("open files", () => {
     expect(run([{ kind: "close", target: a }], three)).toEqual({ files: [b, c], active: c, preview: null });
     expect(run([{ kind: "close", target: aStaged }], three)).toBe(three);
     expect(run([{ kind: "closeAll" }], three)).toEqual(empty);
+  });
+});
+
+describe("stepping through changed files", () => {
+  const list = [a, aStaged, b];
+
+  test("forward and back, going round at the ends", () => {
+    expect(stepThrough(list, a, 1)).toEqual(aStaged);
+    expect(stepThrough(list, b, 1)).toEqual(a);
+    expect(stepThrough(list, a, -1)).toEqual(b);
+    expect(stepThrough(list, aStaged, -1)).toEqual(a);
+  });
+
+  test("from a file not in the list, forward is the first and back the last", () => {
+    expect(stepThrough(list, c, 1)).toEqual(a);
+    expect(stepThrough(list, c, -1)).toEqual(b);
+    expect(stepThrough([], a, 1)).toBeNull();
   });
 });

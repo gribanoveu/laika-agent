@@ -1,12 +1,13 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { FileTarget, FileView } from "../lib/chat";
+import type { FileTarget, FileView, WorkingChanges } from "../lib/chat";
 
 // The viewer beside the chat: one file, its changes or the whole of it, read
 // again when the folder changes.
 
 let view: FileView;
 let asked: unknown[] = [];
+let changes: WorkingChanges;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: Record<string, unknown>) => {
@@ -14,6 +15,7 @@ mock.module("@tauri-apps/api/core", () => ({
       asked.push(args);
       return Promise.resolve(structuredClone(view));
     }
+    if (command === "git_changes") return Promise.resolve(structuredClone(changes));
     return Promise.resolve(null);
   },
   transformCallback: (callback: unknown) => callback,
@@ -41,6 +43,7 @@ const ten = Array.from({ length: 10 }, (_, i) => `${i + 1}`).join("\n") + "\n";
 beforeEach(() => {
   view = { old: ten, new: ten.replace("6\n", "six\n"), unviewable: null };
   asked = [];
+  changes = { staged: [], unstaged: [] };
 });
 
 async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged" }, onCloseAll = () => {}) {
@@ -195,5 +198,39 @@ describe("FileViewer", () => {
     } finally {
       HTMLElement.prototype.scrollIntoView = scroll;
     }
+  });
+
+  test("steps through the changed files in Changes' order, going round, by button or Alt+arrow", async () => {
+    const file = (path: string) => ({ path, add: 1, del: 0 });
+    changes = { unstaged: [file("a.rs"), file("b.rs")], staged: [file("c.rs")] };
+    const shown: FileTarget[] = [];
+    const b: FileTarget = { path: "b.rs", side: "unstaged" };
+    render(
+      <FileViewer
+        files={[b]}
+        active={b}
+        preview={null}
+        workspace="/repo"
+        onActivate={(t) => shown.push(t)}
+        onPin={() => {}}
+        onClose={() => {}}
+        onCloseAll={() => {}}
+      />,
+    );
+    await settle();
+    expect(document.querySelector(".file-viewer-step-count")?.textContent).toBe("2 / 3");
+    fireEvent.click(screen.getByTitle("Next changed file (Alt+↓)"));
+    fireEvent.click(screen.getByTitle("Previous changed file (Alt+↑)"));
+    fireEvent.keyDown(document.querySelector(".file-viewer")!, { key: "ArrowDown", altKey: true });
+    expect(shown).toEqual([
+      { path: "c.rs", side: "staged" },
+      { path: "a.rs", side: "unstaged" },
+      { path: "c.rs", side: "staged" },
+    ]);
+  });
+
+  test("with nothing changed there is nothing to step through", async () => {
+    await open();
+    expect(document.querySelector(".file-viewer-step")).toBeNull();
   });
 });
