@@ -26,7 +26,19 @@
   gap: 8px;
   margin-top: 6px;
 }
-/* A long provider/model ellipsises rather than pushing the send button off. */
+/* A long provider/model ellipsises rather than pushing the send button off —
+   or, in a narrow chat, sliding under the context meter: the model's chip is
+   the one thing in the bar that gives up width, the rest keep their size. */
+.composer-bar > * {
+  flex: none;
+}
+.composer-bar > .dropdown-wrap:has(.model-label) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.composer-bar > .dropdown-wrap:has(.model-label) .chip {
+  max-width: 100%;
+}
 .composer .model-label {
   display: block;
   max-width: 240px;
