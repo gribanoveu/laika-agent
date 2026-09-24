@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { WorkingChanges } from "../lib/chat";
+import type { GitHistory, WorkingChanges } from "../lib/chat";
 
 // The Changes tab: the repository's unstaged and staged files with their line
 // counts, moved between the two by the row's button, and committed.
@@ -8,6 +8,7 @@ import type { WorkingChanges } from "../lib/chat";
 let repo: WorkingChanges;
 let calls: { command: string; args?: Record<string, unknown> }[] = [];
 let commitFails: string | null = null;
+let history: GitHistory;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: Record<string, unknown>) => {
@@ -18,6 +19,7 @@ mock.module("@tauri-apps/api/core", () => ({
       repo = { ...repo, [from]: repo[from].filter((f) => !paths.includes(f.path)), [to]: [...repo[to], ...moved] } as WorkingChanges;
     };
     if (command === "git_changes") return Promise.resolve(structuredClone(repo));
+    if (command === "git_history") return Promise.resolve(history);
     if (command === "git_stage") return Promise.resolve(move("unstaged", "staged"));
     if (command === "git_unstage") return Promise.resolve(move("staged", "unstaged"));
     if (command === "git_commit") {
@@ -47,6 +49,7 @@ afterAll(() => {
 });
 
 const { ChangesPanel } = await import("../components/ChangesPanel");
+const { ago } = await import("../components/HistoryView");
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
 beforeEach(() => {
@@ -59,6 +62,7 @@ beforeEach(() => {
   };
   calls = [];
   commitFails = null;
+  history = { branch: "main", upstream: null, ahead: 0, behind: 0, commits: [], more: false };
 });
 
 function panel(message = "", notes: string[] = [], messages: string[] = []) {
@@ -173,5 +177,93 @@ describe("ChangesPanel", () => {
     act(() => emit("workspace-git:changed", { root: "/repo" }));
     await settle();
     expect(reads()).toBe(before + 2);
+  });
+});
+
+describe("History tab", () => {
+  const now = Date.now() / 1000;
+  const commit = (id: string, summary: string, age: number, more: Partial<GitHistory["commits"][0]> = {}) => ({
+    id,
+    summary,
+    author: "Eugene",
+    time: now - age,
+    head: false,
+    refs: [],
+    ...more,
+  });
+
+  async function openHistory() {
+    const view = panel();
+    await settle();
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    await settle();
+    return view;
+  }
+
+  test("is read only once its tab is open", async () => {
+    panel();
+    await settle();
+    expect(calls.some((c) => c.command === "git_history")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    await settle();
+    expect(calls.find((c) => c.command === "git_history")?.args).toEqual({ limit: 50 });
+  });
+
+  test("shows the branch against its upstream and each commit with its marks", async () => {
+    history = {
+      branch: "fix/npe",
+      upstream: "origin/fix/npe",
+      ahead: 1,
+      behind: 2,
+      more: false,
+      commits: [
+        commit("a3f9c2e", "fix: guard zero income", 300, { head: true }),
+        commit("7be2c14", "feat: tax mapper", 2 * 86400, { refs: ["origin/main", "v1"] }),
+      ],
+    };
+    await openHistory();
+    expect(document.querySelector(".history-branch")?.textContent).toBe("fix/npe↑1↓2origin/fix/npe");
+    const rows = [...document.querySelectorAll(".history-commit")];
+    expect(rows.map((row) => row.querySelector(".history-meta")?.textContent)).toEqual([
+      "HEADa3f9c2e·Eugene·5m ago",
+      "origin/mainv17be2c14·Eugene·2d ago",
+    ]);
+    expect(rows[0].classList.contains("head")).toBe(true);
+    expect(rows[1].classList.contains("head")).toBe(false);
+    expect(screen.queryByText("Load more")).toBeNull();
+  });
+
+  test("Load more asks for the next fifty", async () => {
+    history = { ...history, commits: [commit("a3f9c2e", "one", 60)], more: true };
+    await openHistory();
+    fireEvent.click(screen.getByText("Load more"));
+    await settle();
+    expect(calls.filter((c) => c.command === "git_history").map((c) => c.args)).toEqual([{ limit: 50 }, { limit: 100 }]);
+  });
+
+  test("reads again when .git changes, and says when there is nothing yet", async () => {
+    await openHistory();
+    expect(screen.getByText("No commits yet")).toBeTruthy();
+    const reads = () => calls.filter((c) => c.command === "git_history").length;
+    const before = reads();
+    act(() => emit("workspace-git:changed", { root: "/repo" }));
+    await settle();
+    act(() => emit("workspace-git:changed", { root: "/elsewhere" }));
+    await settle();
+    expect(reads()).toBe(before + 1);
+  });
+});
+
+describe("ago", () => {
+  test("says it as a person would", () => {
+    const now = 1_000_000;
+    expect(ago(now - 10, now)).toBe("now");
+    expect(ago(now - 55 * 60, now)).toBe("55m ago");
+    expect(ago(now - 3 * 3600, now)).toBe("3h ago");
+    expect(ago(now - 30 * 3600, now)).toBe("yesterday");
+    expect(ago(now - 3 * 86400, now)).toBe("3d ago");
+    expect(ago(now - 10 * 86400, now)).toBe(new Date((now - 10 * 86400) * 1000).toLocaleDateString());
+    // A clock behind the commit's is not the future.
+    expect(ago(now + 100, now)).toBe("now");
   });
 });

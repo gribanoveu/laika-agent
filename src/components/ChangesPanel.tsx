@@ -2,6 +2,9 @@ import { useState } from "react";
 import { Minus, Plus, Sparkles } from "lucide-react";
 import { useStaging } from "../hooks/useStaging";
 import type { ChangedFile } from "../lib/chat";
+import { useGitHistory } from "../hooks/useGitHistory";
+import { HistoryView } from "./HistoryView";
+import { Tabs } from "./Tabs";
 import "./ChangesPanel.css";
 
 type Props = {
@@ -57,7 +60,9 @@ function StageRow({
 }
 
 export function ChangesPanel({ active, workspace, onNotify, message, onMessage }: Props) {
+  const [view, setView] = useState<"changes" | "history">("changes");
   const { unstaged, staged, error, stage, unstage, commit } = useStaging(active, workspace);
+  const history = useGitHistory(active && view === "history", workspace);
   const [committing, setCommitting] = useState(false);
 
   const canCommit = staged.length > 0 && message.trim().length > 0 && !committing;
@@ -76,89 +81,93 @@ export function ChangesPanel({ active, workspace, onNotify, message, onMessage }
     }
   };
 
-  if (error)
-    return (
-      <div className="panel-section">
-        <div className="stage-empty">{error}</div>
-      </div>
-    );
-
   return (
     <div className="changes-panel">
-      <div className="panel-section stage-section">
-        <div className="section-label">
-          <span>Changes</span>
-          {unstaged.length > 0 && (
-            <button className="link-btn" type="button" onClick={() => run(stage(unstaged.map((f) => f.path)))}>
-              Stage all
-            </button>
-          )}
-        </div>
-        <div className="stage-list">
-          {unstaged.map((f) => (
-            <StageRow
-              key={f.path}
-              file={f}
-              staged={false}
-              onToggle={() => run(stage([f.path]))}
-              onShowDiff={() => onNotify("Diff view is not wired yet")}
+      <Tabs
+        label="Changes"
+        value={view}
+        onChange={setView}
+        tabs={[
+          { id: "changes", label: "Changes", count: unstaged.length + staged.length },
+          { id: "history", label: "History" },
+        ]}
+      />
+      {view === "history" ? (
+        <HistoryView {...history} onLoadMore={history.loadMore} />
+      ) : error ? (
+        <div className="stage-empty">{error}</div>
+      ) : (
+        <>
+          <div className="panel-section stage-section">
+            <div className="section-label">
+              <span>Changes</span>
+              {unstaged.length > 0 && (
+                <button className="link-btn" type="button" onClick={() => run(stage(unstaged.map((f) => f.path)))}>
+                  Stage all
+                </button>
+              )}
+            </div>
+            <div className="stage-list">
+              {unstaged.map((f) => (
+                <StageRow
+                  key={f.path}
+                  file={f}
+                  staged={false}
+                  onToggle={() => run(stage([f.path]))}
+                  onShowDiff={() => onNotify("Diff view is not wired yet")}
+                />
+              ))}
+              {unstaged.length === 0 && <div className="stage-empty">No unstaged changes</div>}
+            </div>
+          </div>
+
+          <div className="panel-section stage-section">
+            <div className="section-label">
+              <span>Staged</span>
+              <span className="count">{staged.length}</span>
+            </div>
+            <div className="stage-list">
+              {staged.map((f) => (
+                <StageRow
+                  key={f.path}
+                  file={f}
+                  staged
+                  onToggle={() => run(unstage([f.path]))}
+                  onShowDiff={() => onNotify("Diff view is not wired yet")}
+                />
+              ))}
+              {staged.length === 0 && <div className="stage-empty">Stage files to commit</div>}
+            </div>
+          </div>
+
+          <div className="panel-section commit-section">
+            <div className="section-label">
+              <span>Commit message</span>
+            </div>
+            <textarea
+              className="commit-msg"
+              rows={4}
+              placeholder="Describe the commit…"
+              value={message}
+              onChange={(e) => onMessage(e.target.value)}
             />
-          ))}
-          {unstaged.length === 0 && <div className="stage-empty">No unstaged changes</div>}
-        </div>
-      </div>
-
-      <div className="panel-section stage-section">
-        <div className="section-label">
-          <span>Staged</span>
-          <span className="count">{staged.length}</span>
-        </div>
-        <div className="stage-list">
-          {staged.map((f) => (
-            <StageRow
-              key={f.path}
-              file={f}
-              staged
-              onToggle={() => run(unstage([f.path]))}
-              onShowDiff={() => onNotify("Diff view is not wired yet")}
-            />
-          ))}
-          {staged.length === 0 && <div className="stage-empty">Stage files to commit</div>}
-        </div>
-      </div>
-
-      <div className="panel-section commit-section">
-        <div className="section-label">
-          <span>Commit message</span>
-        </div>
-        <textarea
-          className="commit-msg"
-          rows={4}
-          placeholder="Describe the commit…"
-          value={message}
-          onChange={(e) => onMessage(e.target.value)}
-        />
-        <div className="commit-actions">
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={staged.length === 0}
-            onClick={() => onNotify("Message generation is not wired yet")}
-          >
-            <Sparkles size={13} />
-            Generate description
-          </button>
-          <button
-            className="btn btn-primary"
-            type="button"
-            disabled={!canCommit}
-            onClick={commitNow}
-          >
-            Commit
-          </button>
-        </div>
-      </div>
-
+            <div className="commit-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={staged.length === 0}
+                onClick={() => onNotify("Message generation is not wired yet")}
+              >
+                <Sparkles size={13} />
+                Generate description
+              </button>
+              <button className="btn btn-primary" type="button" disabled={!canCommit} onClick={commitNow}>
+                Commit
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

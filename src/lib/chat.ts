@@ -663,6 +663,24 @@ export async function gitCommit(message: string): Promise<string> {
   return invoke<string>("git_commit", { message });
 }
 
+/** Mirrors `domain::git_changes::CommitSummary`; `time` is in seconds since the epoch. */
+export type CommitSummary = { id: string; summary: string; author: string; time: number; head: boolean; refs: string[] };
+/** Mirrors `domain::git_changes::GitHistory`. */
+export type GitHistory = {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  commits: CommitSummary[];
+  more: boolean;
+};
+
+/** Where HEAD is and the newest `limit` commits from it, newest first. */
+export async function gitHistory(limit: number): Promise<GitHistory> {
+  requireBackend();
+  return invoke<GitHistory>("git_history", { limit });
+}
+
 // ---------------------------------------------------------------- file tree
 
 /** Mirrors `domain::file_tree`. A deleted file is not listed: it is not on disk. */

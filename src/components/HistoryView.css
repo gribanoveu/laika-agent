@@ -1,0 +1,123 @@
+/* The History tab: a header, the branch line, then the commits strung on a
+   line down the left, the one HEAD is on lit. Scrolls as one. */
+.history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.history::-webkit-scrollbar {
+  width: 6px;
+}
+.history-branch {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.history-branch-name {
+  color: var(--text);
+}
+.history-upstream {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.history-commit {
+  position: relative;
+  padding: 7px 8px 9px 28px;
+  border-radius: 8px;
+}
+.history-commit:hover {
+  background: var(--bg-hover);
+}
+/* The line to the next commit: from under this dot to the next one. */
+.history-commit:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 19px;
+  bottom: -11px;
+  width: 1px;
+  background: var(--border);
+}
+.history-dot {
+  position: absolute;
+  left: 8px;
+  top: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: 0 0 0 3px var(--bg-panel);
+}
+.history-commit.head .history-dot {
+  background: var(--green);
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 4px color-mix(in srgb, var(--green) 35%, transparent);
+}
+.history-body {
+  min-width: 0;
+}
+.history-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  color: var(--text);
+  line-height: 1.5;
+}
+.history-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.history-id {
+  color: var(--text-dim);
+}
+.history-sep {
+  opacity: 0.6;
+}
+.history-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-ref {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.history-ref.head {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  color: var(--green);
+}
+.history-empty {
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
