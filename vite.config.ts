@@ -7,6 +7,9 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
+  // ES workers: the highlight worker loads each grammar as its own chunk,
+  // which the default IIFE format cannot split into.
+  worker: { format: "es" as const },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

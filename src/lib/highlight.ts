@@ -1,6 +1,7 @@
-import { createHighlighterCore, type ThemedToken } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { bundledLanguages, type BundledLanguage } from "shiki/langs";
+import type { Token } from "./shikiTokens";
+
+export type { Token };
 
 /** Fence tags models write that are not Shiki's own ids. */
 const ALIASES: Record<string, string> = {
@@ -50,34 +51,70 @@ export function splitLines(source: string): string[] {
   return source.replace(/\n$/, "").split("\n");
 }
 
-// The JavaScript regex engine, not Oniguruma: that one is WebAssembly, and the
-// window's CSP allows no `wasm-unsafe-eval` (docs/08-data-policy.md). A grammar
-// the engine cannot run throws, and the block stays plain.
-// `shiki/core`, not `shiki`: the full entry brings that engine into the
-// bundle even unused. Grammars are split into chunks loaded on first use.
-let highlighter: ReturnType<typeof createHighlighterCore> | null = null;
+// Tokenizing runs in a worker: on the page a large file held the window still
+// for over a second. Where the worker cannot start or dies, it runs here.
+let worker: Worker | null | undefined;
+const waiting = new Map<number, (tokens: Token[][] | null) => void>();
+let next = 0;
+
+function startWorker(): Worker | null {
+  try {
+    const started = new Worker(new URL("./highlight.worker.ts", import.meta.url), { type: "module" });
+    started.onmessage = ({ data }: MessageEvent<{ id: number; tokens: Token[][] | null }>) => {
+      waiting.get(data.id)?.(data.tokens);
+      waiting.delete(data.id);
+    };
+    started.onerror = () => {
+      // Gone: what it was asked is done here instead, and so is all that follows.
+      worker = null;
+      started.terminate();
+      const orphans = [...waiting.values()];
+      waiting.clear();
+      orphans.forEach((resolve) => resolve(null));
+    };
+    return started;
+  } catch {
+    return null;
+  }
+}
+
+async function tokenizeSomewhere(source: string, lang: BundledLanguage): Promise<Token[][] | null> {
+  if (worker === undefined) worker = typeof Worker === "undefined" ? null : startWorker();
+  const busy = worker;
+  if (busy) {
+    const id = next++;
+    const tokens = await new Promise<Token[][] | null>((resolve) => {
+      waiting.set(id, resolve);
+      busy.postMessage({ id, source, lang });
+    });
+    // A null from a worker that died is not the grammar's answer.
+    if (tokens || worker === busy) return tokens;
+  }
+  const { tokenize } = await import("./shikiTokens");
+  return tokenize(source, lang);
+}
+
+// The last few answers: going back to a tab, or a file whose two versions
+// are the same, asks nothing again.
+const CACHE_SIZE = 16;
+const cache = new Map<string, Promise<Token[][] | null>>();
 
 /** Colours for `source`, one token list per line, or `null` for an unknown
  * language or a grammar that failed — callers show the text uncoloured.
  * Each token carries both themes as `--shiki-light`/`--shiki-dark`; the
  * stylesheet picks one by the app's `data-theme`. */
-export async function highlight(source: string, raw: string | null): Promise<ThemedToken[][] | null> {
+export function highlight(source: string, raw: string | null): Promise<Token[][] | null> {
   const lang = resolveLanguage(raw);
-  if (!lang) return null;
-  try {
-    highlighter ??= createHighlighterCore({
-      themes: [import("shiki/themes/light-plus.mjs"), import("shiki/themes/dark-plus.mjs")],
-      langs: [],
-      engine: createJavaScriptRegexEngine({ forgiving: true }),
-    });
-    const shiki = await highlighter;
-    await shiki.loadLanguage(bundledLanguages[lang]);
-    return shiki.codeToTokens(source.replace(/\n$/, ""), {
-      lang,
-      themes: { light: "light-plus", dark: "dark-plus" },
-      defaultColor: false,
-    }).tokens;
-  } catch {
-    return null;
+  if (!lang) return Promise.resolve(null);
+  const key = `${lang}\0${source}`;
+  const known = cache.get(key);
+  if (known) {
+    cache.delete(key);
+    cache.set(key, known);
+    return known;
   }
+  const answer = tokenizeSomewhere(source, lang);
+  cache.set(key, answer);
+  if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value!);
+  return answer;
 }

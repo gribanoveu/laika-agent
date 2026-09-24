@@ -67,6 +67,13 @@ describe("highlight", () => {
     expect(styles.some((s) => s["--shiki-light"] && s["--shiki-dark"])).toBe(true);
   });
 
+  test("the same text asked again is the same answer, not a second tokenizing", async () => {
+    const first = highlight("const same = 1;", "ts");
+    expect(highlight("const same = 1;", "typescript")).toBe(first);
+    expect(highlight("const other = 1;", "ts")).not.toBe(first);
+    expect((await first)?.[0]?.map((t) => t.content).join("")).toBe("const same = 1;");
+  });
+
   test("an unknown language stays plain", async () => {
     expect(await highlight("x", "no-such-lang")).toBeNull();
     expect(await highlight("x", null)).toBeNull();

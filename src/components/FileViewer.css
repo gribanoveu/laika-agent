@@ -167,6 +167,13 @@
   font-size: var(--fs-sm);
   overscroll-behavior: contain;
 }
+/* A long file: rows off screen are neither laid out nor painted until
+   scrolled to. The size stands in for them meanwhile, so the scrollbar is
+   right; `auto` keeps the real one once a row has been drawn. */
+.file-viewer-body .diff-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1.55em;
+}
 .file-viewer-note {
   padding: 14px;
   font-size: var(--fs-sm);

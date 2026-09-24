@@ -77,7 +77,7 @@ function useColours(old: string | null, next: string | null, path: string) {
     let live = true;
     const paint = async (text: string | null): Promise<Painted | null> => {
       const lines = text ? await highlight(text, lang) : null;
-      return lines?.map((tokens) => tokens.map((t) => ({ text: t.content, style: t.htmlStyle as Record<string, string> }))) ?? null;
+      return lines?.map((tokens) => tokens.map((t) => ({ text: t.content, style: t.htmlStyle }))) ?? null;
     };
     void Promise.all([paint(old), paint(next)]).then(([o, n]) => live && setColours({ old: o, next: n }));
     return () => {
@@ -116,8 +116,16 @@ export function FileViewer({
   // but for Markdown — which, unchanged, reads best as it renders.
   const shown: Mode =
     mode === "diff" && !changed ? (markdown ? "preview" : "file") : mode === "preview" && !markdown ? "file" : mode;
-  const colours = useColours(text?.old ?? null, text?.new ?? null, target.path);
-  const plain = useMemo(() => (text ? fileRows(text.old ?? "", text.new ?? "", shown !== "diff") : []), [text, shown]);
+  // On the texts, not the view: a re-read of an unchanged file makes a new
+  // object with the same strings, and redrawing it all would be wasted.
+  const oldText = text?.old ?? null;
+  const newText = text?.new ?? null;
+  const readable = text !== null;
+  const plain = useMemo(
+    () => (readable ? fileRows(oldText ?? "", newText ?? "", shown !== "diff") : []),
+    [readable, oldText, newText, shown],
+  );
+  const colours = useColours(oldText, newText, target.path);
   const rows = useMemo(() => (colours ? paintRows(plain, colours.old, colours.next) : plain), [plain, colours]);
   const add = rows.filter((row) => row.kind === "add").length;
   const del = rows.filter((row) => row.kind === "del").length;

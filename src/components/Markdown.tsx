@@ -1,9 +1,8 @@
 import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ThemedToken } from "shiki";
 import { Streamdown, useIsCodeFenceIncomplete, type Components } from "streamdown";
-import { highlight, splitLines } from "../lib/highlight";
+import { highlight, splitLines, type Token } from "../lib/highlight";
 import { wrapAsciiTrees } from "../lib/wrapAsciiTrees";
 import "./Markdown.css";
 
@@ -48,7 +47,7 @@ function Code({ className, children }: { className?: string; children?: ReactNod
   const lang = /language-(\S+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? null;
   const source = lang === null ? "" : textOf(children);
   const incomplete = useIsCodeFenceIncomplete();
-  const [tokens, setTokens] = useState<ThemedToken[][] | null>(null);
+  const [tokens, setTokens] = useState<Token[][] | null>(null);
 
   useEffect(() => {
     setTokens(null);
