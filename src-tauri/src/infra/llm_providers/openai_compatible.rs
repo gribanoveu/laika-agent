@@ -8,7 +8,18 @@
 //! tidiness: several OpenAI-compatible corporate proxies reject a
 //! non-streaming `/chat/completions` with HTTP 400 — sometimes with an empty
 //! body — while accepting the identical payload with `"stream": true`.
+//!
+//! Reasoning goes back on the same assistant message, under the name it came
+//! in — `reasoning_content` or `reasoning` — carried in
+//! `LlmMessage::native_content`. DeepSeek requires it once a request carries
+//! tools (without it, the round after a thinking round with tool calls is a
+//! 400), and its models are trained to keep that reasoning across the calls of
+//! a task. OpenRouter sends `reasoning` and takes it back for the same reason.
+//! Without it GLM there read one 47-line file over thirty times in one turn,
+//! as if each round started from nothing (`agent_bench`, `migrate-records`).
+//! A server that never sent reasoning never gets any back.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -29,6 +40,11 @@ pub const REQUEST_HEADER_VALUE_UUID: &str = "$uuid";
 /// error page can be an entire HTML document; the goal is a diagnosable line,
 /// not a dump.
 const ERROR_BODY_MAX_CHARS: usize = 2000;
+
+/// The two names reasoning arrives under, and goes back under — see the
+/// module comment.
+const REASONING_CONTENT: &str = "reasoning_content";
+const REASONING: &str = "reasoning";
 
 pub struct OpenAiCompatibleProvider {
     agent: ureq::Agent,
@@ -90,7 +106,7 @@ impl OpenAiCompatibleProvider {
 
         WireRequest {
             model: &request.model,
-            messages: system_first(&request.messages).into_iter().map(WireMessage::from).collect(),
+            messages: wire_messages(&request.messages),
             // Only sent when tools are actually offered: an empty `tools` with
             // `tool_choice: "auto"` is pointless, and some servers reject it.
             tool_choice: (!tools.is_empty()).then_some("auto"),
@@ -150,6 +166,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
         let reader = std::io::BufReader::new(response.into_body().into_reader());
         let mut result = ChatStreamResult::default();
         let mut calls = ToolCallAccumulator::default();
+        let mut echo_reasoning: Option<&'static str> = None;
 
         for line in reader.lines() {
             // Polled once per line rather than only before the loop: a long
@@ -166,10 +183,12 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 SseLine::Chunk {
                     delta,
                     reasoning,
+                    reasoning_field,
                     usage,
                     tool_calls,
                     finish_reason,
                 } => {
+                    echo_reasoning = echo_reasoning.or(reasoning_field);
                     if let Some(text) = delta {
                         on_delta(&text);
                         result.text.push_str(&text);
@@ -200,6 +219,11 @@ impl LlmProvider for OpenAiCompatibleProvider {
         }
 
         result.tool_calls = calls.finish();
+        if let Some(field) = echo_reasoning.filter(|_| !result.reasoning.is_empty()) {
+            let mut native = serde_json::Map::new();
+            native.insert(field.to_string(), serde_json::Value::String(result.reasoning.clone()));
+            result.native_content = Some(serde_json::Value::Object(native));
+        }
         Ok(result)
     }
 
@@ -290,17 +314,51 @@ pub(super) fn header_value(value: &str) -> String {
     }
 }
 
-/// Every system message moved to the front, in order.
+/// The request on the wire: system messages first, then the conversation,
+/// and anything the app says after it at the very end.
 ///
-/// The checklist comes after the conversation (`prompt::checklist_message`),
-/// and OpenAI itself would take it there — but the chat templates of several
-/// local models refuse a system message anywhere but first, and fail the
-/// whole request. So here it goes back where it always was, and this
-/// protocol keeps the cost the move saves elsewhere (F-7.2).
-fn system_first(messages: &[LlmMessage]) -> Vec<&LlmMessage> {
+/// The chat templates of several local models refuse a system message
+/// anywhere but first, and DeepSeek's folds a later one into the system
+/// prompt, so a trailing one cannot go as one. Moved to the front with the
+/// others, it would change the start of every request it changed in — a
+/// provider that caches by prefix then reuses nothing past it — so it is
+/// appended to the last message instead, as Anthropic's protocol does it
+/// (`anthropic::body`). The turn loop itself sends nothing there any more:
+/// the checklist lives in the history (`llm_chat::restore_checklist`).
+fn wire_messages(messages: &[LlmMessage]) -> Vec<WireMessage<'_>> {
+    // With no conversation at all, every system message leads.
+    let end = messages.iter().rposition(|m| m.role != LlmRole::System).map_or(messages.len(), |i| i + 1);
+    let (conversation, tail) = messages.split_at(end);
     let (system, rest): (Vec<&LlmMessage>, Vec<&LlmMessage>) =
-        messages.iter().partition(|m| m.role == LlmRole::System);
-    system.into_iter().chain(rest).collect()
+        conversation.iter().partition(|m| m.role == LlmRole::System);
+    let mut wire: Vec<WireMessage> = system.into_iter().chain(rest).map(WireMessage::from).collect();
+
+    let tail = tail.iter().filter_map(|m| m.content.as_deref()).collect::<Vec<_>>().join("\n\n");
+    if tail.is_empty() {
+        return wire;
+    }
+    match wire.last_mut() {
+        Some(last) if last.role == "user" || last.role == "tool" => {
+            last.content = Some(Cow::Owned(match last.content.take() {
+                Some(said) => format!("{said}\n\n{tail}"),
+                None => tail,
+            }));
+        }
+        _ => wire.push(WireMessage {
+            role: "user",
+            content: Some(Cow::Owned(tail)),
+            reasoning_content: None,
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }),
+    }
+    wire
+}
+
+/// Reasoning this provider kept on `message` under `field`, if any.
+fn kept_reasoning<'a>(message: &'a LlmMessage, field: &str) -> Option<&'a str> {
+    message.native_content.as_ref()?.get(field)?.as_str()
 }
 
 fn role_str(role: LlmRole) -> &'static str {
@@ -343,8 +401,13 @@ struct StreamOptions {
 #[derive(Serialize)]
 struct WireMessage<'a> {
     role: &'static str,
+    /// Owned only for the last message, which may carry the checklist.
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<&'a str>,
+    content: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -355,7 +418,10 @@ impl<'a> From<&'a LlmMessage> for WireMessage<'a> {
     fn from(message: &'a LlmMessage) -> Self {
         Self {
             role: role_str(message.role),
-            content: message.content.as_deref(),
+            content: message.content.as_deref().map(Cow::Borrowed),
+            // An object with these keys is ours; Anthropic's blocks are an array.
+            reasoning_content: kept_reasoning(message, REASONING_CONTENT),
+            reasoning: kept_reasoning(message, REASONING),
             tool_call_id: message.tool_call_id.as_deref(),
             tool_calls: message
                 .tool_calls
@@ -487,6 +553,9 @@ struct StreamUsage {
     /// sign it happened. Gateways that do not cache leave it out.
     #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
+    /// DeepSeek's spelling of the same number.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -501,7 +570,11 @@ impl From<StreamUsage> for ChatUsage {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
             total_tokens: u.total_tokens,
-            cached_tokens: u.prompt_tokens_details.and_then(|d| d.cached_tokens).unwrap_or(0),
+            cached_tokens: u
+                .prompt_tokens_details
+                .and_then(|d| d.cached_tokens)
+                .or(u.prompt_cache_hit_tokens)
+                .unwrap_or(0),
         }
     }
 }
@@ -513,6 +586,9 @@ enum SseLine {
     Chunk {
         delta: Option<String>,
         reasoning: Option<String>,
+        /// Which of the two names the reasoning came under — the one it goes
+        /// back under.
+        reasoning_field: Option<&'static str>,
         usage: Option<ChatUsage>,
         tool_calls: Vec<ParsedToolCallFragment>,
         finish_reason: Option<String>,
@@ -558,12 +634,21 @@ fn parse_sse_line(line: &str) -> Result<SseLine, LlmError> {
         return Ok(SseLine::Chunk {
             delta: None,
             reasoning: None,
+            reasoning_field: None,
             usage,
             tool_calls: Vec::new(),
             finish_reason: None,
         });
     };
 
+    let has = |r: &Option<String>| r.as_deref().is_some_and(|r| !r.is_empty());
+    let reasoning_field = if has(&choice.delta.reasoning_content) {
+        Some(REASONING_CONTENT)
+    } else if has(&choice.delta.reasoning) {
+        Some(REASONING)
+    } else {
+        None
+    };
     let reasoning = choice.delta.reasoning_text();
     Ok(SseLine::Chunk {
         // A role-only opening chunk usually carries `"content": ""`. Treating
@@ -571,6 +656,7 @@ fn parse_sse_line(line: &str) -> Result<SseLine, LlmError> {
         // typing indicator behind something that looks like an answer.
         delta: choice.delta.content.filter(|s| !s.is_empty()),
         reasoning,
+        reasoning_field,
         usage,
         tool_calls: choice
             .delta
@@ -741,6 +827,72 @@ pub(super) mod tests {
         }
     }
 
+    /// DeepSeek reports its cache hits under its own name; without reading
+    /// it, a DeepSeek turn looks as if nothing was ever cached.
+    #[test]
+    fn deepseeks_cache_hit_tokens_are_read_too() {
+        let line = chunk(r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":7,"prompt_cache_miss_tokens":3}}"#);
+        match line {
+            SseLine::Chunk { usage: Some(u), .. } => assert_eq!(u.cached_tokens, 7),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn stream_reasoning(field: &str) -> ChatStreamResult {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                &format!(r#"{{"choices":[{{"delta":{{"{field}":"let me "}}}}]}}"#),
+                &format!(r#"{{"choices":[{{"delta":{{"{field}":"look"}}}}]}}"#),
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"readFile","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
+            ]),
+        );
+        let result = provider(url)
+            .chat_stream(
+                ChatRequest { messages: vec![], tools: vec![], model: "m".into() },
+                &|_| {},
+                &|_| {},
+                &|_, _, _| {},
+                &|| false,
+            )
+            .expect("streams");
+        server.join().ok();
+        result
+    }
+
+    /// Reasoning is kept to be sent back, under the name it came in:
+    /// DeepSeek's `reasoning_content`, OpenRouter's `reasoning`.
+    #[test]
+    fn reasoning_is_kept_under_the_name_it_came_in() {
+        for field in ["reasoning_content", "reasoning"] {
+            let kept = stream_reasoning(field);
+            assert_eq!(kept.reasoning, "let me look");
+            assert_eq!(kept.native_content, Some(serde_json::json!({ field: "let me look" })), "{field}");
+        }
+    }
+
+    /// Back on the assistant message it came with — and only from our own
+    /// shape: Anthropic's blocks are an array and mean nothing here.
+    #[test]
+    fn kept_reasoning_goes_back_on_its_assistant_message() {
+        let with = |native: Option<serde_json::Value>| {
+            let mut message = LlmMessage::assistant("done");
+            message.native_content = native;
+            let request = ChatRequest { messages: vec![message], tools: vec![], model: "m".into() };
+            serde_json::to_value(provider("http://x".into()).body(&request, false)).unwrap()["messages"][0].clone()
+        };
+        let deepseek = with(Some(serde_json::json!({"reasoning_content": "why"})));
+        assert_eq!(deepseek["reasoning_content"], "why");
+        assert!(deepseek.get("reasoning").is_none(), "one name, the one it came in");
+        let openrouter = with(Some(serde_json::json!({"reasoning": "why"})));
+        assert_eq!(openrouter["reasoning"], "why");
+        assert!(openrouter.get("reasoning_content").is_none());
+        let anthropic = with(Some(serde_json::json!([{"type": "thinking", "reasoning": "x"}])));
+        assert!(anthropic.get("reasoning_content").is_none() && anthropic.get("reasoning").is_none());
+        let none = with(None);
+        assert!(none.get("reasoning_content").is_none() && none.get("reasoning").is_none());
+    }
+
     /// Several servers send `null` rather than omitting the field.
     #[test]
     fn null_fields_are_not_a_parse_failure() {
@@ -770,32 +922,80 @@ pub(super) mod tests {
         assert_eq!(silent.cached_tokens, 0);
     }
 
-    /// The checklist arrives after the conversation; a strict chat template
-    /// would refuse it there, so it is sent where it always was.
-    #[test]
-    fn a_system_message_after_the_conversation_is_sent_first() {
-        let p = provider("http://unused".into());
-        let body = serde_json::to_value(p.body(
-            &ChatRequest {
-                messages: vec![
-                    LlmMessage::system("rules"),
-                    LlmMessage::user("go"),
-                    LlmMessage::assistant("ok"),
-                    LlmMessage::system("checklist"),
-                ],
-                tools: vec![],
-                model: "m".into(),
-            },
-            true,
-        ))
+    fn wire_order(messages: Vec<LlmMessage>) -> Vec<(String, String)> {
+        let body = serde_json::to_value(
+            provider("http://unused".into()).body(&ChatRequest { messages, tools: vec![], model: "m".into() }, true),
+        )
         .unwrap();
-        let order: Vec<&str> = body["messages"]
+        body["messages"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|m| m["content"].as_str().unwrap())
-            .collect();
-        assert_eq!(order, ["rules", "checklist", "go", "ok"]);
+            .map(|m| (m["role"].as_str().unwrap().to_string(), m["content"].as_str().unwrap_or("").to_string()))
+            .collect()
+    }
+
+    /// The checklist arrives after the conversation. A strict chat template
+    /// refuses a system message there, so it rides at the end of the last
+    /// message — never at the front, where every change to it would cost the
+    /// prompt cache everything after the system prompt.
+    #[test]
+    fn the_checklist_goes_at_the_end_of_the_last_message() {
+        let mut tool = LlmMessage::tool_result("c1", "a.txt: 3 lines");
+        tool.role = LlmRole::Tool;
+        let order = wire_order(vec![
+            LlmMessage::system("rules"),
+            LlmMessage::user("go"),
+            tool,
+            LlmMessage::system("## Checklist"),
+        ]);
+        assert_eq!(
+            order,
+            [
+                ("system".into(), "rules".into()),
+                ("user".into(), "go".into()),
+                ("tool".into(), "a.txt: 3 lines\n\n## Checklist".into()),
+            ]
+        );
+
+        let after_the_user = wire_order(vec![LlmMessage::system("rules"), LlmMessage::user("go"), LlmMessage::system("cl")]);
+        assert_eq!(after_the_user.last().unwrap(), &("user".to_string(), "go\n\ncl".to_string()));
+
+        // Nothing it could join: a message of its own, not a system one.
+        let after_an_answer = wire_order(vec![LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::system("cl")]);
+        assert_eq!(after_an_answer.last().unwrap(), &("user".to_string(), "cl".to_string()));
+    }
+
+    /// What the cache sees: a changed checklist changes the last message and
+    /// nothing before it.
+    #[test]
+    fn a_changed_checklist_leaves_the_prefix_alone() {
+        let conversation = || vec![LlmMessage::system("rules"), LlmMessage::user("go"), LlmMessage::assistant("ok"), LlmMessage::user("next")];
+        let with = |checklist: &str| {
+            let mut messages = conversation();
+            messages.push(LlmMessage::system(checklist));
+            wire_order(messages)
+        };
+        let (first, second) = (with("[>] t1 read"), with("[x] t1 read\n[>] t2 fix"));
+        assert_eq!(first[..first.len() - 1], second[..second.len() - 1]);
+        assert_ne!(first.last(), second.last());
+    }
+
+    /// A middle system message — a compaction summary — still goes first, as
+    /// strict templates need; only the trailing ones are the tail.
+    #[test]
+    fn a_system_message_inside_the_conversation_still_goes_first() {
+        let order = wire_order(vec![
+            LlmMessage::system("rules"),
+            LlmMessage::user("go"),
+            LlmMessage::system("summary"),
+            LlmMessage::assistant("ok"),
+            LlmMessage::user("next"),
+        ]);
+        let contents: Vec<&str> = order.iter().map(|(_, content)| content.as_str()).collect();
+        assert_eq!(contents, ["rules", "summary", "go", "ok", "next"]);
+        let only_system = wire_order(vec![LlmMessage::system("rules")]);
+        assert_eq!(only_system, [("system".to_string(), "rules".to_string())]);
     }
 
     #[test]

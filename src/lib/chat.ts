@@ -84,7 +84,7 @@ export type TurnEvent = { turnId: string; seq: number; round: number; targetId?:
   | { type: "hookFeedback"; payload: { event: string; message: string; blocked: boolean } }
   | { type: "processesEnded"; payload: { processes: ProcessInfo[] } }
   | { type: "roundStarted" }
-  | { type: "roundCompleted"; payload: { text: string; reasoning?: string } }
+  | { type: "roundCompleted"; payload: { text: string; reasoning?: string; truncated?: boolean } }
   | { type: "toolCallDelta"; payload: LlmToolCall }
   | { type: "toolCall"; payload: LlmToolCall }
   | { type: "toolResult"; payload: { id: string; result?: unknown; error?: string | null } }

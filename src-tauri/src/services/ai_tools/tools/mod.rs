@@ -253,7 +253,7 @@ mod definition_tests {
                     }),
                     ToolCall::Todo(TodoArgs::Update {
                         id: Some("t1".to_string()),
-                        status: TodoUpdateStatus::Completed,
+                        status: Some(TodoUpdateStatus::Completed),
                         note: Some("done".to_string()),
                     }),
                 ],

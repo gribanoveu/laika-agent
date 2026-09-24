@@ -78,7 +78,7 @@ Do not commit, push, merge, rebase, reset, clean, delete branches, rewrite histo
 
 ## The checklist
 
-`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, mark each one as it finishes, and do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. The list as it stands, ids and notes included, is under "Checklist" at the end of every request — there is nothing to read back, and it is still there after older history is summarized.
+`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, mark each one as it finishes, and do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. Every `todo` call returns the list as it stands, ids and notes included, so there is nothing to read back; if the conversation stops showing it — after older history is summarized, say — it is added again at the end.
 
 ## Evidence
 
@@ -197,16 +197,6 @@ pub fn context_block(ctx: &TurnContext) -> String {
     text
 }
 
-/// The checklist, sent *after* the conversation rather than in front of it.
-///
-/// It changes whenever the model ticks an item off, which can be every
-/// round. In front, that change would come before the whole history and
-/// leave a provider's prompt cache nothing to reuse past it; at the end it
-/// costs only itself. See `docs/06-port-plan.md`, F-7.2.
-pub fn checklist_message(todos: &[Task]) -> Option<LlmMessage> {
-    todo_block(todos).map(LlmMessage::system)
-}
-
 /// How to read a checklist row, said wherever the rows are shown.
 pub const CHECKLIST_LEGEND: &str = "[>] in progress, [x] done, [-] cancelled; ids first";
 
@@ -229,17 +219,6 @@ pub fn checklist_rows(todos: &[Task]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The checklist as it stands, or nothing at all.
-///
-/// `None` rather than an empty heading: a "TODO:" with no items under it reads
-/// as a list that was emptied, and invites the model to fill it.
-pub fn todo_block(todos: &[Task]) -> Option<String> {
-    if todos.is_empty() {
-        return None;
-    }
-    Some(format!("## Checklist\n\n({CHECKLIST_LEGEND})\n{}", checklist_rows(todos)))
 }
 
 /// Past this many characters of descriptions, the rest of the catalog is
@@ -534,7 +513,7 @@ mod tests {
             Task { id: "t3".into(), ..task("write a test", TodoStatus::Pending) },
             Task { id: "t4".into(), note: Some("no longer needed".into()), ..task("rename the module", TodoStatus::Cancelled) },
         ];
-        let text = todo_block(&todos).expect("a list");
+        let text = checklist_rows(&todos);
 
         // The ids are what `todo update` takes: without them here, a summarized
         // history leaves no way to name any task but the current one.
@@ -553,19 +532,6 @@ mod tests {
         assert!(rule.contains("send only the tasks that are new"), "{rule}");
         assert!(!rule.contains("send the whole list"), "{rule}");
         assert!(rule.contains("ids and notes included"), "{rule}");
-    }
-
-    /// An empty heading reads as a list somebody emptied, and invites the
-    /// model to fill it in with work nobody asked for.
-    #[test]
-    fn an_empty_checklist_is_left_out_entirely() {
-        let workspace = PathBuf::from("/tmp/p");
-        assert_eq!(todo_block(&[]), None);
-        assert_eq!(checklist_message(&[]), None);
-        let one = checklist_message(&[task("ship it", TodoStatus::Pending)]).expect("a list");
-        assert_eq!(one.role, LlmRole::System);
-        assert!(one.content.is_some_and(|t| t.contains("[ ] ship it")));
-        assert!(!context_block(&ctx(&workspace)).contains("Checklist"));
     }
 
     /// Telling the model to expect an approval prompt that will not come is

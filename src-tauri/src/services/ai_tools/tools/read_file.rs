@@ -7,6 +7,11 @@
 //! No extension filter. The boundary at the tool layer is containment under
 //! the scope root and nothing else — a coding agent has to read source files,
 //! build manifests, lockfiles and dotfiles alike.
+//!
+//! A size limit, though: one read sends at most [`MAX_READ_LINES`] lines and
+//! [`MAX_READ_BYTES`], and says where it stopped. Without it a 6000-line CSV
+//! read "to have a look" rode along in every later round of the turn — 550k
+//! tokens for a task that costs 50k (`agent_bench`, `truncated-output`).
 
 use crate::domain::llm::LlmToolDefinition;
 use std::fs;
@@ -17,6 +22,14 @@ use crate::domain::tools::{OutlineEntry, ReadFileArgs, ReadFiles, ToolError, Too
 use crate::infra::language_indexers::indexer_for;
 
 use super::super::resolve::{relative_to_root, resolve_existing};
+
+/// The most lines one read returns — about what an editor shows in a dozen
+/// screens, and more than almost any source file has.
+pub const MAX_READ_LINES: u32 = 2000;
+
+/// The most bytes one read returns: ~25k tokens. Binds before the line limit
+/// on long lines — data, generated code, a minified bundle.
+pub const MAX_READ_BYTES: usize = 100_000;
 
 pub fn read_file(
     scope: &ToolScope,
@@ -36,11 +49,14 @@ pub fn read_file(
     // the canonical spelling rather than whatever the model typed — otherwise
     // `./src/a.rs` and `src/a.rs` would be two different files to the registry.
     // A range that happens to cover the whole file still counts as partial:
-    // being conservative costs one re-read, being wrong costs the file.
-    let whole = args.start_line.is_none() && args.end_line.is_none();
-    reads.record(&relative_to_root(scope, &path)?, &content, whole);
-
-    Ok(slice_lines(content, args.start_line, args.end_line))
+    // being conservative costs one re-read, being wrong costs the file. So does
+    // a whole-file read the limit cut short: the model has not seen the rest.
+    let relative = relative_to_root(scope, &path)?;
+    let asked_whole = args.start_line.is_none() && args.end_line.is_none();
+    let result = slice_lines(&content, args.start_line, args.end_line);
+    let whole = asked_whole && !matches!(result, ToolResult::File { truncated: true, .. });
+    reads.record(&relative, &content, whole);
+    Ok(result)
 }
 
 /// The file's declarations and headings, found by the same parser the index
@@ -62,30 +78,32 @@ fn outline(path: &str, content: &str) -> ToolResult {
     ToolResult::FileOutline { path: path.to_string(), entries, total_lines: content.lines().count() as u32 }
 }
 
-/// Clamps the requested range into the file rather than erroring.
+/// Clamps the requested range into the file rather than erroring, and stops
+/// at the read limit.
 ///
-/// With neither bound requested, `content` is handed back byte-identical to
-/// what was read — no split-and-rejoin round trip for the common whole-file
-/// case, which would also silently rewrite the file's final newline.
+/// A whole file within the limit is handed back byte-identical to what was
+/// read — no split-and-rejoin round trip for the common case, which would
+/// also silently rewrite the file's final newline.
 ///
 /// An empty file reports `0`/`0`/`0`. When `end_line` clamps below
 /// `start_line` after each is independently clamped into `[1, total_lines]`,
 /// `end_line` rises to `start_line` and one line comes back — still an answer,
 /// where an error would only have cost a round trip.
-fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) -> ToolResult {
-    if start_line.is_none() && end_line.is_none() {
-        let total_lines = content.lines().count() as u32;
+fn slice_lines(content: &str, start_line: Option<u32>, end_line: Option<u32>) -> ToolResult {
+    let total_lines = content.lines().count() as u32;
+    let whole = start_line.is_none() && end_line.is_none();
+    if whole && total_lines <= MAX_READ_LINES && content.len() <= MAX_READ_BYTES {
         return ToolResult::File {
-            content,
+            content: content.to_string(),
             start_line: if total_lines == 0 { 0 } else { 1 },
             end_line: total_lines,
             total_lines,
             clamped: false,
+            truncated: false,
         };
     }
 
     let lines: Vec<&str> = content.lines().collect();
-    let total_lines = lines.len() as u32;
     if total_lines == 0 {
         return ToolResult::File {
             content: String::new(),
@@ -93,12 +111,40 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
             end_line: 0,
             total_lines: 0,
             clamped: false,
+            truncated: false,
         };
     }
 
     let start = start_line.unwrap_or(1).clamp(1, total_lines);
-    let end = end_line.unwrap_or(total_lines).clamp(start, total_lines);
-    let mut sliced = lines[(start - 1) as usize..end as usize].join("\n");
+    let asked_end = end_line.unwrap_or(total_lines).clamp(start, total_lines);
+    let clamped = start_line.is_some_and(|s| s != start) || end_line.is_some_and(|e| e != asked_end);
+
+    // Whole lines while both limits hold.
+    let mut taken: u32 = 0;
+    let mut bytes = 0;
+    for line in &lines[(start - 1) as usize..asked_end as usize] {
+        if taken == MAX_READ_LINES || bytes + line.len() + 1 > MAX_READ_BYTES {
+            break;
+        }
+        bytes += line.len() + 1;
+        taken += 1;
+    }
+    let mut end = start + taken - 1;
+
+    let line_cut = taken == 0;
+    let mut sliced = if line_cut {
+        // The first line alone is over the limit: as much of it as fits, cut
+        // on a character boundary.
+        end = start;
+        let line = lines[(start - 1) as usize];
+        let mut cut = MAX_READ_BYTES;
+        while !line.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        line[..cut].to_string()
+    } else {
+        lines[(start - 1) as usize..end as usize].join("\n")
+    };
     sliced.push('\n');
 
     ToolResult::File {
@@ -106,7 +152,8 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
         start_line: start,
         end_line: end,
         total_lines,
-        clamped: start_line.is_some_and(|s| s != start) || end_line.is_some_and(|e| e != end),
+        clamped,
+        truncated: line_cut || end < asked_end,
     }
 }
 
@@ -114,7 +161,7 @@ fn slice_lines(content: String, start_line: Option<u32>, end_line: Option<u32>) 
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "readFile".to_string(),
-        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read in full, and an outline does not count. To read several files, call readFile for each in the same response — they run together, in one round."
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read in full, and an outline does not count. To read several files, call readFile for each in the same response — they run together, in one round. One read returns at most 2000 lines or 100 KB; a longer file or range stops there, and the result says so."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -332,6 +379,97 @@ mod tests {
 
         assert_eq!(content, "two\nthree\n");
         assert_eq!((start, end), (2, 3));
+    }
+
+    // ------------------------------------------------------------ limit
+
+    fn truncated(result: &ToolResult) -> bool {
+        matches!(result, ToolResult::File { truncated: true, .. })
+    }
+
+    fn numbered(n: u32) -> String {
+        (1..=n).map(|i| format!("{i}\n")).collect()
+    }
+
+    /// A long file comes back as its first screens, says so, and does not
+    /// count as read in full: the model has not seen the rest.
+    #[test]
+    fn a_whole_file_over_the_line_limit_stops_there_and_does_not_unlock_a_write() {
+        let body = numbered(MAX_READ_LINES + 500);
+        let (scope, _) = fixture("read-limit-lines", &body);
+        let mut reads = ReadFiles::default();
+
+        let result = read_file(&scope, &args("file.txt", None, None), &mut reads).unwrap();
+        assert!(truncated(&result));
+        let (content, start, end, total) = unwrap_file(result);
+        assert_eq!((start, end, total), (1, MAX_READ_LINES, MAX_READ_LINES + 500));
+        assert_eq!(content, numbered(MAX_READ_LINES));
+        assert!(reads.check("file.txt", &body, true).is_err(), "a cut read is a partial one");
+    }
+
+    /// Exactly at the limit is the whole file — byte for byte, the missing
+    /// final newline included — unlocks a write, and says nothing about a limit.
+    #[test]
+    fn a_file_at_the_line_limit_is_whole() {
+        let body = numbered(MAX_READ_LINES).trim_end().to_string();
+        let (scope, _) = fixture("read-limit-exact", &body);
+        let mut reads = ReadFiles::default();
+        let result = read_file(&scope, &args("file.txt", None, None), &mut reads).unwrap();
+        assert!(!truncated(&result));
+        assert_eq!(unwrap_file(result).0, body);
+        assert_eq!(reads.check("file.txt", &body, true), Ok(()));
+    }
+
+    /// Long lines hit the byte limit first; only whole lines come back.
+    #[test]
+    fn long_lines_stop_at_the_byte_limit_on_a_line_boundary() {
+        let line = "x".repeat(999);
+        let body: String = (0..150).map(|_| format!("{line}\n")).collect();
+        let (scope, _) = fixture("read-limit-bytes", &body);
+        let result = read(&scope, &args("file.txt", None, None)).unwrap();
+        assert!(truncated(&result));
+        let (content, _, end, _) = unwrap_file(result);
+        let fits = (MAX_READ_BYTES / 1000) as u32;
+        assert_eq!(end, fits);
+        assert_eq!(content.len(), fits as usize * 1000);
+
+        // A line that fits only without its newline does not fit.
+        let body = format!("{}{}\n", format!("{line}\n").repeat(fits as usize - 1), "y".repeat(1000));
+        let (scope, _) = fixture("read-limit-bytes-edge", &body);
+        let (_, _, end, _) = unwrap_file(read(&scope, &args("file.txt", None, None)).unwrap());
+        assert_eq!(end, fits - 1);
+    }
+
+    /// Asking for a range does not get round the limit; it stops where a
+    /// whole-file read would, counted from the range's start.
+    #[test]
+    fn a_range_longer_than_the_limit_is_cut_from_its_start() {
+        let (scope, _) = fixture("read-limit-range", &numbered(5000));
+        let result = read(&scope, &args("file.txt", Some(3000), None)).unwrap();
+        assert!(truncated(&result));
+        assert!(!clamped(result.clone()), "the range fit the file; the limit is a different cut");
+        let (content, start, end, _) = unwrap_file(result);
+        assert_eq!((start, end), (3000, 3000 + MAX_READ_LINES - 1));
+        assert!(content.starts_with("3000\n"));
+
+        let within = read(&scope, &args("file.txt", Some(4000), Some(4010))).unwrap();
+        assert!(!truncated(&within), "a short range is not cut");
+    }
+
+    /// One line longer than the limit — a minified bundle — comes back cut
+    /// short rather than whole, on a character boundary.
+    #[test]
+    fn a_single_line_over_the_limit_is_cut_on_a_character_boundary() {
+        // Two-byte characters with the limit falling mid-character.
+        let body = format!("a{}\n", "é".repeat(MAX_READ_BYTES));
+        let (scope, _) = fixture("read-limit-one-line", &body);
+        let result = read(&scope, &args("file.txt", None, None)).unwrap();
+        assert!(truncated(&result));
+        let (content, start, end, total) = unwrap_file(result);
+        assert_eq!((start, end, total), (1, 1, 1));
+        assert!(content.len() <= MAX_READ_BYTES + 1, "{}", content.len());
+        assert!(content.len() >= MAX_READ_BYTES - 1, "{}", content.len());
+        assert!(content.starts_with("aé") && content.ends_with("é\n"));
     }
 
     // ------------------------------------------------------------ outline

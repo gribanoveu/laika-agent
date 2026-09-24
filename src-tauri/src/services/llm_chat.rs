@@ -20,8 +20,9 @@ use crate::domain::llm::{
 };
 use crate::domain::llm_retry::{MAX_ATTEMPTS, retry_delay};
 use crate::domain::compaction::{self, RETRY_KEEP_LAST_MESSAGES};
+use crate::domain::result_clearing;
 use crate::domain::conversation_mode::{self, ConversationMode};
-use crate::domain::prompt;
+use crate::domain::prompt::{self, CHECKLIST_LEGEND};
 use crate::domain::tool_call_log::{self, CallStatus, ToolCallLogEntry};
 use crate::domain::project_rules::RuleFile;
 use crate::domain::skills::Skill;
@@ -40,6 +41,7 @@ use crate::domain::turn::{
 use crate::infra::llm_debug_log;
 use crate::services::ai_tools::parse::{parse_tool_call, preflight_tool_call};
 use crate::services::ai_tools::model_text::for_model;
+use crate::services::ai_tools::resolve::{relative_to_root, resolve_existing};
 use crate::services::ai_tools::tools::{execute_tool, tool_definitions};
 use crate::services::context_compaction;
 use crate::services::llm_session::LlmSession;
@@ -56,6 +58,23 @@ pub const MAX_TOOL_ITERATIONS: usize = 60;
 /// [`ToolName::loop_weight`] units so that sixty cheap reads and sixty
 /// repository-wide searches are not treated as the same amount of work.
 pub const MAX_TOOL_BUDGET: u32 = 250;
+
+/// How many times one turn answers an empty reply with a nudge rather than
+/// ending. One: a model that says nothing twice running is not going to be
+/// talked round by a third note, and each costs a round.
+// ponytail: fixed at one; a counter per round if a provider's blank replies
+// turn out to come in pairs.
+const MAX_EMPTY_NUDGES: u32 = 1;
+
+/// Said to a model whose reply had neither text nor a call. Without it the
+/// turn ended there, as if finished: in `agent_bench`, four of GLM's six
+/// failures were a blank reply after a round of reads — the task abandoned
+/// with nothing said and nothing done.
+const EMPTY_REPLY_NOTE: &str = "[Your last reply was empty — no text and no tool call. If the task is not finished, carry on with it; if it is, say what you did.]";
+
+/// The same, when the reply was empty because the response length limit ran
+/// out first — usually on thinking.
+const EMPTY_TRUNCATED_NOTE: &str = "[Your last reply was cut off by the response length limit before it said anything. Carry on, and think more briefly this time.]";
 
 /// What the model reads instead of a file it already has verbatim, earlier in
 /// this same turn.
@@ -410,6 +429,8 @@ fn run(
     // How often Stop hooks have sent the model back this turn. Not in the
     // checkpoint: a resume is the user's go-ahead, and starts the count over.
     let mut stop_blocks = 0;
+    // Empty replies answered with a note this turn; see `MAX_EMPTY_NUDGES`.
+    let mut empty_nudges = 0;
 
     loop {
         // Checkpoint one. Before the ceiling check as well, so a turn the user
@@ -441,6 +462,8 @@ fn run(
             // land in the transcript in the order the history has them.
             apply_steering(&events, round, &mut state.history, (turn.take_steering)());
             report_ended_processes(turn, &events, round, &mut state.history);
+            clear_stale_results(turn.scope, &mut state, &mut seen_results);
+            restore_checklist(&mut state.history, &state.todos);
             events.emit(round, Some(format!("round:{round}")), ChatEventPayload::RoundStarted);
 
             let result = match ask_the_model(
@@ -475,6 +498,7 @@ fn run(
                 ChatEventPayload::RoundCompleted {
                     text: result.text.clone(),
                     reasoning: result.reasoning.clone(),
+                    truncated: result.truncated,
                 },
             );
 
@@ -491,6 +515,20 @@ fn run(
                 // what they typed, and they would have no way to tell it was
                 // never seen.
                 let waiting = (turn.take_steering)();
+                // An empty reply is not an ending, and is never kept: an
+                // assistant message with neither text nor calls is one
+                // providers refuse. What the user typed meanwhile is reason
+                // enough to go on; otherwise the model is sent back once. No
+                // Stop hook is asked either way — nothing is finishing.
+                if result.text.trim().is_empty() && (!waiting.is_empty() || empty_nudges < MAX_EMPTY_NUDGES) {
+                    if waiting.is_empty() {
+                        empty_nudges += 1;
+                        let note = if result.truncated { EMPTY_TRUNCATED_NOTE } else { EMPTY_REPLY_NOTE };
+                        state.history.push(LlmMessage::user(note));
+                    }
+                    apply_steering(&events, round, &mut state.history, waiting);
+                    continue;
+                }
                 // Only a turn that is really ending asks its Stop hooks; they
                 // run every time — one may be a notification — but past the
                 // cap a refusal no longer keeps the turn going.
@@ -706,6 +744,31 @@ fn run(
     }
 }
 
+/// Replaces old tool results with stubs once the history has grown — the
+/// rules, and why they suit a prompt cache, are `domain::result_clearing`'s —
+/// and makes the turn forget them as well. A repeat of a cleared call must
+/// come back in full rather than as "already above", and a file whose text
+/// the model no longer has must be read again before it is replaced whole.
+fn clear_stale_results(scope: &ToolScope, state: &mut State, seen_results: &mut HashMap<String, u64>) {
+    for cleared in result_clearing::plan(&state.history) {
+        state.history[cleared.index].content = Some(cleared.stub);
+        seen_results.remove(&format!("{}|{}", cleared.tool, cleared.arguments));
+        if ToolName::from_wire_name(&cleared.tool) != Some(ToolName::ReadFile) {
+            continue;
+        }
+        // A path that no longer resolves has nothing left to forget.
+        let path = serde_json::from_str::<serde_json::Value>(&cleared.arguments)
+            .ok()
+            .and_then(|args| args.get("path").and_then(|p| p.as_str()).map(str::to_string));
+        let relative = path.and_then(|path| {
+            resolve_existing(scope, &path).and_then(|resolved| relative_to_root(scope, &resolved)).ok()
+        });
+        if let Some(relative) = relative {
+            state.reads.forget_whole(&relative);
+        }
+    }
+}
+
 /// Turns a command's output into turn events as it arrives.
 ///
 /// Deliberately not routed through [`Events`]: that cursor is owned by the
@@ -778,7 +841,7 @@ fn ask_the_model(
     let mut compacted = false;
     loop {
         let request = ChatRequest {
-            messages: request_messages(turn, todos, history),
+            messages: request_messages(turn, history),
             tools: tool_definitions_for(turn.mode, turn.mcp),
             model: turn.session.model.clone(),
         };
@@ -794,6 +857,8 @@ fn ask_the_model(
         match context_compaction::compact(turn.session, history, RETRY_KEEP_LAST_MESSAGES) {
             Ok(Some(shorter)) => {
                 *history = shorter.history;
+                // The summary may have folded the last list away.
+                restore_checklist(history, todos);
                 events.emit(
                     round,
                     Some(format!("round:{round}")),
@@ -824,17 +889,15 @@ fn tool_definitions_for(mode: ConversationMode, mcp: &McpTools) -> Vec<LlmToolDe
         .collect()
 }
 
-/// The request's messages: what the model is told, the conversation, then
-/// the checklist — last because it is the part that changes round to round
-/// (`prompt::checklist_message`).
+/// The request's messages: what the model is told, then the conversation.
+/// Nothing after it — the checklist lives in the history
+/// ([`restore_checklist`]), so each request extends the last.
 ///
-/// Rebuilt every round rather than pushed into `history` once. The checklist
-/// changes *within* a turn — the model ticks an item off and the next round
-/// has to see that — and a folder or a date frozen into the stored
-/// conversation would be resent, wrong, for as long as the chat exists. The
-/// history stays exactly what the two sides said to each other, which is also
-/// what keeps `plan_compaction`'s leading-system-messages count at zero.
-fn request_messages(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<LlmMessage> {
+/// The system part is rebuilt every round rather than pushed into `history`
+/// once: a folder or a date frozen into the stored conversation would be
+/// resent, wrong, for as long as the chat exists. It is the same every round
+/// of a turn, so a prompt cache keeps it.
+fn request_messages(turn: &Turn, history: &[LlmMessage]) -> Vec<LlmMessage> {
     let context = prompt::TurnContext {
         mode: turn.mode,
         workspace: turn.scope.root(),
@@ -847,8 +910,63 @@ fn request_messages(turn: &Turn, todos: &[Task], history: &[LlmMessage]) -> Vec<
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
-    messages.extend(prompt::checklist_message(todos));
     messages
+}
+
+/// Puts the checklist back into the history when the history no longer shows
+/// it as it stands — a summary folded the last `todo` result away, or a
+/// branched chat cut it off while the list carried on — and otherwise leaves
+/// the history alone.
+///
+/// Into the history, once, rather than onto the end of every request: the
+/// history is only ever appended to, so each request is the previous one plus
+/// what happened since, which is what every provider's prompt cache matches.
+/// A checklist re-sent at the end of each request was a different tail every
+/// time, and OpenAI's cache — which reuses whole earlier requests — kept
+/// nothing past the system prompt: 6k of a 40k history (`agent_bench`, GPT via
+/// OpenRouter). Codex does the same with its plan tool, and never re-sends it.
+///
+/// Onto the last tool result when that is where the history ends — it has not
+/// been sent yet — and otherwise as a message of its own: a user's message is
+/// left as they wrote it, since a branched chat finds it by its text.
+fn restore_checklist(history: &mut Vec<LlmMessage>, todos: &[Task]) {
+    if todos.is_empty() || history_shows(history, todos) {
+        return;
+    }
+    let note = format!("[The checklist as it stands]\n{}", for_model(&ToolResult::Todo { tasks: todos.to_vec() }));
+    match history.last_mut() {
+        Some(last) if last.role == LlmRole::Tool => {
+            let content = last.content.get_or_insert_with(String::new);
+            content.push_str("\n\n");
+            content.push_str(&note);
+        }
+        _ => history.push(LlmMessage::user(note)),
+    }
+}
+
+/// Whether the latest checklist in the history — a `todo` result, or one put
+/// back by [`restore_checklist`] — is the list exactly as it stands.
+///
+/// The latest, not any: a stale list is worse than none. The list only
+/// changes through `todo`, whose every result shows it whole.
+fn history_shows(history: &[LlmMessage], todos: &[Task]) -> bool {
+    let current = for_model(&ToolResult::Todo { tasks: todos.to_vec() });
+    history
+        .iter()
+        .rev()
+        .filter_map(|m| m.content.as_deref())
+        .find(|content| content.contains(CHECKLIST_LEGEND))
+        .is_some_and(|shown| shows_exactly(shown, &current))
+}
+
+/// `list` appears in `content` whole: followed by nothing, or by a blank line
+/// before whatever was added after it — never by another row, or a shorter
+/// list would pass for the longer one it begins.
+fn shows_exactly(content: &str, list: &str) -> bool {
+    content.match_indices(list).any(|(at, _)| {
+        let rest = &content[at + list.len()..];
+        rest.is_empty() || rest.starts_with("\n\n")
+    })
 }
 
 fn too_long(error: &LlmError) -> bool {
@@ -1399,6 +1517,7 @@ mod tests {
             end_line: 1,
             total_lines: 1,
             clamped: false,
+            truncated: false,
         }
     }
 
@@ -1477,6 +1596,266 @@ mod tests {
         let second = dedupe_repeat_result(&mut seen, &call, Some(&grep()), "hits".to_string());
 
         assert_eq!(second, REPEAT_SEARCH_NOTE);
+    }
+
+    fn task(id: &str, title: &str, status: crate::domain::tools::TodoStatus) -> Task {
+        Task { id: id.into(), title: title.into(), status, note: None }
+    }
+
+    fn mentions_checklist(message: &LlmMessage) -> bool {
+        message.content.as_deref().is_some_and(|c| c.contains(CHECKLIST_LEGEND))
+    }
+
+    /// Each request is the previous one plus what happened since — nothing
+    /// re-sent at the end, which is what every prompt cache matches. The list
+    /// the model works from is the last `todo` result.
+    #[test]
+    fn with_a_todo_result_in_the_history_nothing_is_added_and_each_request_extends_the_last() {
+        let h = harness(
+            "chat-checklist-prefix",
+            vec![
+                asks(vec![wants("t", "todo", r#"{"op":"write","tasks":["look","fix"]}"#)]),
+                asks(vec![wants("l", "listFiles", "{}")]),
+                asks(vec![wants("u", "todo", r#"{"op":"update","status":"completed"}"#)]),
+                text("done"),
+            ],
+        );
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+        let requests = h.provider.requests();
+        for pair in requests.windows(2) {
+            assert!(pair[1].messages.starts_with(&pair[0].messages), "a request is a prefix of the next");
+        }
+        let with_list: Vec<usize> = conversation_of(&requests[3])
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| mentions_checklist(m))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(with_list.len(), 2, "the two todo results, nothing else: {with_list:?}");
+    }
+
+    /// A list the history does not show — no result at all, as after a
+    /// summary — goes into the history once, beside the user's message, and
+    /// stays there: the next request extends it.
+    #[test]
+    fn a_list_the_history_does_not_show_goes_into_it_once() {
+        use crate::domain::tools::TodoStatus::{InProgress, Pending};
+        let todos = vec![task("t1", "look", InProgress), task("t2", "fix", Pending)];
+        let h = harness("chat-checklist-restored", vec![asks(vec![wants("l", "listFiles", "{}")]), text("ok")]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], todos.clone())).expect("turn");
+
+        let requests = h.provider.requests();
+        let first = conversation_of(&requests[0]);
+        assert_eq!(first[0].content.as_deref(), Some("go"), "the user's words untouched");
+        assert!(first.last().is_some_and(|m| m.role == LlmRole::User && mentions_checklist(m)));
+        assert!(requests[1].messages.starts_with(&requests[0].messages));
+        assert_eq!(conversation_of(&requests[1]).iter().filter(|m| mentions_checklist(m)).count(), 1, "once");
+        let ChatStreamOutcome::Done(done) = outcome else { panic!() };
+        assert_eq!(done.history.iter().filter(|m| mentions_checklist(m)).count(), 1, "kept for the next turn");
+    }
+
+    /// The latest list in the history is an older one — a branched chat —
+    /// and the history ends with a result not yet sent: the list joins it.
+    #[test]
+    fn a_stale_list_is_superseded_on_the_unsent_tool_result() {
+        use crate::domain::tools::TodoStatus::{Completed, InProgress};
+        let todos = vec![task("t1", "look", Completed), task("t2", "fix", InProgress)];
+        let history = vec![
+            LlmMessage::user("go"),
+            LlmMessage { tool_calls: vec![wants("old", "todo", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("old", for_model(&ToolResult::Todo { tasks: vec![task("t1", "look", InProgress)] })),
+            LlmMessage { tool_calls: vec![wants("l", "listFiles", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("l", "./\n└── a.txt"),
+        ];
+        let h = harness("chat-checklist-stale", vec![text("ok")]);
+
+        h.run(|turn| stream(turn, history, todos.clone())).expect("turn");
+
+        let last = conversation_of(&h.provider.requests()[0]).last().unwrap().clone();
+        assert_eq!(last.role, LlmRole::Tool);
+        let content = last.content.unwrap();
+        assert!(content.starts_with("./\n└── a.txt\n\n[The checklist as it stands]"), "{content}");
+        assert!(content.contains(&for_model(&ToolResult::Todo { tasks: todos })));
+    }
+
+    /// The latest list is what counts, not whether the current one appears
+    /// somewhere: an earlier result showing it is overruled by a later one
+    /// that shows something else.
+    #[test]
+    fn an_earlier_copy_of_the_list_does_not_count_once_a_later_one_differs() {
+        use crate::domain::tools::TodoStatus::{InProgress, Pending};
+        let todos = vec![task("t1", "look", InProgress)];
+        let other = vec![task("t1", "look", InProgress), task("t2", "fix", Pending)];
+        let history = vec![
+            LlmMessage::user("go"),
+            LlmMessage { tool_calls: vec![wants("a", "todo", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("a", for_model(&ToolResult::Todo { tasks: todos.clone() })),
+            LlmMessage { tool_calls: vec![wants("b", "todo", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("b", for_model(&ToolResult::Todo { tasks: other })),
+            LlmMessage::user("go on"),
+        ];
+        let h = harness("chat-checklist-latest", vec![text("ok")]);
+        h.run(|turn| stream(turn, history.clone(), todos)).expect("turn");
+        assert_eq!(conversation_of(&h.provider.requests()[0]).len(), history.len() + 1, "put back");
+    }
+
+    /// A summary made to fit the window folds the last `todo` result away;
+    /// the retry carries the list, and the prompt's promise holds.
+    #[test]
+    fn a_list_folded_into_a_summary_comes_back_on_the_retry() {
+        use crate::domain::tools::TodoStatus::{InProgress, Pending};
+        let todos = vec![task("t1", "look", InProgress), task("t2", "fix", Pending)];
+        let mut history = vec![
+            LlmMessage::user("go"),
+            LlmMessage { tool_calls: vec![wants("t", "todo", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("t", for_model(&ToolResult::Todo { tasks: todos.clone() })),
+        ];
+        history.extend(long_conversation());
+        let h = harness("chat-checklist-summary", vec![Step::Fail(too_long_error()), text("done")]);
+
+        h.run(|turn| stream(turn, history, todos)).expect("turn");
+
+        let requests = h.provider.requests();
+        assert_eq!(conversation_of(&requests[0]).iter().filter(|m| mentions_checklist(m)).count(), 1, "shown, nothing added");
+        assert!(conversation_of(&requests[1]).iter().any(mentions_checklist), "back after the summary");
+    }
+
+    /// The latest list is current, a hook's word after it: nothing to add.
+    #[test]
+    fn a_current_list_with_a_hooks_note_after_it_is_enough() {
+        use crate::domain::tools::TodoStatus::{InProgress, Pending};
+        let todos = vec![task("t1", "look", InProgress), task("t2", "fix", Pending)];
+        let history = vec![
+            LlmMessage::user("go"),
+            LlmMessage { tool_calls: vec![wants("now", "todo", "{}")], ..LlmMessage::assistant("") },
+            LlmMessage::tool_result("now", format!("{}\n\n[A PostToolUse hook said:]\nfine", for_model(&ToolResult::Todo { tasks: todos.clone() }))),
+            LlmMessage::user("go on"),
+        ];
+        let h = harness("chat-checklist-current", vec![text("ok")]);
+        h.run(|turn| stream(turn, history.clone(), todos)).expect("turn");
+        assert_eq!(conversation_of(&h.provider.requests()[0]).len(), history.len(), "nothing added");
+    }
+
+    fn last_message(request: &ChatRequest) -> &LlmMessage {
+        request.messages.iter().rev().find(|m| m.role != LlmRole::System).unwrap()
+    }
+
+    /// A blank reply after a round of reads is sent back once, not taken for
+    /// the end of the task.
+    #[test]
+    fn an_empty_reply_is_sent_back_once_instead_of_ending_the_turn() {
+        let h = harness("chat-empty", vec![asks(vec![wants("r", "listFiles", "{}")]), text(""), text("done")]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+
+        let ChatStreamOutcome::Done(done) = outcome else { panic!("{outcome:?}") };
+        assert_eq!(done.result.text, "done");
+        let requests = h.provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(last_message(&requests[2]).content.as_deref(), Some(EMPTY_REPLY_NOTE));
+        assert_eq!(last_message(&requests[2]).role, LlmRole::User);
+    }
+
+    /// Once: a second blank reply in the same turn ends it.
+    #[test]
+    fn a_second_empty_reply_ends_the_turn() {
+        let h = harness("chat-empty-twice", vec![text(""), text(""), text("never asked")]);
+
+        let outcome = h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+
+        assert!(matches!(outcome, ChatStreamOutcome::Done(ref done) if done.result.text.is_empty()), "{outcome:?}");
+        assert_eq!(h.provider.requests().len(), 2);
+    }
+
+    /// Blank because the length limit ran out first: the note says so, since
+    /// "carry on" alone invites the same overlong thinking again — and the
+    /// round reports that it was cut.
+    #[test]
+    fn an_empty_reply_cut_off_by_the_limit_says_so() {
+        let cut = Step::Reply(ChatStreamResult { truncated: true, ..Default::default() });
+        let h = harness("chat-empty-cut", vec![cut, text("done")]);
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+
+        assert_eq!(last_message(&h.provider.requests()[1]).content.as_deref(), Some(EMPTY_TRUNCATED_NOTE));
+        let cut_flags: Vec<bool> = h
+            .events()
+            .iter()
+            .filter_map(|e| match &e.event {
+                ChatEventPayload::RoundCompleted { truncated, .. } => Some(*truncated),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cut_flags, [true, false]);
+    }
+
+    /// Blank while the user typed: what they typed carries the turn on, with
+    /// no nudge and no empty assistant message for a provider to refuse.
+    #[test]
+    fn an_empty_reply_while_the_user_types_goes_on_with_what_they_typed() {
+        let h = harness("chat-empty-typed", vec![text_while_typing("", "also check b"), text("done")]);
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+
+        let second = &h.provider.requests()[1];
+        let conversation = conversation_of(second);
+        assert!(conversation.iter().all(|m| m.role != LlmRole::Assistant), "no empty answer kept: {conversation:?}");
+        assert!(last_message(second).content.as_deref().unwrap_or("").contains("also check b"));
+        assert!(conversation.iter().all(|m| m.content.as_deref() != Some(EMPTY_REPLY_NOTE)));
+    }
+
+    /// Whitespace is not an answer either; any real text is.
+    #[test]
+    fn only_a_reply_with_something_in_it_ends_the_turn() {
+        let h = harness("chat-empty-space", vec![text(" \n "), text("ok")]);
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+        assert_eq!(h.provider.requests().len(), 2);
+
+        let h = harness("chat-not-empty", vec![text("ok"), text("never asked")]);
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+        assert_eq!(h.provider.requests().len(), 1);
+    }
+
+    /// A long turn: four big reads, then the first one is cleared. From then
+    /// on the turn behaves as if the model had never seen it — the stub is
+    /// what the model reads, a wholesale write needs a fresh read, and that
+    /// read comes back in full rather than as "already above".
+    #[test]
+    fn a_cleared_read_is_gone_from_the_history_and_from_the_turn() {
+        let read = |id: &str, path: &str| wants(id, "readFile", &format!(r#"{{"path":"{path}"}}"#));
+        let h = harness(
+            "chat-clearing",
+            vec![
+                asks(vec![read("r1", "a.txt")]),
+                asks(vec![read("r2", "b.txt")]),
+                asks(vec![read("r3", "c.txt")]),
+                asks(vec![read("r4", "d.txt")]),
+                asks(vec![wants("w", "writeFile", r#"{"path":"a.txt","content":"new"}"#)]),
+                asks(vec![read("r5", "a.txt")]),
+                text("done"),
+            ],
+        );
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(h.root.join(name), name.repeat(90_000 / name.len())).unwrap();
+        }
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("turn");
+        let requests = h.provider.requests();
+
+        // Round 5 is the first to start over the trigger: a.txt's result is
+        // the one old enough to go.
+        let fifth = tool_contents(&requests[4]);
+        assert!(fifth[0].starts_with(result_clearing::STUB_PREFIX), "{}", &fifth[0][..80]);
+        assert!(fifth[1..].iter().all(|c| c.starts_with("All 1 lines")), "the last three rounds stay");
+        assert!(tool_contents(&requests[3])[0].starts_with("All 1 lines"), "not before the trigger");
+
+        let sixth = tool_contents(&requests[5]);
+        assert!(sixth.last().unwrap().contains("only read part of a.txt"), "{}", sixth.last().unwrap());
+        assert_eq!(std::fs::read_to_string(h.root.join("a.txt")).unwrap().len(), 90_000, "not written");
+
+        let seventh = tool_contents(&requests[6]);
+        assert!(seventh.last().unwrap().starts_with("All 1 lines"), "read again in full");
     }
 
     /// Only results the model can re-derive from the transcript are worth
@@ -1627,11 +2006,11 @@ mod tests {
         );
     }
 
-    /// Rebuilt every round, not once per turn. The model ticks an item off
-    /// mid-turn, and the round after that has to see the list as it now is —
-    /// a prompt built once shows it the work it has already finished.
+    /// The round after a `todo` call sees the list as it now is — in that
+    /// call's result, the last thing in the request — and not in the prompt,
+    /// where a list that changes would sit ahead of the history a cache reuses.
     #[test]
-    fn the_checklist_in_the_prompt_follows_the_turn() {
+    fn the_checklist_follows_the_turn_in_the_todo_result() {
         let h = harness(
             "prompt-todo",
             vec![
@@ -1651,10 +2030,8 @@ mod tests {
         let last = |request: &ChatRequest| request.messages.last().cloned().expect("a message");
         assert!(!facts_of(&requests[0]).contains("Checklist") && !facts_of(&requests[1]).contains("Checklist"));
         assert_eq!(last(&requests[0]), LlmMessage::user("go"), "a list nobody had written yet");
-        // After the conversation, not in front of it: the part that changes
-        // every round must not sit ahead of the history a cache would reuse.
         let checklist = last(&requests[1]);
-        assert_eq!(checklist.role, LlmRole::System);
+        assert_eq!(checklist.role, LlmRole::Tool, "nothing after the conversation");
         let text = checklist.content.expect("text");
         assert!(text.contains("read it") && text.contains("rewrite it"));
     }

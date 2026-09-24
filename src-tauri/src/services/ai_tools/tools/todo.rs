@@ -19,7 +19,7 @@ pub fn todo(todos: &mut Vec<Task>, args: &TodoArgs) -> Result<ToolResult, ToolEr
     let updated = match args {
         TodoArgs::Write { tasks } => write(todos, tasks)?,
         TodoArgs::Update { id, status, note } => {
-            update(todos, id.as_deref(), (*status).into(), note.as_deref())?
+            update(todos, id.as_deref(), status.map(Into::into), note.as_deref())?
         }
     };
     *todos = updated;
@@ -60,9 +60,15 @@ fn write(todos: &[Task], titles: &[String]) -> Result<Vec<Task>, ToolError> {
 fn update(
     todos: &[Task],
     id: Option<&str>,
-    status: TodoStatus,
+    status: Option<TodoStatus>,
     note: Option<&str>,
 ) -> Result<Vec<Task>, ToolError> {
+    if status.is_none() && note.is_none() {
+        return Err(ToolError::InvalidArguments {
+            tool: "todo".to_string(),
+            reason: "an update needs a `status` (\"completed\" or \"cancelled\"), a `note`, or both".to_string(),
+        });
+    }
     let ids = || Some(todos.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
 
     let target = match id {
@@ -85,7 +91,9 @@ fn update(
             id: target.clone(),
             available: ids(),
         })?;
-    task.status = status;
+    if let Some(status) = status {
+        task.status = status;
+    }
     if let Some(note) = note {
         task.note = Some(note.to_string());
     }
@@ -113,7 +121,7 @@ fn advance(mut tasks: Vec<Task>) -> Vec<Task> {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "todo".to_string(),
-        description: "Keep the checklist for a request that takes several steps (three or more). One tool, two operations chosen with `op`. `write` appends new task titles to the end of the list; once every task on it is completed or cancelled, the next `write` starts a new list instead. The runtime assigns ids and activates the first task when nothing is active. `update` changes one task to `completed` or `cancelled`; those are the only statuses you may set, and the runtime activates the next task by itself. Omit `id` to mean the task you are on, which is what almost every update means and cannot name the wrong one. There is no read operation because none is needed: the current list, ids and notes included, is under \"Checklist\" at the end of every request, and every call returns it as well. Do not use it for a one- or two-step request."
+        description: "Keep the checklist for a request that takes several steps (three or more). One tool, two operations chosen with `op`. `write` appends new task titles to the end of the list; once every task on it is completed or cancelled, the next `write` starts a new list instead. The runtime assigns ids and activates the first task when nothing is active. `update` changes one task to `completed` or `cancelled`; those are the only statuses you may set, and the runtime activates the next task by itself. An `update` with only a `note` records progress on the task and leaves its status as it is. Omit `id` to mean the task you are on, which is what almost every update means and cannot name the wrong one. There is no read operation because none is needed: every call returns the current list, ids and notes included, and if the conversation stops showing it, it is added again at the end. Do not use it for a one- or two-step request."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -160,7 +168,7 @@ pub(super) fn definition() -> LlmToolDefinition {
                         "string",
                         "null"
                     ],
-                    "description": "Only for op \\\"update\\\": a short result for a completed task, or the reason for a cancelled one."
+                    "description": "Only for op \\\"update\\\": a short result for a completed task, the reason for a cancelled one, or — with no status — progress on the task."
                 }
             },
             "required": [
@@ -191,7 +199,7 @@ mod tests {
     fn done(id: Option<&str>) -> TodoArgs {
         TodoArgs::Update {
             id: id.map(str::to_string),
-            status: TodoUpdateStatus::Completed,
+            status: Some(TodoUpdateStatus::Completed),
             note: None,
         }
     }
@@ -246,7 +254,7 @@ mod tests {
 
         todo(&mut todos, &done(None)).unwrap();
         // Cancelled is as closed as completed.
-        todo(&mut todos, &TodoArgs::Update { id: None, status: TodoUpdateStatus::Cancelled, note: Some("not needed".into()) })
+        todo(&mut todos, &TodoArgs::Update { id: None, status: Some(TodoUpdateStatus::Cancelled), note: Some("not needed".into()) })
             .unwrap();
         let many: Vec<String> = (0..MAX_TASKS).map(|i| format!("task {i}")).collect();
         let fresh = tasks(todo(&mut todos, &TodoArgs::Write { tasks: many.clone() }));
@@ -314,7 +322,7 @@ mod tests {
             &mut todos,
             &TodoArgs::Update {
                 id: None,
-                status: TodoUpdateStatus::Cancelled,
+                status: Some(TodoUpdateStatus::Cancelled),
                 note: Some("not needed after all".into()),
             },
         ));
@@ -401,6 +409,36 @@ mod tests {
         )
         .expect("parses without an id");
         assert_eq!(update, ToolCall::Todo(done(None)));
+    }
+
+    /// What models sent in `agent_bench` — an update with a note and no
+    /// status, which the schema allows — records progress: the task keeps its
+    /// status, and the runtime does not move on.
+    #[test]
+    fn a_note_alone_records_progress_without_moving_on() {
+        let mut todos = Vec::new();
+        todo(&mut todos, &titles(&["find it", "fix it"])).unwrap();
+        let args: TodoArgs = serde_json::from_str(r#"{"op": "update", "note": "35 KeyErrors, 3 in app-3"}"#).unwrap();
+
+        todo(&mut todos, &args).unwrap();
+
+        assert_eq!(todos[0].status, TodoStatus::InProgress);
+        assert_eq!(todos[0].note.as_deref(), Some("35 KeyErrors, 3 in app-3"));
+        assert_eq!(todos[1].status, TodoStatus::Pending);
+    }
+
+    /// Neither: nothing to do, and the error says what an update takes
+    /// rather than serde's "missing field".
+    #[test]
+    fn an_update_with_nothing_in_it_says_what_it_needs() {
+        let mut todos = Vec::new();
+        todo(&mut todos, &titles(&["find it"])).unwrap();
+        let args: TodoArgs = serde_json::from_str(r#"{"op": "update"}"#).unwrap();
+
+        let err = todo(&mut todos, &args).unwrap_err().to_string();
+
+        assert!(err.contains("`status`") && err.contains("`note`"), "{err}");
+        assert_eq!(todos[0].status, TodoStatus::InProgress, "unchanged");
     }
 
     /// `pending` and `in_progress` are not spellings the model may send — the

@@ -219,7 +219,7 @@ mod tests {
             state: crate::domain::background::ProcessState::Running,
         };
         match tool {
-            ToolName::ReadFile => (None, ToolResult::File { content: LEAK.into(), start_line: 1, end_line: 1, total_lines: 1, clamped: false }),
+            ToolName::ReadFile => (None, ToolResult::File { content: LEAK.into(), start_line: 1, end_line: 1, total_lines: 1, clamped: false, truncated: false }),
             ToolName::Grep => (
                 None,
                 ToolResult::GrepResults {

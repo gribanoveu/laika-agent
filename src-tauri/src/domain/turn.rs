@@ -254,6 +254,10 @@ pub enum ChatEventPayload {
         text: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         reasoning: String,
+        /// The provider stopped at the response length limit rather than
+        /// because the model was done. Left out when false.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
     },
     /// A call's arguments are still arriving. Always followed by `ToolCall`
     /// with the same id unless the turn is cancelled first, and the JSON may

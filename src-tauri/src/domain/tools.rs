@@ -987,6 +987,10 @@ pub enum ToolResult {
         /// The range asked for reached outside the file and was cut to fit.
         #[serde(default)]
         clamped: bool,
+        /// The read stopped at `readFile`'s size limit before `end_line` of
+        /// what was asked — the whole file, or a range too long to send.
+        #[serde(default)]
+        truncated: bool,
     },
     /// `readFile` with `outline`: the file's shape rather than its text.
     /// Empty `entries` for a language with no parser, or a file declaring
@@ -1431,6 +1435,16 @@ impl ReadFiles {
         self.record(path, content, whole);
     }
 
+    /// The model no longer has the text in front of it — its read was cleared
+    /// from the history to save context — so it no longer knows the whole
+    /// file. An anchored edit still checks itself; a wholesale replacement
+    /// would be written from memory.
+    pub fn forget_whole(&mut self, path: &str) {
+        if let Some(read) = self.seen.get_mut(path) {
+            read.whole = false;
+        }
+    }
+
     /// A move changes where a file is, not what is in it, so what was read
     /// follows it — a file, or everything read under a directory. Otherwise
     /// the file has to be read again at its new path before it can be
@@ -1522,7 +1536,11 @@ pub enum TodoArgs {
         /// is what almost every update means.
         #[serde(default)]
         id: Option<String>,
-        status: TodoUpdateStatus,
+        /// Absent, with a `note`: progress on the task, which stays as it
+        /// is. The schema the model sees has always allowed leaving it out —
+        /// and models did, with a note, to record what they had found.
+        #[serde(default)]
+        status: Option<TodoUpdateStatus>,
         #[serde(default)]
         note: Option<String>,
     },

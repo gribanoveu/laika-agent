@@ -19,12 +19,13 @@ use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, L
 use crate::domain::prompt::{checklist_rows, CHECKLIST_LEGEND};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::ai_tools::tools::git::MAX_DIFF_CHARS;
+use crate::services::ai_tools::tools::read_file::{MAX_READ_BYTES, MAX_READ_LINES};
 use crate::services::text_diff::render_for_model;
 
 pub fn for_model(result: &ToolResult) -> String {
     match result {
-        ToolResult::File { content, start_line, end_line, total_lines, clamped } => {
-            file(content, *start_line, *end_line, *total_lines, *clamped)
+        ToolResult::File { content, start_line, end_line, total_lines, clamped, truncated } => {
+            file(content, *start_line, *end_line, *total_lines, *clamped, *truncated)
         }
         ToolResult::FileOutline { path, entries, total_lines } => outline(path, entries, *total_lines),
         ToolResult::GrepResults { matches, truncated, total, total_files, total_is_floor, skipped } => {
@@ -102,14 +103,23 @@ pub fn for_model(result: &ToolResult) -> String {
 
 /// The range comes first: whether this is the whole file is the one thing the
 /// content alone does not say.
-fn file(content: &str, start: u32, end: u32, total: u32, clamped: bool) -> String {
+fn file(content: &str, start: u32, end: u32, total: u32, clamped: bool, truncated: bool) -> String {
     if total == 0 {
         return "The file is empty.".to_string();
     }
     let head = if start == 1 && end == total { format!("All {total} lines") } else { format!("Lines {start}-{end} of {total}") };
     // Said, or "All 92 lines" reads as the range that was asked for.
     let cut = if clamped { " (the range asked for was cut to fit the file)" } else { "" };
-    format!("{head}{cut}:\n{content}")
+    // Said with the way on, or the model takes the first screen for the file.
+    let limit = if truncated {
+        format!(
+            " (stopped at the read limit of {MAX_READ_LINES} lines or {} KB — read on with startLine, or grep for what you need)",
+            MAX_READ_BYTES / 1000
+        )
+    } else {
+        String::new()
+    };
+    format!("{head}{cut}{limit}:\n{content}")
 }
 
 fn outline(path: &str, entries: &[OutlineEntry], total: u32) -> String {
@@ -464,14 +474,19 @@ mod tests {
 
     #[test]
     fn a_file_says_whether_it_is_whole() {
-        let whole = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: false });
+        let whole = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: false, truncated: false });
         assert_eq!(whole, "All 2 lines:\na\nb\n");
-        let part = for_model(&ToolResult::File { content: "b\n".into(), start_line: 2, end_line: 2, total_lines: 9, clamped: false });
+        let part = for_model(&ToolResult::File { content: "b\n".into(), start_line: 2, end_line: 2, total_lines: 9, clamped: false, truncated: false });
         assert_eq!(part, "Lines 2-2 of 9:\nb\n");
-        let empty = for_model(&ToolResult::File { content: String::new(), start_line: 0, end_line: 0, total_lines: 0, clamped: false });
+        let empty = for_model(&ToolResult::File { content: String::new(), start_line: 0, end_line: 0, total_lines: 0, clamped: false, truncated: false });
         assert_eq!(empty, "The file is empty.");
-        let cut = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: true });
+        let cut = for_model(&ToolResult::File { content: "a\nb\n".into(), start_line: 1, end_line: 2, total_lines: 2, clamped: true, truncated: false });
         assert_eq!(cut, "All 2 lines (the range asked for was cut to fit the file):\na\nb\n");
+        let stopped = for_model(&ToolResult::File { content: "a\n".into(), start_line: 1, end_line: 1, total_lines: 9000, clamped: false, truncated: true });
+        assert_eq!(
+            stopped,
+            "Lines 1-1 of 9000 (stopped at the read limit of 2000 lines or 100 KB — read on with startLine, or grep for what you need):\na\n"
+        );
     }
 
     #[test]
@@ -688,17 +703,6 @@ mod tests {
             shown.ends_with("\n[x] 1 Read — found it\n[>] 2 Fix\n[ ] 3 Test\n[-] 4 Docs — not asked"),
             "{shown}"
         );
-    }
-
-    /// The prompt's checklist and this result are one format: an id the model
-    /// read in either is the id `todo update` takes.
-    #[test]
-    fn a_checklist_reads_the_same_here_as_in_the_prompt() {
-        let tasks = vec![Task { id: "t1".into(), title: "Read".into(), status: TodoStatus::InProgress, note: None }];
-        let shown = for_model(&ToolResult::Todo { tasks: tasks.clone() });
-        let prompt = crate::domain::prompt::todo_block(&tasks).expect("a list");
-        assert!(shown.ends_with("[>] t1 Read"), "{shown}");
-        assert!(prompt.ends_with("[>] t1 Read"), "{prompt}");
     }
 
     #[test]

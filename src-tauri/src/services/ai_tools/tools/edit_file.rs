@@ -14,6 +14,7 @@
 //! is already a precise, actionable error; the model can widen it and retry.
 
 use crate::domain::llm::LlmToolDefinition;
+use std::borrow::Cow;
 use std::fs;
 
 use crate::domain::tools::{
@@ -69,7 +70,7 @@ pub(in crate::services::ai_tools) fn apply_edits(content: &str, edits: &[FileEdi
     let mut cursor = 0;
     for (start, end, new) in ranges {
         result.push_str(&content[cursor..start]);
-        result.push_str(new);
+        result.push_str(&new);
         cursor = end;
     }
     result.push_str(&content[cursor..]);
@@ -81,10 +82,13 @@ pub(in crate::services::ai_tools) fn apply_edits(content: &str, edits: &[FileEdi
 fn exact_match_ranges<'a>(
     content: &str,
     edits: &'a [FileEdit],
-) -> Result<Vec<(usize, usize, &'a str)>, ToolError> {
-    let mut ranges: Vec<(usize, usize, &str)> = Vec::with_capacity(edits.len());
+) -> Result<Vec<(usize, usize, Cow<'a, str>)>, ToolError> {
+    let ending = line_ending(content);
+    let mut ranges: Vec<(usize, usize, Cow<str>)> = Vec::with_capacity(edits.len());
     for edit in edits {
-        ranges.push(find_unique(content, &edit.old).map(|(s, e)| (s, e, edit.new.as_str()))?);
+        let old = in_endings(&edit.old, ending);
+        let (start, end) = find_unique(content, &old)?;
+        ranges.push((start, end, in_endings(&edit.new, ending)));
     }
 
     ranges.sort_by_key(|&(start, _, _)| start);
@@ -96,9 +100,35 @@ fn exact_match_ranges<'a>(
     Ok(ranges)
 }
 
-/// Whether `old` would have matched with the file's line endings. Said rather
-/// than fixed: an edit applied to text other than what the model sent is a
-/// change nobody asked for.
+/// The file's line ending, when every line break in it is the same one.
+/// `None` for a file with no line breaks, or with both kinds.
+fn line_ending(content: &str) -> Option<&'static str> {
+    let crlf = content.matches("\r\n").count();
+    match (crlf, content.matches('\n').count()) {
+        (0, 0) => None,
+        (0, _) => Some("\n"),
+        (crlf, lf) if crlf == lf => Some("\r\n"),
+        _ => None,
+    }
+}
+
+/// `text` with every line break made `ending`, the file's own.
+///
+/// A model cannot reliably send `\r` in its arguments: it reads a CRLF file
+/// with the `\r`s invisible and writes its anchor with `\n`. Asked to resend
+/// with CRLF, it went around `editFile` through a shell command instead, at
+/// twice the rounds (`agent_bench`, `crlf-edit`). A file with a single line
+/// ending leaves no doubt which one an edit meant, so the edit gets it.
+fn in_endings<'a>(text: &'a str, ending: Option<&str>) -> Cow<'a, str> {
+    match ending {
+        Some("\r\n") if text.contains('\n') => Cow::Owned(text.replace("\r\n", "\n").replace('\n', "\r\n")),
+        Some("\n") if text.contains('\r') => Cow::Owned(text.replace("\r\n", "\n")),
+        _ => Cow::Borrowed(text),
+    }
+}
+
+/// Whether `old` would have matched with the file's line endings — reached
+/// only in a file that mixes both, where which one was meant is a guess.
 fn line_endings_differ(content: &str, old: &str) -> Option<ToolError> {
     if old.contains("\r\n") && content.contains(&old.replace("\r\n", "\n")) {
         return Some(ToolError::EditLineEndings { file: "LF", edit: "CRLF" });
@@ -299,18 +329,46 @@ mod tests {
         assert_eq!(on_disk(&root), "let x = 1;\n", "left untouched");
     }
 
-    /// A `\r` does not show in an error, so a mismatch in line endings has to
-    /// be named — both ways round, and not for an anchor that is simply absent.
+    /// A model writes `\n` whatever the file uses: the edit takes the file's
+    /// line ending, in the anchor and in the replacement alike.
     #[test]
-    fn a_line_ending_mismatch_is_named_not_guessed() {
-        let (scope, root, mut reads) = fixture("edit-crlf", "a: 1\nb: 2\n");
-        let err = edit_file(&scope, &edits(&[("a: 1\r\nb: 2", "x")]), &mut reads).expect_err("CRLF anchor");
-        assert!(matches!(err, ToolError::EditLineEndings { file: "LF", edit: "CRLF" }), "{err}");
-        assert_eq!(on_disk(&root), "a: 1\nb: 2\n", "left untouched");
+    fn an_edit_takes_the_line_ending_of_the_file() {
+        let (scope, root, mut reads) = fixture("edit-to-crlf", "a: 1\r\nb: 2\r\nc: 3\r\n");
+        edit_file(&scope, &edits(&[("a: 1\nb: 2", "a: 1\nb: 20\nb2: 21")]), &mut reads).expect("an LF edit in a CRLF file");
+        assert_eq!(on_disk(&root), "a: 1\r\nb: 20\r\nb2: 21\r\nc: 3\r\n");
 
-        let (scope, _, mut reads) = fixture("edit-lf", "a: 1\r\nb: 2\r\n");
+        let (scope, root, mut reads) = fixture("edit-to-lf", "a: 1\nb: 2\n");
+        edit_file(&scope, &edits(&[("a: 1\r\nb: 2", "x\r\ny")]), &mut reads).expect("a CRLF edit in an LF file");
+        assert_eq!(on_disk(&root), "x\ny\n");
+
+        // Already right stays right: no `\r\r\n`.
+        let (scope, root, mut reads) = fixture("edit-crlf-to-crlf", "a: 1\r\nb: 2\r\n");
+        edit_file(&scope, &edits(&[("a: 1\r\nb: 2", "x\r\ny")]), &mut reads).expect("a CRLF edit in a CRLF file");
+        assert_eq!(on_disk(&root), "x\r\ny\r\n");
+    }
+
+    /// A single-line edit in a CRLF file keeps its multi-line replacement in
+    /// CRLF too, not a mix.
+    #[test]
+    fn a_one_line_anchor_in_a_crlf_file_gets_a_crlf_replacement() {
+        let (scope, root, mut reads) = fixture("edit-one-line-crlf", "a: 1\r\nb: 2\r\n");
+        edit_file(&scope, &edits(&[("a: 1", "a: 1\nz: 0")]), &mut reads).expect("one-line anchor");
+        assert_eq!(on_disk(&root), "a: 1\r\nz: 0\r\nb: 2\r\n");
+    }
+
+    /// A file with both endings leaves which one was meant unknowable: the
+    /// mismatch is named rather than guessed, and a `\r` does not show in an
+    /// error, so it has to be.
+    #[test]
+    fn a_line_ending_mismatch_in_a_mixed_file_is_named_not_guessed() {
+        let (scope, root, mut reads) = fixture("edit-mixed", "a: 1\r\nb: 2\r\nc: 3\n");
         let err = edit_file(&scope, &edits(&[("a: 1\nb: 2", "x")]), &mut reads).expect_err("LF anchor");
         assert!(matches!(err, ToolError::EditLineEndings { file: "CRLF", edit: "LF" }), "{err}");
+        assert_eq!(on_disk(&root), "a: 1\r\nb: 2\r\nc: 3\n", "left untouched");
+
+        let (scope, _, mut reads) = fixture("edit-mixed-lf", "a: 1\nb: 2\nc: 3\r\n");
+        let err = edit_file(&scope, &edits(&[("a: 1\r\nb: 2", "x")]), &mut reads).expect_err("CRLF anchor");
+        assert!(matches!(err, ToolError::EditLineEndings { file: "LF", edit: "CRLF" }), "{err}");
 
         let (scope, _, mut reads) = fixture("edit-absent", "a: 1\nb: 2\n");
         let err = edit_file(&scope, &edits(&[("a: 9\r\nb: 2", "x")]), &mut reads).expect_err("absent");
