@@ -119,6 +119,9 @@
   position: absolute;
   left: 0;
   right: 0;
+  /* Should a line ever take more lines than worked out, it is cut short
+     rather than drawn over the next row. */
+  overflow: hidden;
 }
 .diff-view-virtual .diff-text {
   white-space: pre;
@@ -150,4 +153,17 @@
 }
 .diff-view-virtual .diff-del :is(.diff-no, .diff-sign) {
   background: color-mix(in srgb, var(--red) 10%, var(--bg-panel));
+}
+/* Wrapped: the text breaks after any character — punctuation and spaces
+   too, which `word-break: break-all` still keeps off the start of a line —
+   at exactly the columns DiffView worked out, so every row is as tall as it
+   was counted to be. The slack is for rounding, not for another character. */
+.diff-view-wrap .diff-text,
+.diff-view-wrap .diff-hunk {
+  white-space: break-spaces;
+  line-break: anywhere;
+}
+.diff-view-wrap .diff-text {
+  box-sizing: content-box;
+  max-width: calc(var(--wrap-cols) * 1ch + 0.5px);
 }

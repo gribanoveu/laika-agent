@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
-import { DiffView } from "../components/DiffView";
+import { DiffView, rowStarts } from "../components/DiffView";
 import { fileRows } from "../lib/diffRows";
 
 // The viewer's DiffView draws only the rows in view: a file thousands of lines
@@ -39,5 +39,25 @@ describe("DiffView, virtual", () => {
     render(<DiffView rows={fileRows("a\nb\n", "a\nc\n", true)} />);
     expect(drawn()).toHaveLength(3);
     expect(drawn()[0].style.top).toBe("");
+  });
+});
+
+describe("where wrapped rows start", () => {
+  const rows = fileRows("", "abcdefghij\n\tx\n\nabcd\n", true);
+
+  test("unwrapped, every row is one line", () => {
+    expect(rowStarts(rows, null)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  test("wrapped, a row takes as many lines as its columns fill, a tab four of them, an empty one still one", () => {
+    // 10 characters in 4 columns: 3 lines; "\tx" is 5 wide: 2; "": 1; "abcd": exactly 1.
+    expect(rowStarts(rows, { cols: 4, headerCols: 4 })).toEqual([0, 3, 5, 6, 7]);
+  });
+
+  test("a hunk header wraps by its own width", () => {
+    const hunk = fileRows("1\n2\n3\n4\n5\n6\n7\n8\n9\n", "1\n2\n3\n4\nfive\n6\n7\n8\n9\n", false);
+    expect(hunk[0].kind).toBe("hunk");
+    const header = "@@ -2,7 +2,7 @@".length;
+    expect(rowStarts(hunk, { cols: 100, headerCols: 5 })[1]).toBe(Math.ceil(header / 5));
   });
 });
