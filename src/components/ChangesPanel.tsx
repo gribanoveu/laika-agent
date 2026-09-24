@@ -15,7 +15,7 @@ type Props = {
   onNotify: (msg: string) => void;
   /** The file the viewer shows: its row is marked. */
   openFile: FileTarget | null;
-  onOpenFile: (target: FileTarget) => void;
+  onOpenFile: (target: FileTarget, pin?: boolean) => void;
   /** The commit message, held above the panel: it outlives the panel being closed or moved. */
   message: string;
   onMessage: (message: string) => void;
@@ -32,7 +32,8 @@ function StageRow({
   staged: boolean;
   open: boolean;
   onToggle: () => void;
-  onShowDiff: () => void;
+  /** `pin` on a double click: the tab is kept rather than reused. */
+  onShowDiff: (pin: boolean) => void;
 }) {
   // The name leads; the folder from the repository root sits under it.
   const cut = file.path.lastIndexOf("/");
@@ -48,7 +49,12 @@ function StageRow({
       >
         {staged ? <Minus size={12} /> : <Plus size={12} />}
       </button>
-      <span className="stage-label" title={`${file.path} — show diff`} onClick={onShowDiff}>
+      <span
+        className="stage-label"
+        title={`${file.path} — show diff`}
+        onClick={() => onShowDiff(false)}
+        onDoubleClick={() => onShowDiff(true)}
+      >
         <span className="stage-name">{name}</span>
         {dir && (
           <span className="stage-dir">
@@ -120,7 +126,7 @@ export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile
                   staged={false}
                   open={openFile?.side === "unstaged" && openFile.path === f.path}
                   onToggle={() => run(stage([f.path]))}
-                  onShowDiff={() => onOpenFile({ path: f.path, side: "unstaged" })}
+                  onShowDiff={(pin) => onOpenFile({ path: f.path, side: "unstaged" }, pin)}
                 />
               ))}
               {unstaged.length === 0 && <div className="stage-empty">No unstaged changes</div>}
@@ -140,7 +146,7 @@ export function ChangesPanel({ active, workspace, onNotify, openFile, onOpenFile
                   staged
                   open={openFile?.side === "staged" && openFile.path === f.path}
                   onToggle={() => run(unstage([f.path]))}
-                  onShowDiff={() => onOpenFile({ path: f.path, side: "staged" })}
+                  onShowDiff={(pin) => onOpenFile({ path: f.path, side: "staged" }, pin)}
                 />
               ))}
               {staged.length === 0 && <div className="stage-empty">Stage files to commit</div>}

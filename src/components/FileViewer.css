@@ -60,6 +60,10 @@
   background: var(--bg-active);
   color: var(--text);
 }
+/* The preview tab: the next file opened with a single click takes its place. */
+.file-tab.preview .file-tab-name {
+  font-style: italic;
+}
 .file-tab-name {
   min-width: 0;
   display: flex;

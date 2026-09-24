@@ -48,8 +48,10 @@ async function open(target: FileTarget = { path: "src/main.rs", side: "unstaged"
     <FileViewer
       files={[target]}
       active={target}
+      preview={null}
       workspace="/repo"
       onActivate={() => {}}
+      onPin={() => {}}
       onClose={() => {}}
       onCloseAll={onCloseAll}
     />,
@@ -120,12 +122,15 @@ describe("FileViewer", () => {
     const c: FileTarget = { path: "README.md", side: "worktree" };
     const shown: FileTarget[] = [];
     const closed: FileTarget[] = [];
+    const pinned: FileTarget[] = [];
     render(
       <FileViewer
         files={[a, b, c]}
         active={b}
+        preview={c}
         workspace="/repo"
         onActivate={(t) => shown.push(t)}
+        onPin={(t) => pinned.push(t)}
         onClose={(t) => closed.push(t)}
         onCloseAll={() => {}}
       />,
@@ -136,6 +141,11 @@ describe("FileViewer", () => {
     expect(asked).toEqual([{ path: "src/a.rs", side: "staged" }]);
     fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
     expect(shown).toEqual([c]);
+    // The preview tab is set apart, and a double click keeps it.
+    const tabs = [...document.querySelectorAll(".file-tab")];
+    expect(tabs.map((t) => t.classList.contains("preview"))).toEqual([false, false, true]);
+    fireEvent.doubleClick(tabs[2]);
+    expect(pinned).toEqual([c]);
     fireEvent.click(screen.getAllByTitle("Close")[0]);
     fireEvent(document.querySelectorAll(".file-tab")[2], new MouseEvent("auxclick", { bubbles: true, button: 1 }));
     expect(closed).toEqual([a, c]);
@@ -167,7 +177,15 @@ describe("FileViewer", () => {
     try {
       const a: FileTarget = { path: "a.rs", side: "worktree" };
       const b: FileTarget = { path: "b.rs", side: "worktree" };
-      const props = { files: [a, b], workspace: "/repo", onActivate: () => {}, onClose: () => {}, onCloseAll: () => {} };
+      const props = {
+        files: [a, b],
+        preview: null,
+        workspace: "/repo",
+        onActivate: () => {},
+        onPin: () => {},
+        onClose: () => {},
+        onCloseAll: () => {},
+      };
       const shown = render(<FileViewer {...props} active={a} />);
       await settle();
       shown.rerender(<FileViewer {...props} active={b} />);

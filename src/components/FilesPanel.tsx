@@ -15,7 +15,7 @@ type Props = {
   workspace: string | null;
   /** The file the viewer shows: its row is marked. */
   openFile: FileTarget | null;
-  onOpenFile: (target: FileTarget) => void;
+  onOpenFile: (target: FileTarget, pin?: boolean) => void;
 };
 
 /** As a file explorer marks them, with the word in the tooltip. */
@@ -26,7 +26,7 @@ const STATUS: Record<FileStatus, { letter: string; title: string }> = {
   conflicted: { letter: "!", title: "Conflicted" },
 };
 
-type Tree = ReturnType<typeof useFileTree> & { open: (path: string) => void; shown: string | null };
+type Tree = ReturnType<typeof useFileTree> & { open: (path: string, pin: boolean) => void; shown: string | null };
 
 /**
  * An unfolded folder and the run of folders under it that each hold only the
@@ -70,7 +70,8 @@ function TreeLevel({ dir, depth, tree }: { dir: string; depth: number; tree: Tre
             style={indent}
             title={entry.path}
             aria-current={tree.shown === entry.path || undefined}
-            onClick={() => tree.open(entry.path)}
+            onClick={() => tree.open(entry.path, false)}
+            onDoubleClick={() => tree.open(entry.path, true)}
           >
             <span className="tree-chev" />
             <File className="tree-icon" size={13} aria-hidden />
@@ -143,7 +144,7 @@ export function FilesPanel({ active, blocks, workspace, openFile, onOpenFile }: 
   // The tree is read only while its own tab is the one showing.
   const tree = {
     ...useFileTree(active && view === "folder", workspace),
-    open: (path: string) => onOpenFile({ path, side: "worktree" }),
+    open: (path: string, pin: boolean) => onOpenFile({ path, side: "worktree" }, pin),
     shown,
   };
   return (
@@ -168,7 +169,7 @@ export function FilesPanel({ active, blocks, workspace, openFile, onOpenFile }: 
                 key={file.path}
                 file={file}
                 open={shown === file.path}
-                onOpen={() => onOpenFile({ path: file.path, side: "worktree" })}
+                onOpen={(pin) => onOpenFile({ path: file.path, side: "worktree" }, pin)}
               />
             ))
           )
@@ -182,7 +183,7 @@ export function FilesPanel({ active, blocks, workspace, openFile, onOpenFile }: 
   );
 }
 
-function TouchedRow({ file, open, onOpen }: { file: TouchedFile; open: boolean; onOpen: () => void }) {
+function TouchedRow({ file, open, onOpen }: { file: TouchedFile; open: boolean; onOpen: (pin: boolean) => void }) {
   const cut = file.path.lastIndexOf("/");
   const dir = cut > 0 ? file.path.slice(0, cut) : null;
   const gone = file.touches[file.touches.length - 1] === "deleted";
@@ -192,7 +193,8 @@ function TouchedRow({ file, open, onOpen }: { file: TouchedFile; open: boolean; 
       className={`files-row${gone ? " gone" : ""}${open ? " open" : ""}`}
       title={file.path}
       aria-current={open || undefined}
-      onClick={onOpen}
+      onClick={() => onOpen(false)}
+      onDoubleClick={() => onOpen(true)}
     >
       <span className="files-label">
         <span className="files-name">{file.path.slice(cut + 1)}</span>

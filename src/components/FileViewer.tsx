@@ -17,16 +17,23 @@ type Mode = "diff" | "file" | "preview";
 
 const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-/** The strip of open files: a click shows one, its cross or a middle click closes it. */
+/**
+ * The strip of open files: a click shows one, a double click keeps the
+ * preview tab (drawn in italics), its cross or a middle click closes it.
+ */
 function FileTabs({
   files,
   active,
+  preview,
   onActivate,
+  onPin,
   onClose,
 }: {
   files: FileTarget[];
   active: FileTarget;
+  preview: FileTarget | null;
   onActivate: (target: FileTarget) => void;
+  onPin: (target: FileTarget) => void;
   onClose: (target: FileTarget) => void;
 }) {
   const shown = useRef<HTMLDivElement>(null);
@@ -39,14 +46,16 @@ function FileTabs({
     <div className="file-tabs" role="tablist" aria-label="Open files">
       {files.map((file) => {
         const on = sameFile(file, active);
+        const passing = !!preview && sameFile(file, preview);
         // The side is said only when the same file is open from both.
         const twin = files.some((f) => f !== file && f.path === file.path);
         return (
           <div
             key={`${file.side}:${file.path}`}
             ref={on ? shown : undefined}
-            className={`file-tab${on ? " active" : ""}`}
-            title={file.path}
+            className={`file-tab${on ? " active" : ""}${passing ? " preview" : ""}`}
+            title={passing ? `${file.path} — double-click to keep` : file.path}
+            onDoubleClick={() => onPin(file)}
             onAuxClick={(e) => e.button === 1 && onClose(file)}
           >
             <button type="button" role="tab" aria-selected={on} className="file-tab-name" onClick={() => onActivate(file)}>
@@ -95,15 +104,20 @@ function useColours(old: string | null, next: string | null, path: string) {
 export function FileViewer({
   files,
   active: target,
+  preview,
   workspace,
   onActivate,
+  onPin,
   onClose,
   onCloseAll,
 }: {
   files: FileTarget[];
   active: FileTarget;
+  /** The tab the next single click reuses, if one is. */
+  preview: FileTarget | null;
   workspace: string | null;
   onActivate: (target: FileTarget) => void;
+  onPin: (target: FileTarget) => void;
   onClose: (target: FileTarget) => void;
   onCloseAll: () => void;
 }) {
@@ -137,7 +151,14 @@ export function FileViewer({
       onKeyDown={(e) => e.key === "Escape" && !e.defaultPrevented && onCloseAll()}
     >
       <div className="file-viewer-tabs">
-        <FileTabs files={files} active={target} onActivate={onActivate} onClose={onClose} />
+        <FileTabs
+          files={files}
+          active={target}
+          preview={preview}
+          onActivate={onActivate}
+          onPin={onPin}
+          onClose={onClose}
+        />
         <button type="button" className="iconbtn" title="Close all" onClick={onCloseAll}>
           <X size={14} />
         </button>

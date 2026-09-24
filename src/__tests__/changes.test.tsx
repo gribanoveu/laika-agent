@@ -74,7 +74,7 @@ function panel(message = "", notes: string[] = [], messages: string[] = []) {
       active
       workspace="/repo"
       onNotify={(note) => notes.push(note)}
-      onOpenFile={(target) => opened.push(target)}
+      onOpenFile={(target, pin) => opened.push(pin ? { ...target, pin } : target)}
       message={message}
       onMessage={(next) => messages.push(next)}
     />,
@@ -115,9 +115,11 @@ describe("ChangesPanel", () => {
     await settle();
     fireEvent.click(screen.getByText("README.md"));
     fireEvent.click(screen.getByText("Staged.java"));
+    fireEvent.doubleClick(screen.getByText("Staged.java"));
     expect(opened).toEqual([
       { path: "README.md", side: "unstaged" },
       { path: "src/Staged.java", side: "staged" },
+      { path: "src/Staged.java", side: "staged", pin: true },
     ]);
   });
 

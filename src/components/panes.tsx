@@ -41,8 +41,8 @@ export type PaneContext = {
   chatBlocks: Block[];
   /** The file the viewer beside the chat shows, marked where it is listed. */
   openFile: FileTarget | null;
-  /** Shows a file in the viewer beside the chat. */
-  onOpenFile: (target: FileTarget) => void;
+  /** Shows a file in the viewer beside the chat: a single click previews it, `pin` keeps its tab. */
+  onOpenFile: (target: FileTarget, pin?: boolean) => void;
   mcp: McpListProps;
   hooks: HooksListProps;
   plan: {

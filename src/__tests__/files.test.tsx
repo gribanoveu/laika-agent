@@ -114,11 +114,15 @@ describe("FilesPanel", () => {
         active={false}
         workspace="/repo"
         blocks={[call("readFile", { path: "src/main/Tax.java" })]}
-        onOpenFile={(target) => opened.push(target)}
+        onOpenFile={(target, pin) => opened.push({ ...target, pin })}
       />,
     );
     fireEvent.click(screen.getByTitle("src/main/Tax.java"));
-    expect(opened).toEqual([{ path: "src/main/Tax.java", side: "worktree" }]);
+    fireEvent.doubleClick(screen.getByTitle("src/main/Tax.java"));
+    expect(opened).toEqual([
+      { path: "src/main/Tax.java", side: "worktree", pin: false },
+      { path: "src/main/Tax.java", side: "worktree", pin: true },
+    ]);
   });
 
   test("the file the viewer shows is marked", () => {

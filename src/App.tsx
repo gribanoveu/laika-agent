@@ -397,8 +397,10 @@ export default function App() {
             <FileViewer
               files={viewer.files}
               active={viewer.active}
+              preview={viewer.preview}
               workspace={workspace.path}
               onActivate={viewer.open}
+              onPin={viewer.pin}
               onClose={viewer.close}
               onCloseAll={viewer.closeAll}
             />

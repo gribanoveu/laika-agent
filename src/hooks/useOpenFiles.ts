@@ -1,35 +1,56 @@
 import { useEffect, useReducer } from "react";
 import type { FileTarget } from "../lib/chat";
 
-/** The viewer's tabs, in the order they were opened, and the one showing. */
-export type OpenFiles = { files: FileTarget[]; active: FileTarget | null };
+/**
+ * The viewer's tabs, in the order they were opened, and the one showing.
+ * `preview` is the tab a single click opened, which the next single click
+ * reuses — clicking down a list leaves one tab, not one per file — until it
+ * is pinned by a double click.
+ */
+export type OpenFiles = { files: FileTarget[]; active: FileTarget | null; preview: FileTarget | null };
 
 type Action =
-  | { kind: "open"; target: FileTarget }
+  | { kind: "open"; target: FileTarget; pin: boolean }
+  | { kind: "pin"; target: FileTarget }
   | { kind: "close"; target: FileTarget }
   | { kind: "closeAll" };
 
 /** The same file on the same side: one tab, however often it is opened. */
 export const sameFile = (a: FileTarget, b: FileTarget) => a.path === b.path && a.side === b.side;
 
-const none: OpenFiles = { files: [], active: null };
+const none: OpenFiles = { files: [], active: null, preview: null };
+const unpin = (preview: FileTarget | null, target: FileTarget) => (preview && sameFile(preview, target) ? null : preview);
 
 /**
- * Opening a file already open shows its tab; closing the tab showing moves to
- * the one after it, or before it when it was the last.
+ * Opening a file already open shows its tab, and pins it if asked. A new file
+ * opened to pin gets a tab of its own; opened with a single click it takes
+ * the preview tab's place. Closing the tab showing moves to the one after it,
+ * or before it when it was the last.
  */
 export function openFilesReducer(state: OpenFiles, action: Action): OpenFiles {
   switch (action.kind) {
     case "open": {
       const open = state.files.find((f) => sameFile(f, action.target));
-      return open ? { ...state, active: open } : { files: [...state.files, action.target], active: action.target };
+      if (open) return { ...state, active: open, preview: action.pin ? unpin(state.preview, open) : state.preview };
+      const target = action.target;
+      if (action.pin) return { ...state, files: [...state.files, target], active: target };
+      const files = state.preview
+        ? state.files.map((f) => (sameFile(f, state.preview!) ? target : f))
+        : [...state.files, target];
+      return { files, active: target, preview: target };
     }
+    case "pin":
+      return { ...state, preview: unpin(state.preview, action.target) };
     case "close": {
       const at = state.files.findIndex((f) => sameFile(f, action.target));
       if (at < 0) return state;
       const files = state.files.filter((_, i) => i !== at);
       const showing = state.active && sameFile(state.active, action.target);
-      return { files, active: showing ? (files[at] ?? files[at - 1] ?? null) : state.active };
+      return {
+        files,
+        active: showing ? (files[at] ?? files[at - 1] ?? null) : state.active,
+        preview: unpin(state.preview, action.target),
+      };
     }
     case "closeAll":
       return none;
@@ -42,7 +63,9 @@ export function useOpenFiles(workspace: string | null) {
   useEffect(() => dispatch({ kind: "closeAll" }), [workspace]);
   return {
     ...state,
-    open: (target: FileTarget) => dispatch({ kind: "open", target }),
+    /** A single click previews; `pin`, from a double click, keeps the tab. */
+    open: (target: FileTarget, pin = false) => dispatch({ kind: "open", target, pin }),
+    pin: (target: FileTarget) => dispatch({ kind: "pin", target }),
     close: (target: FileTarget) => dispatch({ kind: "close", target }),
     closeAll: () => dispatch({ kind: "closeAll" }),
   };

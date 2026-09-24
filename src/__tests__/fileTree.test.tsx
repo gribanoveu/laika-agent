@@ -67,7 +67,7 @@ beforeEach(() => {
 
 let opened: unknown[] = [];
 const tab = (active = true) => (
-  <FilesPanel active={active} workspace="/repo" blocks={[]} onOpenFile={(target) => opened.push(target)} />
+  <FilesPanel active={active} workspace="/repo" blocks={[]} onOpenFile={(target, pin) => opened.push({ ...target, pin })} />
 );
 
 /** The tab, on its "All files" view. */
@@ -243,6 +243,10 @@ describe("the folder tree", () => {
     fireEvent.click(screen.getByText("src"));
     await settle();
     fireEvent.click(screen.getByText("main.rs"));
-    expect(opened).toEqual([{ path: "src/main.rs", side: "worktree" }]);
+    fireEvent.doubleClick(screen.getByText("main.rs"));
+    expect(opened).toEqual([
+      { path: "src/main.rs", side: "worktree", pin: false },
+      { path: "src/main.rs", side: "worktree", pin: true },
+    ]);
   });
 });
