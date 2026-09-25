@@ -12,9 +12,10 @@
 //! it and is reported as such. **Revisit when** such servers are common: the
 //! specification's dual-era client probes `server/discover` first.
 //!
-//! Two layers: [`Connection`] is the protocol over any reader and writer —
-//! which is what the tests drive, with no process — and [`StdioServer`]
-//! starts the process and hands its pipes to one.
+//! Two layers: [`Connection`] is the protocol over any transport — a reader
+//! and a writer, which is what the tests drive with no process, or a send
+//! function and an [`Inbox`], which is how `infra::mcp_http` uses it — and
+//! [`StdioServer`] starts the process and hands its pipes to one.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
@@ -45,39 +46,111 @@ const MAX_TOOL_PAGES: usize = 50;
 
 type Reply = Result<Value, McpError>;
 type Pending = Arc<Mutex<HashMap<u64, Sender<Reply>>>>;
-type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 
-/// JSON-RPC over one reader and one writer.
-pub struct Connection {
-    writer: Writer,
+/// Puts one message on the wire. Must not wait for an answer: answers come
+/// back through the [`Inbox`].
+pub type Outbox = Arc<dyn Fn(&Value) -> std::io::Result<()> + Send + Sync>;
+
+/// Where the transport hands what the server sends: answers go to whoever
+/// is waiting for them, and the end of the conversation reaches every
+/// waiter at once instead of leaving each to its timeout.
+#[derive(Clone, Default)]
+pub struct Inbox {
     pending: Pending,
     closed: Arc<AtomicBool>,
+}
+
+impl Inbox {
+    /// Takes one message from the server. Returns the reply the server is
+    /// owed when the message is a request of its own: `ping` is the one a
+    /// client that declared no capabilities must answer, and anything else is
+    /// refused so the server is not left waiting either. Notifications are
+    /// not needed yet, and an answer to nobody — a call already abandoned —
+    /// is dropped.
+    pub fn deliver(&self, message: &Value) -> Option<Value> {
+        match (message.get("id"), message["method"].as_str()) {
+            (Some(id), None) => {
+                let waiter = id.as_u64().and_then(|id| lock(&self.pending).remove(&id))?;
+                let reply = match message.get("error") {
+                    Some(error) => Err(McpError::Server {
+                        code: error["code"].as_i64().unwrap_or(0),
+                        message: error["message"].as_str().unwrap_or("no message").to_string(),
+                    }),
+                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                };
+                let _ = waiter.send(reply);
+                None
+            }
+            (Some(id), Some("ping")) => Some(json!({ "jsonrpc": "2.0", "id": id, "result": {} })),
+            (Some(id), Some(method)) => Some(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("{method} is not supported") } }),
+            ),
+            _ => None,
+        }
+    }
+
+    /// One request failed on its way, not the whole conversation.
+    pub fn fail(&self, id: u64, error: McpError) {
+        if let Some(waiter) = lock(&self.pending).remove(&id) {
+            let _ = waiter.send(Err(error));
+        }
+    }
+
+    /// The conversation is over. Every waiter, and every request made from
+    /// now on, gets the connection's `describe_close`.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        for (_, waiter) in lock(&self.pending).drain() {
+            let _ = waiter.send(Err(McpError::Exited { code: None, stderr: String::new() }));
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+}
+
+/// JSON-RPC over one transport.
+pub struct Connection {
+    send: Outbox,
+    inbox: Inbox,
     next_id: AtomicU64,
     timeout: Duration,
-    /// Says what the end of the stream means — for a process, its exit code
-    /// and last stderr lines.
+    /// Says what the end of the conversation means — for a process, its
+    /// exit code and last stderr lines.
     describe_close: Box<dyn Fn() -> McpError + Send + Sync>,
 }
 
 impl Connection {
+    /// Newline-delimited messages over a reader and a writer: stdio.
     pub fn new(
         reader: impl BufRead + Send + 'static,
         writer: impl Write + Send + 'static,
         timeout: Duration,
         describe_close: impl Fn() -> McpError + Send + Sync + 'static,
     ) -> Self {
-        let writer: Writer = Arc::new(Mutex::new(Box::new(writer)));
-        let pending: Pending = Arc::default();
-        let closed = Arc::new(AtomicBool::new(false));
-        read_in_background(reader, Arc::clone(&writer), Arc::clone(&pending), Arc::clone(&closed));
-        Self {
-            writer,
-            pending,
-            closed,
-            next_id: AtomicU64::new(1),
-            timeout,
-            describe_close: Box::new(describe_close),
-        }
+        let writer = Mutex::new(writer);
+        let send: Outbox = Arc::new(move |message| {
+            let mut writer = lock(&writer);
+            // `Value`'s compact form has no line breaks, which is what the
+            // transport requires of a message.
+            writeln!(writer, "{message}")?;
+            writer.flush()
+        });
+        let inbox = Inbox::default();
+        read_in_background(reader, inbox.clone(), Arc::clone(&send));
+        Self::with_transport(send, inbox, timeout, describe_close)
+    }
+
+    /// Any other transport: it sends with `send` and hands what comes back
+    /// to `inbox`.
+    pub fn with_transport(
+        send: Outbox,
+        inbox: Inbox,
+        timeout: Duration,
+        describe_close: impl Fn() -> McpError + Send + Sync + 'static,
+    ) -> Self {
+        Self { send, inbox, next_id: AtomicU64::new(1), timeout, describe_close: Box::new(describe_close) }
     }
 
     /// The handshake. Nothing else may be sent before it.
@@ -99,24 +172,23 @@ impl Connection {
         if !result["protocolVersion"].is_string() {
             return Err(McpError::Protocol(format!("initialize returned no protocolVersion: {result}")));
         }
-        write_line(&self.writer, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
-            .map_err(|_| self.close_error())
+        (self.send)(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).map_err(|_| self.close_error())
     }
 
     fn request(&self, method: &str, params: Value, cancelled: &dyn Fn() -> bool) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
-        lock(&self.pending).insert(id, tx);
-        // The reader sets `closed` before it drains `pending`, so a request
+        lock(&self.inbox.pending).insert(id, tx);
+        // `close` sets the flag before it drains `pending`, so a request
         // registered after the drain sees the flag here instead of waiting
         // out its timeout for an answer nobody will send.
-        if self.closed.load(Ordering::SeqCst) {
-            lock(&self.pending).remove(&id);
+        if self.inbox.is_closed() {
+            lock(&self.inbox.pending).remove(&id);
             return Err(self.close_error());
         }
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        if write_line(&self.writer, &message).is_err() {
-            lock(&self.pending).remove(&id);
+        if (self.send)(&message).is_err() {
+            lock(&self.inbox.pending).remove(&id);
             return Err(self.close_error());
         }
 
@@ -142,11 +214,10 @@ impl Connection {
     }
 
     /// Stops waiting, and tells the server so it can stop too. Whatever it
-    /// answers later is dropped by the reader: nobody is waiting for it.
+    /// answers later is dropped by the inbox: nobody is waiting for it.
     fn abandon(&self, id: u64, reason: &str) {
-        lock(&self.pending).remove(&id);
-        let _ = write_line(
-            &self.writer,
+        lock(&self.inbox.pending).remove(&id);
+        let _ = (self.send)(
             &json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": id, "reason": reason } }),
         );
     }
@@ -184,7 +255,7 @@ impl McpClient for Connection {
     }
 
     fn is_alive(&self) -> bool {
-        !self.closed.load(Ordering::SeqCst)
+        !self.inbox.is_closed()
     }
 }
 
@@ -208,54 +279,19 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn write_line(writer: &Writer, message: &Value) -> std::io::Result<()> {
-    let mut writer = lock(writer);
-    // `Value`'s compact form has no line breaks, which is what the transport
-    // requires of a message.
-    writeln!(writer, "{message}")?;
-    writer.flush()
-}
-
-/// Answers go to whoever is waiting; the server's own requests get a reply;
-/// notifications are not needed yet. At the end of the stream every waiter
-/// is told, rather than left to its timeout.
-fn read_in_background(reader: impl BufRead + Send + 'static, writer: Writer, pending: Pending, closed: Arc<AtomicBool>) {
+/// The stdio side of the inbox: a line per message. A line that is not JSON
+/// is a server logging to stdout, which the transport forbids and several
+/// do — skipped rather than fatal.
+fn read_in_background(reader: impl BufRead + Send + 'static, inbox: Inbox, send: Outbox) {
     std::thread::spawn(move || {
         for line in reader.lines() {
             let Ok(line) = line else { break };
-            // Not JSON: a server logging to stdout, which the transport
-            // forbids and several do. Skipped rather than fatal.
             let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
-            match (message.get("id"), message["method"].as_str()) {
-                (Some(id), None) => {
-                    let Some(waiter) = id.as_u64().and_then(|id| lock(&pending).remove(&id)) else { continue };
-                    let reply = match message.get("error") {
-                        Some(error) => Err(McpError::Server {
-                            code: error["code"].as_i64().unwrap_or(0),
-                            message: error["message"].as_str().unwrap_or("no message").to_string(),
-                        }),
-                        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
-                    };
-                    let _ = waiter.send(reply);
-                }
-                // `ping` is the one request a server may send a client that
-                // declared no capabilities; anything else is refused so the
-                // server is not left waiting either.
-                (Some(id), Some(method)) => {
-                    let reply = if method == "ping" {
-                        json!({ "jsonrpc": "2.0", "id": id, "result": {} })
-                    } else {
-                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("{method} is not supported") } })
-                    };
-                    let _ = write_line(&writer, &reply);
-                }
-                _ => {}
+            if let Some(reply) = inbox.deliver(&message) {
+                let _ = send(&reply);
             }
         }
-        closed.store(true, Ordering::SeqCst);
-        for (_, waiter) in lock(&pending).drain() {
-            let _ = waiter.send(Err(McpError::Exited { code: None, stderr: String::new() }));
-        }
+        inbox.close();
     });
 }
 

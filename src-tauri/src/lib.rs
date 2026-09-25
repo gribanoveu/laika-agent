@@ -63,8 +63,11 @@ pub fn run() {
         // The MCP servers, kept running between turns.
         .manage(std::sync::Arc::new(services::mcp_servers::McpServers::new(std::sync::Arc::new(
             |config, cwd, cancelled| {
-                let server = infra::mcp_stdio::StdioServer::start(config, cwd, cancelled)?;
-                Ok(std::sync::Arc::new(server) as std::sync::Arc<dyn domain::mcp::McpClient>)
+                Ok(match config.url {
+                    Some(_) => std::sync::Arc::new(infra::mcp_http::HttpServer::start(config, cancelled)?)
+                        as std::sync::Arc<dyn domain::mcp::McpClient>,
+                    None => std::sync::Arc::new(infra::mcp_stdio::StdioServer::start(config, cwd, cancelled)?),
+                })
             },
         ))))
         // The index of the open folder, and the one embedding model every

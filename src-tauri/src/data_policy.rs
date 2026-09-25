@@ -9,10 +9,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The provider's client and the agent it is built on. Anything else that
-/// opens a connection is a new place data can go, and the policy document
-/// has to say so before this list does.
-const NETWORK_ALLOWED: &[&str] = &["src/infra/http_agent.rs", "src/infra/llm_providers/"];
+/// The provider's client and the agent it is built on, and the MCP servers
+/// the user gave a URL. Anything else that opens a connection is a new place
+/// data can go, and the policy document has to say so before this list does.
+const NETWORK_ALLOWED: &[&str] = &["src/infra/http_agent.rs", "src/infra/llm_providers/", "src/infra/mcp_http.rs"];
 
 /// What opening a connection looks like in Rust here.
 const RUST_NETWORK: &[&str] = &["ureq::", "std::net::", "TcpStream", "UdpSocket", "reqwest::", "hyper::"];

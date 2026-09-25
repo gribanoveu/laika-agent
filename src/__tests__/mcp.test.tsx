@@ -64,7 +64,7 @@ beforeEach(() => {
         { name: "get_file", description: "Reads a file" },
       ] } },
       { name: "idle", command: "npx -y server-idle", enabled: true, error: null, warning: null, state: { state: "notStarted" } },
-      { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet", warning: null, state: { state: "notStarted" } },
+      { name: "broken", command: "", enabled: true, error: "no command to start it with", warning: null, state: { state: "notStarted" } },
     ],
   };
   calls = [];
@@ -77,7 +77,7 @@ describe("useMcp", () => {
     expect(calls).toEqual([]);
     rerender({ visible: true });
     await settle();
-    expect(result.current.view?.servers.map((s) => s.name)).toEqual(["github", "idle", "remote"]);
+    expect(result.current.view?.servers.map((s) => s.name)).toEqual(["github", "idle", "broken"]);
   });
 
   test("a switch is what the backend saved", async () => {
@@ -163,9 +163,9 @@ describe("the MCP tab", () => {
 
     expect(screen.getByText("npx -y server-github")).toBeTruthy();
     expect(screen.getByText("won't start")).toBeTruthy();
-    expect(screen.getByText("HTTP servers are not supported yet")).toBeTruthy();
+    expect(screen.getByText("no command to start it with")).toBeTruthy();
     const switches = screen.getAllByRole("button", { pressed: true });
-    expect(switches).toHaveLength(2, "the two runnable servers; the HTTP one has no switch");
+    expect(switches).toHaveLength(2, "the two runnable servers; the broken one has no switch");
     fireEvent.click(switches[0]);
     expect(toggled).toEqual([["github", false]]);
   });

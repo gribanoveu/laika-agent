@@ -180,10 +180,6 @@ fn problem(name: &str, server: &McpServerConfig) -> Option<String> {
     if server.timeout_secs == Some(0) {
         return Some("timeoutSecs must be at least 1".into());
     }
-    if server.url.is_some() {
-        // Until F-7.4f adds the transport; it removes this.
-        return Some("HTTP servers are not supported yet — only ones started by a command".into());
-    }
     None
 }
 
@@ -243,12 +239,18 @@ pub struct McpCallResult {
     pub is_error: bool,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum McpError {
     #[error("could not start the MCP server: {0}")]
     NotStarted(String),
     #[error("the MCP server exited{}{}", code.map(|c| format!(" with code {c}")).unwrap_or_default(), last_output(stderr))]
     Exited { code: Option<i32>, stderr: String },
+    /// An HTTP server's non-2xx answer, with the start of its body — the
+    /// explanation is usually there.
+    #[error("the MCP server answered HTTP {status}{}{}", sign_in(*status), last_output(body))]
+    Http { status: u16, body: String },
+    #[error("could not reach the MCP server: {0}")]
+    Unreachable(String),
     #[error("the MCP server did not answer within {0} s")]
     Timeout(u64),
     #[error("cancelled")]
@@ -261,6 +263,16 @@ pub enum McpError {
     Protocol(String),
     #[error("the MCP server stopped again after its restart this turn; it is started once more with the next turn")]
     NotRestarted,
+}
+
+/// 401 is how a server says it wants OAuth, which is not built yet
+/// (`docs/17-mcp-http.md`); a token in `headers` is what works today.
+fn sign_in(status: u16) -> &'static str {
+    if status == 401 {
+        " — it wants a sign-in (OAuth), which this app does not do yet; a token in the entry's \"headers\" works if the server accepts one"
+    } else {
+        ""
+    }
 }
 
 fn last_output(stderr: &str) -> String {
@@ -484,7 +496,8 @@ mod tests {
         .unwrap();
         let rows: BTreeMap<String, McpServerItem> =
             items(&config).into_iter().map(|i| (i.name.clone(), i)).collect();
-        assert!(rows["remote"].error.as_deref().unwrap().contains("not supported yet"));
+        assert_eq!(rows["remote"].error, None, "an HTTP server runs");
+        assert_eq!(rows["remote"].command, "https://example.com/mcp");
         assert!(rows["nothing"].error.as_deref().unwrap().contains("no command"));
         assert_eq!(rows["nothing"].command, "--flag", "no leading space for the missing command");
         assert!(rows["free"].error.as_deref().unwrap().contains("weight"));
@@ -509,7 +522,7 @@ mod tests {
         let written = serde_json::to_value(&config).unwrap();
         assert_eq!(written["mcpServers"]["ctx"]["type"], "http", "type survives a save");
         assert_eq!(written["mcpServers"]["ctx"]["headers"]["Authorization"], "Bearer secret");
-        let stdio = serde_json::to_value(&parse(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap()).unwrap();
+        let stdio = serde_json::to_value(parse(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap()).unwrap();
         assert!(stdio["mcpServers"]["a"].get("url").is_none() && stdio["mcpServers"]["a"].get("headers").is_none());
     }
 
@@ -560,7 +573,7 @@ mod tests {
         for name in ["tls", "local", "loop", "v6", "cmd"] {
             assert_eq!(rows[name].warning, None, "{name}");
         }
-        assert!(!rows["lan"].error.as_deref().unwrap_or_default().contains("http://"), "a warning, not an error");
+        assert_eq!(rows["lan"].error, None, "a warning, not an error");
     }
 
     /// Two entries that would share a tool-name prefix: the second is the
@@ -670,6 +683,16 @@ mod tests {
         let err = McpError::Exited { code: Some(1), stderr: "Error: GITHUB_TOKEN is not set".into() };
         assert_eq!(err.to_string(), "the MCP server exited with code 1. Its last output:\nError: GITHUB_TOKEN is not set");
         assert_eq!(McpError::Exited { code: None, stderr: " ".into() }.to_string(), "the MCP server exited");
+    }
+
+    /// What the model and the tab read when an HTTP server refuses.
+    #[test]
+    fn an_http_refusal_says_the_status_and_the_body_and_401_names_oauth() {
+        let err = McpError::Http { status: 500, body: "database is down".into() };
+        assert_eq!(err.to_string(), "the MCP server answered HTTP 500. Its last output:\ndatabase is down");
+        let err = McpError::Http { status: 401, body: String::new() };
+        assert!(err.to_string().starts_with("the MCP server answered HTTP 401 — it wants a sign-in (OAuth)"), "{err}");
+        assert!(err.to_string().contains("\"headers\""), "{err}");
     }
 
     #[test]
