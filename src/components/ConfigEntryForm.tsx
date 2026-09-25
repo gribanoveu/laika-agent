@@ -85,6 +85,8 @@ function useSubmit(text: string | undefined, write: (text: string) => Written, s
   return { problem, submit };
 }
 
+const TRANSPORTS: Record<McpServerFields["transport"], string> = { command: "A command", url: "At a URL" };
+
 /** `name` is the server being edited, `null` for a new one. */
 export function McpServerForm({ name, text, error, onSave, onClose, onEditJson }: Common & { name: string | null }) {
   const [fields, setFields] = useState<McpServerFields>(
@@ -105,15 +107,41 @@ export function McpServerForm({ name, text, error, onSave, onClose, onEditJson }
       <Field label="Name" hint="How the agent's tools are named: mcp__name__tool.">
         <input className="entry-input" value={fields.name} onChange={set("name")} autoFocus={name === null} />
       </Field>
-      <Field label="Command" hint="A whole command line works too — npx -y server-github is split into command and args.">
-        <input className="entry-input mono" value={fields.command} onChange={set("command")} placeholder="npx" />
+      <Field label="Runs" menu>
+        <Dropdown
+          below
+          title="How it runs"
+          label={TRANSPORTS[fields.transport]}
+          value={fields.transport}
+          options={[
+            { value: "command", label: TRANSPORTS.command, hint: "A program on this machine, spoken to over stdio" },
+            { value: "url", label: TRANSPORTS.url, hint: "A server somewhere else, over Streamable HTTP" },
+          ]}
+          onPick={(transport) => setFields((f) => ({ ...f, transport: transport as McpServerFields["transport"] }))}
+        />
       </Field>
-      <Field label="Arguments" hint="One per line.">
-        <textarea className="entry-input mono" rows={3} value={fields.args} onChange={set("args")} />
-      </Field>
-      <Field label="Environment" hint="KEY=VALUE, one per line. Stored in the file as it is — it may hold tokens.">
-        <textarea className="entry-input mono" rows={2} value={fields.env} onChange={set("env")} spellCheck={false} />
-      </Field>
+      {fields.transport === "command" ? (
+        <>
+          <Field label="Command" hint="A whole command line works too — npx -y server-github is split into command and args.">
+            <input className="entry-input mono" value={fields.command} onChange={set("command")} placeholder="npx" />
+          </Field>
+          <Field label="Arguments" hint="One per line.">
+            <textarea className="entry-input mono" rows={3} value={fields.args} onChange={set("args")} />
+          </Field>
+          <Field label="Environment" hint="KEY=VALUE, one per line. Stored in the file as it is — it may hold tokens.">
+            <textarea className="entry-input mono" rows={2} value={fields.env} onChange={set("env")} spellCheck={false} />
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label="URL" hint="Plain http:// is safe only to this machine: on the way anywhere else, the headers can be read.">
+            <input className="entry-input mono" value={fields.url} onChange={set("url")} placeholder="https://example.com/mcp" />
+          </Field>
+          <Field label="Headers" hint="Name: value, one per line — Authorization: Bearer … for a token. Stored in the file as it is.">
+            <textarea className="entry-input mono" rows={2} value={fields.headers} onChange={set("headers")} spellCheck={false} />
+          </Field>
+        </>
+      )}
       <div className="entry-row">
         <Field label="Weight" hint="Cost of a call in the turn's budget. 3 when empty.">
           <input className="entry-input" inputMode="numeric" value={fields.weight} onChange={set("weight")} />

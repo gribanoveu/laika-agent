@@ -3391,7 +3391,7 @@ YAML-шапка `name`/`description`, дальше markdown) и любыми ф�
 | ✅ | F-7.4d | MCP: жизненный цикл — запуск на ход Agent, падение посреди хода, один перезапуск, статус во вкладке, PATH из login-shell |
 | ✅ | F-7.4e | MCP по HTTP — рабочий документ [17-mcp-http.md](17-mcp-http.md): конфигурация — `url`, `headers`, проверки, предупреждение про `http://` не на localhost (мутации 19/19) |
 | ✅ | F-7.4f | MCP по HTTP: транспорт Streamable HTTP на `ureq` за портом `McpClient`; сетевой выход в `08-data-policy.md` (мутации 31/31) |
-| ⬜ | F-7.4g | MCP по HTTP: экран политики данных, форма сервера, пример |
+| ✅ | F-7.4g | MCP по HTTP: экран политики данных, форма сервера (команда или URL), пример (мутации 18/18) |
 | ✅ | F-7.5a | хуки: `hooks.json` в формате Claude Code, PreToolUse / PostToolUse / Stop в цикле |
 | ✅ | F-7.5b | хуки: редактор и список во вкладке, заметки о хуках в ленте хода |
 | ✅ | F-7.6a | фоновые процессы: `runCommand` с `background`, `readOutput`, `stopProcess`, заметка модели о завершении |

@@ -27,17 +27,21 @@ function listed(names: string[]): string {
 }
 
 export function DataPolicy({ provider, debugLogging, mcpServers, hooks }: Props) {
-  const enabled = mcpServers?.filter((server) => server.enabled).map((server) => server.name) ?? null;
+  // A server reached at a URL names its host: that is where the call goes.
+  const enabled =
+    mcpServers
+      ?.filter((server) => server.enabled)
+      .map((server) => (/^https?:\/\//i.test(server.command) ? `${server.name} (${host(server.command)})` : server.name)) ?? null;
   const rows: { name: string; value: string; note: string }[] = [
     {
       name: "Model provider",
       value: provider ? `${host(provider.baseUrl)} (${provider.id})` : "none set up",
-      note: "Gets the conversation, including what the agent read from files. The only place the app itself sends anything.",
+      note: "Gets the conversation, including what the agent read from files. Besides MCP servers at a URL, the only place the app itself sends anything.",
     },
     {
       name: "MCP servers",
       value: enabled === null ? "…" : enabled.length ? listed(enabled) : "none enabled",
-      note: "Get what the model puts in a call. Every call asks first.",
+      note: "Get what the model puts in a call — one at a URL over the network, with the headers in its entry. Every call asks first.",
     },
     {
       name: "Hooks",

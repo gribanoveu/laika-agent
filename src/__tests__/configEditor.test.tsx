@@ -72,7 +72,7 @@ describe("a pasted hooks snippet", () => {
 });
 
 test("the examples are what the merge takes", () => {
-  expect(Object.keys(servers(mergeMcp(EMPTY_MCP, MCP_EXAMPLE)!.text))).toEqual(["github"]);
+  expect(Object.keys(servers(mergeMcp(EMPTY_MCP, MCP_EXAMPLE)!.text))).toEqual(["github", "remote"]);
   expect(mergeHooks("{}", HOOKS_EXAMPLE)).not.toBeNull();
 });
 
@@ -129,7 +129,7 @@ describe("the editor", () => {
   test("the example is added to the file on request", () => {
     editor();
     fireEvent.click(screen.getByText("Add to the file"));
-    expect(Object.keys(servers(box().value))).toEqual(["github"]);
+    expect(Object.keys(servers(box().value))).toEqual(["github", "remote"]);
   });
 
   test("Tab indents instead of leaving the box", () => {

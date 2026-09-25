@@ -6,9 +6,9 @@ import type { HookItem, McpServerItem, ProviderView } from "../lib/chat";
 // "Where your data goes" says what is configured now, not what could be.
 
 const provider: ProviderView = { id: "work", baseUrl: "https://llm.corp.example/v1", hasApiKey: true };
-const server = (name: string, enabled: boolean): McpServerItem => ({
+const server = (name: string, enabled: boolean, command = "npx"): McpServerItem => ({
   name,
-  command: "npx",
+  command,
   enabled,
   error: null,
   warning: null,
@@ -34,6 +34,19 @@ describe("where your data goes", () => {
     expect(row("MCP servers")).not.toContain("sentry");
     expect(row("Hooks")).toContain("2 commands");
     expect(row("Request log")).toContain("off");
+  });
+
+  test("a server at a URL is named with its host: that is where its calls go", () => {
+    render(
+      <DataPolicy
+        provider={provider}
+        debugLogging={false}
+        mcpServers={[server("github", true), server("docs", true, "HTTPS://mcp.example.com/mcp")]}
+        hooks={[]}
+      />,
+    );
+    expect(row("MCP servers")).toContain("github, docs (mcp.example.com)");
+    expect(row("MCP servers")).toContain("over the network");
   });
 
   test("says when nothing is set up, and when the request log writes to disk", () => {

@@ -1,8 +1,8 @@
 // One entry of the MCP or hooks file — a server, a hook command — read into
 // form fields and written back. The file stays the truth: an edit rewrites
 // the text and saves it the way the JSON editor does, and whatever the form
-// has no field for (`disabled`, an HTTP server's `url`, Claude Code's extra
-// keys) is carried over untouched.
+// has no field for (`disabled`, Claude Code's extra keys) is carried over
+// untouched.
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -30,30 +30,54 @@ function positive(value: string, field: string): number | undefined | { error: s
 
 // ─── MCP servers ───────────────────────────────────────────────────────────
 
-/** Args one per line and env as KEY=VALUE lines: what a README's snippet splits into. */
+/**
+ * Args one per line and env as KEY=VALUE lines: what a README's snippet
+ * splits into. A server either runs a command or is reached at a URL; the
+ * fields of the other kind are ignored on save.
+ */
 export type McpServerFields = {
   name: string;
+  transport: "command" | "url";
   command: string;
   args: string;
   env: string;
+  url: string;
+  /** `Name: value`, one per line. */
+  headers: string;
   weight: string;
   timeoutSecs: string;
 };
 
-export const EMPTY_SERVER: McpServerFields = { name: "", command: "", args: "", env: "", weight: "", timeoutSecs: "" };
+export const EMPTY_SERVER: McpServerFields = {
+  name: "",
+  transport: "command",
+  command: "",
+  args: "",
+  env: "",
+  url: "",
+  headers: "",
+  weight: "",
+  timeoutSecs: "",
+};
+
+const pairs = (value: unknown, separator: string) =>
+  Object.entries(isObject(value) ? value : {})
+    .map(([key, v]) => `${key}${separator}${String(v)}`)
+    .join("\n");
 
 export function readMcpServer(text: string, name: string): McpServerFields | null {
   const servers = parseFile(text)?.mcpServers;
   const server = isObject(servers) ? servers[name] : undefined;
   if (!isObject(server)) return null;
-  const env = isObject(server.env) ? server.env : {};
+  const url = typeof server.url === "string" ? server.url : "";
   return {
     name,
+    transport: url ? "url" : "command",
     command: typeof server.command === "string" ? server.command : "",
     args: Array.isArray(server.args) ? server.args.map(String).join("\n") : "",
-    env: Object.entries(env)
-      .map(([key, value]) => `${key}=${String(value)}`)
-      .join("\n"),
+    env: pairs(server.env, "="),
+    url,
+    headers: pairs(server.headers, ": "),
     weight: server.weight === undefined ? "" : String(server.weight),
     timeoutSecs: server.timeoutSecs === undefined ? "" : String(server.timeoutSecs),
   };
@@ -65,11 +89,47 @@ const lines = (text: string) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+/** `KEY<separator>VALUE` lines as an object, or which line is not one. */
+function keyed(text: string, separator: string): Json | { bad: string } {
+  const out: Json = {};
+  for (const line of lines(text)) {
+    const at = line.indexOf(separator);
+    if (at < 1) return { bad: line };
+    out[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+  }
+  return out;
+}
+
+/**
+ * How the server runs, as the entry's keys. A whole command line typed into
+ * Command (`npx -y server-github`) is split into command and args when no
+ * args were given; one with quotes is left alone, since splitting it would
+ * need a shell.
+ */
+function transport(fields: McpServerFields): Json | { error: string } {
+  if (fields.transport === "url") {
+    const url = fields.url.trim();
+    if (!url) return { error: "The server needs a URL" };
+    const headers = keyed(fields.headers, ":");
+    if ("bad" in headers) return { error: `Header lines are Name: value — "${headers.bad}" is not` };
+    // `type` for Claude Code, which reads an entry without it as a command.
+    return { type: "http", url, ...(Object.keys(headers).length ? { headers } : {}) };
+  }
+  let command = fields.command.trim();
+  let args = lines(fields.args);
+  if (!command) return { error: "The server needs a command to start it" };
+  if (args.length === 0 && /\s/.test(command) && !/["']/.test(command)) {
+    [command, ...args] = command.split(/\s+/);
+  }
+  const env = keyed(fields.env, "=");
+  if ("bad" in env) return { error: `Environment lines are KEY=VALUE — "${env.bad}" is not` };
+  return { command, ...(args.length ? { args } : {}), ...(Object.keys(env).length ? { env } : {}) };
+}
+
 /**
  * The server written under its name — in place, so the file keeps its order,
- * or at the end when it is new. A whole command line typed into Command
- * (`npx -y server-github`) is split into command and args when no args were
- * given; one with quotes is left alone, since splitting it would need a shell.
+ * or at the end when it is new. What the entry said about the other kind of
+ * server goes: a URL and a command together would not start.
  */
 export function writeMcpServer(text: string, previous: string | null, fields: McpServerFields): Written {
   const file = parseFile(text);
@@ -79,29 +139,20 @@ export function writeMcpServer(text: string, previous: string | null, fields: Mc
   const servers = isObject(file.mcpServers) ? file.mcpServers : {};
   if (name !== previous && name in servers) return { error: `There is already a server called ${name}` };
 
-  let command = fields.command.trim();
-  let args = lines(fields.args);
-  if (!command) return { error: "The server needs a command to start it" };
-  if (args.length === 0 && /\s/.test(command) && !/["']/.test(command)) {
-    [command, ...args] = command.split(/\s+/);
-  }
-  const env: Json = {};
-  for (const line of lines(fields.env)) {
-    const at = line.indexOf("=");
-    if (at < 1) return { error: `Environment lines are KEY=VALUE — "${line}" is not` };
-    env[line.slice(0, at).trim()] = line.slice(at + 1).trim();
-  }
+  const how = transport(fields);
+  if ("error" in how) return how as { error: string };
   const weight = positive(fields.weight, "Weight");
   const timeoutSecs = positive(fields.timeoutSecs, "Timeout");
   for (const n of [weight, timeoutSecs]) if (isObject(n)) return n as { error: string };
 
   const kept = previous !== null && isObject(servers[previous]) ? servers[previous] : {};
-  const { args: _a, env: _e, weight: _w, timeoutSecs: _t, ...rest } = kept;
+  const { command: _c, args: _a, env: _e, url: _u, headers: _h, weight: _w, timeoutSecs: _t, ...rest } = kept;
+  // A `type` saying the entry is at a URL would contradict a command; one at
+  // a URL gets its own `type` from `transport`.
+  if (rest.type === "http" || rest.type === "sse") delete rest.type;
   const server: Json = {
     ...rest,
-    command,
-    ...(args.length ? { args } : {}),
-    ...(Object.keys(env).length ? { env } : {}),
+    ...how,
     ...(weight !== undefined ? { weight } : {}),
     ...(timeoutSecs !== undefined ? { timeoutSecs } : {}),
   };
