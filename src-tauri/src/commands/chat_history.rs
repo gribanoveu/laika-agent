@@ -70,6 +70,11 @@ pub fn chat_export(id: String, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn chat_set_archived(id: String, archived: bool) -> Result<(), String> {
+    chat_store::set_archived(&id, archived).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn chat_delete(id: String) -> Result<(), String> {
     chat_store::delete(&id).map_err(|e| e.to_string())
 }

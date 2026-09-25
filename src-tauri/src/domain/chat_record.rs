@@ -87,6 +87,10 @@ pub struct ChatSummary {
     pub title: String,
     pub updated_at: i64,
     pub branched_from: Option<String>,
+    /// Filed away from the list. Kept by the store beside the record rather
+    /// than in it, so a record alone says `false`.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 impl From<&ChatRecord> for ChatSummary {
@@ -96,6 +100,7 @@ impl From<&ChatRecord> for ChatSummary {
             title: record.title.clone(),
             updated_at: record.updated_at,
             branched_from: record.branched_from.clone(),
+            archived: false,
         }
     }
 }

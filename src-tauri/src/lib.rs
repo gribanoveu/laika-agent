@@ -128,6 +128,7 @@ pub fn run() {
             commands::chat_history::chat_list,
             commands::chat_history::chat_load,
             commands::chat_history::chat_save,
+            commands::chat_history::chat_set_archived,
             commands::chat_history::chat_delete,
             commands::chat_history::chat_export,
             commands::settings::llm_settings_get,

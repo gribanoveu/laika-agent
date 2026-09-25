@@ -5,6 +5,9 @@
 //! transcript. The record itself is stored whole as JSON in `body`, in the
 //! `domain::chat_record` format — that file stays the contract.
 //!
+//! `archived` is the one column not taken from the body: it is where the chat
+//! is filed, not what was said, so saving a turn leaves it as it was.
+//!
 //! No database-wide version and no migrations. Upstream once refused to open
 //! a database written by a newer build and thereby hid a user's entire
 //! history behind one number. Here the version is per row: a chat this build
@@ -40,7 +43,8 @@ CREATE TABLE IF NOT EXISTS chats (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   branched_from  TEXT,
-  body           TEXT NOT NULL
+  body           TEXT NOT NULL,
+  archived       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS chats_workspace ON chats(workspace, updated_at DESC);
 ";
@@ -58,6 +62,20 @@ fn open() -> Result<Connection, ChatError> {
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
     conn.execute_batch(SCHEMA).map_err(store)?;
+    // A database from before archiving has the table without the column.
+    // Adding one with a default is all it takes; an older build reading the
+    // file afterwards does not see it and is not harmed by it.
+    let has_archived: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('chats') WHERE name = 'archived'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(store)?;
+    if !has_archived {
+        conn.execute_batch("ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            .map_err(store)?;
+    }
     Ok(conn)
 }
 
@@ -71,12 +89,13 @@ fn now() -> i64 {
 /// Chats belonging to one workspace, most recently updated first — the order
 /// the sidebar draws them in. Ties broken by id so the order is stable: two
 /// chats saved in the same millisecond otherwise swap places between listings.
-/// Rows from a newer build are not listed.
+/// Rows from a newer build are not listed. Archived chats are listed too,
+/// marked: which of them to show is the sidebar's filter.
 pub fn list(workspace: &str) -> Result<Vec<ChatSummary>, ChatError> {
     let conn = open()?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, updated_at, branched_from FROM chats
+            "SELECT id, title, updated_at, branched_from, archived FROM chats
              WHERE workspace = ?1 AND schema_version <= ?2
              ORDER BY updated_at DESC, id",
         )
@@ -88,6 +107,7 @@ pub fn list(workspace: &str) -> Result<Vec<ChatSummary>, ChatError> {
                 title: row.get(1)?,
                 updated_at: row.get(2)?,
                 branched_from: row.get(3)?,
+                archived: row.get(4)?,
             })
         })
         .map_err(store)?;
@@ -130,10 +150,13 @@ pub fn save(
 ) -> Result<ChatSummary, ChatError> {
     chat_record::check_id(id)?;
     let conn = open()?;
-    let created_at: Option<i64> = conn
-        .query_row("SELECT created_at FROM chats WHERE id = ?1", params![id], |row| row.get(0))
+    let stored: Option<(i64, bool)> = conn
+        .query_row("SELECT created_at, archived FROM chats WHERE id = ?1", params![id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .optional()
         .map_err(store)?;
+    let (created_at, archived) = (stored.map(|s| s.0), stored.is_some_and(|s| s.1));
 
     let record = ChatRecord {
         schema_version: CHAT_SCHEMA_VERSION,
@@ -150,10 +173,19 @@ pub fn save(
     };
 
     let body = serde_json::to_string(&record).map_err(ChatError::Parse)?;
+    // An upsert, not INSERT OR REPLACE: a replaced row would lose `archived`.
     conn.execute(
-        "INSERT OR REPLACE INTO chats
+        "INSERT INTO chats
            (id, workspace, schema_version, title, created_at, updated_at, branched_from, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+           workspace = excluded.workspace,
+           schema_version = excluded.schema_version,
+           title = excluded.title,
+           created_at = excluded.created_at,
+           updated_at = excluded.updated_at,
+           branched_from = excluded.branched_from,
+           body = excluded.body",
         params![
             record.id,
             record.workspace,
@@ -166,7 +198,7 @@ pub fn save(
         ],
     )
     .map_err(store)?;
-    Ok(ChatSummary::from(&record))
+    Ok(ChatSummary { archived, ..ChatSummary::from(&record) })
 }
 
 /// Writes one chat as a Markdown transcript, wherever the user chose to put
@@ -175,6 +207,19 @@ pub fn save(
 pub fn export(id: &str, path: &Path) -> Result<(), ChatError> {
     let record = load(id)?;
     fs::write(path, chat_export::to_markdown(&record)).map_err(|e| ChatError::Write(e.to_string()))
+}
+
+/// Files a chat away from the list, or back. The transcript is not touched,
+/// nor is `updated_at`: archiving is not something said in the chat.
+pub fn set_archived(id: &str, archived: bool) -> Result<(), ChatError> {
+    chat_record::check_id(id)?;
+    match open()?
+        .execute("UPDATE chats SET archived = ?2 WHERE id = ?1", params![id, archived])
+        .map_err(store)?
+    {
+        0 => Err(ChatError::NotFound(id.to_string())),
+        _ => Ok(()),
+    }
 }
 
 pub fn delete(id: &str) -> Result<(), ChatError> {
@@ -375,6 +420,65 @@ mod tests {
             assert!(matches!(load("one"), Err(ChatError::NotFound(_))));
             assert!(matches!(delete("one"), Err(ChatError::NotFound(_))));
             assert!(!exists("one").unwrap());
+        });
+    }
+
+    #[test]
+    fn an_archived_chat_is_listed_as_archived_and_can_come_back() {
+        with_app_dir("chat-store-archive", || {
+            save_one("one", "/repo", "first");
+            save_one("two", "/repo", "second");
+            set_archived("one", true).unwrap();
+
+            let archived = |id: &str| list("/repo").unwrap().into_iter().find(|c| c.id == id).unwrap().archived;
+            assert!(archived("one"));
+            assert!(!archived("two"));
+
+            set_archived("one", false).unwrap();
+            assert!(!archived("one"));
+            assert!(matches!(set_archived("nope", true), Err(ChatError::NotFound(_))));
+            assert!(matches!(set_archived("../x", true), Err(ChatError::BadId(_))));
+        });
+    }
+
+    /// Every turn saves the chat whole; a turn in an archived chat must not
+    /// quietly bring it back to the list.
+    #[test]
+    fn saving_an_archived_chat_keeps_it_archived() {
+        with_app_dir("chat-store-archive-save", || {
+            save_one("one", "/repo", "first");
+            set_archived("one", true).unwrap();
+
+            let saved = save_one("one", "/repo", "first");
+
+            assert!(saved.archived);
+            assert!(list("/repo").unwrap()[0].archived);
+            assert!(!save_one("two", "/repo", "second").archived);
+        });
+    }
+
+    /// A database written before archiving existed gains the column and keeps
+    /// its chats, all of them unarchived.
+    #[test]
+    fn a_database_from_before_archiving_opens_with_nothing_archived() {
+        with_app_dir("chat-store-archive-upgrade", || {
+            let path = app_dir::ensure().unwrap().join(FILE);
+            Connection::open(&path)
+                .unwrap()
+                .execute_batch(
+                    "CREATE TABLE chats (
+                       id TEXT PRIMARY KEY, workspace TEXT NOT NULL, schema_version INTEGER NOT NULL,
+                       title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                       branched_from TEXT, body TEXT NOT NULL);
+                     INSERT INTO chats VALUES ('old', '/repo', 1, 'old', 1, 1, NULL, '{}');",
+                )
+                .unwrap();
+
+            let listed = list("/repo").unwrap();
+            assert_eq!(listed.len(), 1);
+            assert!(!listed[0].archived);
+            set_archived("old", true).unwrap();
+            assert!(list("/repo").unwrap()[0].archived);
         });
     }
 
