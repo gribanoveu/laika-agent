@@ -6,14 +6,21 @@ mod data_policy;
 #[cfg(test)]
 mod testing;
 pub mod services;
+#[cfg(target_os = "macos")]
+mod window_frame;
 
 /// What of the window comes back. Not the frame: that is the config's
 /// (tauri.macos.conf.json swaps it), and a restored one would outlive every
-/// change to it.
+/// change to it. On macOS not the size and position either: the plugin keeps
+/// them in pixels, which a second display at another scale halves or doubles
+/// — `window_frame` keeps them there instead.
 #[cfg(desktop)]
 fn window_state() -> tauri_plugin_window_state::StateFlags {
     use tauri_plugin_window_state::StateFlags;
-    StateFlags::all() & !StateFlags::DECORATIONS
+    let flags = StateFlags::all() & !StateFlags::DECORATIONS;
+    #[cfg(target_os = "macos")]
+    let flags = flags & !(StateFlags::SIZE | StateFlags::POSITION);
+    flags
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -48,6 +55,10 @@ pub fn run() {
             if let Err(e) = window.app_handle().save_window_state(window_state()) {
                 eprintln!("window size and position not saved: {e}");
             }
+            #[cfg(target_os = "macos")]
+            if let Err(e) = window_frame::save(window) {
+                eprintln!("window size and position not saved: {e}");
+            }
         }
     });
     builder
@@ -75,6 +86,10 @@ pub fn run() {
         // Tauri's to know: the resource directory of the installed app.
         .setup(|app| {
             use tauri::Manager;
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                window_frame::restore(&window);
+            }
             // Background processes the agent started; they outlive turns.
             // Here because what they report goes out through the app.
             app.manage(std::sync::Arc::new(infra::background::Processes::new(
