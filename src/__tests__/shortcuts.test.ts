@@ -53,3 +53,10 @@ describe("a pane's shortcut", () => {
     expect(togglePane(docks("changes", false, "mcp"), "mcp", "right")).toEqual(docks("changes", false, null));
   });
 });
+
+describe("the pane keys", () => {
+  test("go Changes, Plan, Files, Rules, Skills, MCP, Hooks", () => {
+    const keys = ["changes", "plan", "files", "rules", "skills", "mcp", "hooks"] as const;
+    expect(keys.map((id) => shortcutText(id, true))).toEqual(["⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7"]);
+  });
+});

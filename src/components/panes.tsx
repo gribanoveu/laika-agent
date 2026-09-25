@@ -366,10 +366,10 @@ function FilesPane({ active, workspace, chatBlocks, openFile, onOpenFile }: Pane
 export const PANES: PaneDef[] = [
   { id: "changes", label: "Changes", icon: FileDiff, dock: "right", Component: ({ active, workspace, onNotify, commitDraft, openFile, onOpenFile }) => <ChangesPanel active={active} workspace={workspace} onNotify={onNotify} openFile={openFile} onOpenFile={onOpenFile} {...commitDraft} /> },
   { id: "plan", label: "Plan", icon: ClipboardList, dock: "right", Component: ({ plan }) => <PlanPanel {...plan} /> },
+  { id: "files", label: "Files", icon: FolderClosed, dock: "right", Component: FilesPane },
+  { id: "rules", label: "Rules", icon: BookText, dock: "right", Component: RulesPane },
+  { id: "skills", label: "Skills", icon: Sparkles, dock: "right", Component: SkillsPane },
   { id: "mcp", label: "MCP", icon: Plug, dock: "right", Component: ({ mcp }) => <McpList {...mcp} /> },
   { id: "hooks", label: "Hooks", icon: Webhook, dock: "right", Component: ({ hooks }) => <HooksList {...hooks} /> },
-  { id: "skills", label: "Skills", icon: Sparkles, dock: "right", Component: SkillsPane },
-  { id: "rules", label: "Rules", icon: BookText, dock: "right", Component: RulesPane },
-  { id: "files", label: "Files", icon: FolderClosed, dock: "right", Component: FilesPane },
   { id: "terminal", label: "Terminal", icon: SquareTerminal, dock: "bottom", Component: TerminalPanel },
 ];
