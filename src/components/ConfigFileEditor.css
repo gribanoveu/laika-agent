@@ -1,4 +1,4 @@
-/* The box on the left, taking the height; what the format is and an example
+/* The box on the left, taking the height; what the format is
    on the right. Narrow, they stack. */
 .config-file {
   display: grid;
@@ -69,28 +69,6 @@
 .config-file-side .modal-note {
   margin: 0;
 }
-.config-file-example-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: var(--fs-xs);
-  color: var(--text-faint);
-  font-weight: 500;
-}
-.config-file-example {
-  margin: 0;
-  padding: 8px 10px;
-  background: var(--bg-panel-soft);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  line-height: 1.5;
-  color: var(--text-dim);
-  white-space: pre;
-  overflow-x: auto;
-}
-
 .config-file-actions {
   grid-area: actions;
   display: flex;

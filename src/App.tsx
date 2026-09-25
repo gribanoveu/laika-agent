@@ -37,7 +37,7 @@ import { useFolderConversation } from "./hooks/useFolderConversation";
 import { isBoolean, useStoredState } from "./hooks/useStoredState";
 import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
-import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
+import { mergeHooks, mergeMcp } from "./lib/configSnippets";
 import { changesShown, openPane, toggleChanges, togglePane, toggleTerminal, type Docks } from "./lib/docks";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
@@ -569,7 +569,6 @@ export default function App() {
         ) : (
         <ConfigFileEditor
           label="MCP configuration"
-          example={MCP_EXAMPLE}
           merge={mergeMcp}
           text={mcp.view?.text}
           error={mcp.error}
@@ -606,7 +605,6 @@ export default function App() {
         ) : (
         <ConfigFileEditor
           label="Hooks configuration"
-          example={HOOKS_EXAMPLE}
           merge={mergeHooks}
           text={hooks.view?.text}
           error={hooks.error}

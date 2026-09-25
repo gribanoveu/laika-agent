@@ -164,31 +164,3 @@ export function mergeHooks(current: string, pasted: string): Merged | null {
   }
   return { text: stringify({ ...file, hooks: next }), message: `Added hooks for ${entries.map(([e]) => e).join(", ")}` };
 }
-
-export const MCP_EXAMPLE = `{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "<your token>" }
-    },
-    "remote": {
-      "type": "http",
-      "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer <your token>" }
-    }
-  }
-}
-`;
-
-export const HOOKS_EXAMPLE = `{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "editFile",
-        "hooks": [{ "type": "command", "command": "bun run lint --quiet", "timeout": 60 }]
-      }
-    ]
-  }
-}
-`;

@@ -16,8 +16,6 @@ type Props = {
   error: string | null;
   /** What the format is and where the file lives. */
   note: ReactNode;
-  /** A working entry, shown beside the box and added to the file on request. */
-  example?: string;
   /**
    * Joins a pasted snippet to the file, or `null` for text that is not one —
    * which is then pasted as it is.
@@ -30,7 +28,7 @@ type Props = {
 
 const INDENT = "  ";
 
-export function ConfigFileEditor({ label, text, error, note, example, merge, onSave, onClose }: Props) {
+export function ConfigFileEditor({ label, text, error, note, merge, onSave, onClose }: Props) {
   const [draft, setDraft] = useState(text ?? "");
   // Follows the file until the user starts typing, so the box is never a
   // stale copy of what is on disk.
@@ -83,12 +81,6 @@ export function ConfigFileEditor({ label, text, error, note, example, merge, onS
     }
   };
 
-  const addExample = () => {
-    if (!example || !merge) return;
-    const result = merge(draft, example);
-    if (result) edit(result.text, result.message);
-  };
-
   return (
     <div className="config-file">
       <div className="config-file-main">
@@ -119,19 +111,6 @@ export function ConfigFileEditor({ label, text, error, note, example, merge, onS
 
       <aside className="config-file-side">
         <p className="modal-note">{note}</p>
-        {example && (
-          <>
-            <div className="config-file-example-head">
-              <span>Example</span>
-              {merge && (
-                <button type="button" className="link-btn" disabled={!!problem} onClick={addExample}>
-                  Add to the file
-                </button>
-              )}
-            </div>
-            <pre className="config-file-example">{example}</pre>
-          </>
-        )}
       </aside>
 
       <div className="config-file-actions">

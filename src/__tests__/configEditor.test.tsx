@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { HOOKS_EXAMPLE, MCP_EXAMPLE, jsonError, mergeHooks, mergeMcp } from "../lib/configSnippets";
+import { jsonError, mergeHooks, mergeMcp } from "../lib/configSnippets";
 import { ConfigFileEditor } from "../components/ConfigFileEditor";
 import { IS_MAC } from "../lib/shortcuts";
 
@@ -74,11 +74,6 @@ describe("a pasted hooks snippet", () => {
   });
 });
 
-test("the examples are what the merge takes", () => {
-  expect(Object.keys(servers(mergeMcp(EMPTY_MCP, MCP_EXAMPLE)!.text))).toEqual(["github", "remote"]);
-  expect(mergeHooks("{}", HOOKS_EXAMPLE)).not.toBeNull();
-});
-
 describe("the editor", () => {
   const editor = (props: { text?: string; onSave?: (text: string) => Promise<boolean> } = {}) =>
     render(
@@ -87,7 +82,6 @@ describe("the editor", () => {
         text={props.text ?? EMPTY_MCP}
         error={null}
         note=""
-        example={MCP_EXAMPLE}
         merge={mergeMcp}
         onSave={props.onSave ?? (async () => true)}
         onClose={() => {}}
@@ -127,12 +121,6 @@ describe("the editor", () => {
       fireEvent.keyDown(box(), { key: "s", code: "KeyS", ...MOD });
     });
     expect(saved).toEqual(['{\n  "mcpServers": {}\n}']);
-  });
-
-  test("the example is added to the file on request", () => {
-    editor();
-    fireEvent.click(screen.getByText("Add to the file"));
-    expect(Object.keys(servers(box().value))).toEqual(["github", "remote"]);
   });
 
   test("Tab indents instead of leaving the box", () => {
