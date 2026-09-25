@@ -3,7 +3,9 @@ import {
   ArrowUpRight,
   Brain,
   Loader2,
+  Check,
   ChevronRight,
+  Copy,
   FileText,
   Folder,
   FileDiff,
@@ -677,6 +679,7 @@ function UserBubble({
     <div className="user-msg">
       <div className="bubble">{block.text}</div>
       <div className="bubble-foot">
+        <CopyAction text={block.text} />
         {offered && (
           <button
             type="button"
@@ -695,6 +698,30 @@ function UserBubble({
         )}
       </div>
     </div>
+  );
+}
+
+/** Copies a message's text as written — Markdown source for the agent's, not the rendered page. */
+function CopyAction({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <button
+      type="button"
+      className="bubble-action"
+      onClick={() => {
+        // A clipboard that refuses loses nothing: the text is on screen.
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => setCopied(false), 1500);
+        }, () => {});
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
@@ -719,7 +746,10 @@ function renderBlock(
       return (
         <div className="user-msg" key={block.id}>
           <div className="bubble">{block.text}</div>
-          <div className="bubble-foot">Sent while the agent was working</div>
+          <div className="bubble-foot">
+            <CopyAction text={block.text} />
+            Sent while the agent was working
+          </div>
         </div>
       );
     case "notice":
@@ -734,6 +764,8 @@ function renderBlock(
       return (
         <div className="msg" key={block.id}>
           <Markdown text={block.text} streaming={streaming} onPaste={onPasteCommand} onOpenFile={onOpenFile} />
+          {/* Room is kept while it streams, so the button appears without the thread moving. */}
+          <div className="bubble-foot">{!streaming && <CopyAction text={block.text} />}</div>
         </div>
       );
     case "reasoning":

@@ -509,6 +509,7 @@
   transition: opacity 0.15s;
 }
 .user-msg:hover .bubble-foot,
+.msg:hover > .bubble-foot,
 .bubble-foot:focus-within {
   opacity: 1;
 }

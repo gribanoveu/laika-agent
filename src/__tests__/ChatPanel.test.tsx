@@ -482,6 +482,33 @@ describe("a notice", () => {
   });
 });
 
+describe("copying a message", () => {
+  const blocks = [
+    { kind: "user", id: "u0", text: "why **bold**?" },
+    { kind: "message", id: "m1", round: 1, text: "Because `**` is **Markdown**." },
+  ] as Block[];
+
+  test("copies what was written — the answer's Markdown source, not the page", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void copied.push(text) },
+    });
+    panel(state(blocks, { status: "done" }));
+
+    const [question, answer] = screen.getAllByRole("button", { name: "Copy" });
+    await act(async () => fireEvent.click(question));
+    await act(async () => fireEvent.click(answer));
+    expect(copied).toEqual(["why **bold**?", "Because `**` is **Markdown**."]);
+    expect(screen.getAllByRole("button", { name: "Copied" })).toHaveLength(2);
+  });
+
+  test("the answer being written has nothing to copy yet", () => {
+    panel(state(blocks, { status: "running" }));
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(1);
+  });
+});
+
 describe("branching from a message", () => {
   const blocks: Block[] = [
     { kind: "user", id: "u0", text: "folded away" },
