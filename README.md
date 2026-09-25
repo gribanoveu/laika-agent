@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Kibo Agent: chat, changes and terminal">
+  <img src="docs/screenshot.png" alt="Kibo Agent: chat, file preview, changes and terminal">
 </p>
 
 ---
@@ -28,13 +28,18 @@
 - **Safe writes.** A file can be edited only after it was read, and only if its hash has not changed since. The approval card shows the diff before anything is written.
 - **A real terminal and background processes.** A genuine PTY with xterm.js. Dev servers and watchers live between turns, and the agent reads their output.
 - **Context as a budget.** A turn's budget is weighed by tool cost. History compacts itself, and old results are replaced with stubs. History is append-only, so the provider's prompt cache holds across rounds.
-- **Extensions.** MCP servers (a Claude Desktop or Cursor config pastes in as is), skills, and hooks in the Claude Code format.
+- **Extensions.** MCP servers, local or at a URL over Streamable HTTP (a Claude Desktop or Cursor config pastes in as is), skills, and hooks in the Claude Code format.
+- **Themes.** Separate light and dark palettes — Apple's colours, One Dark, Latte — and every key in one registry, listed from the account menu.
 
 ## Your data stays yours
 
 File contents go only to the model provider you chose, and tests enforce this. They fail if network code appears outside the provider, if a dependency brings telemetry, or if the window calls `fetch`. Keys live in the system keychain. Configuration from the opened repository (`.mcp.json`, hooks) is never executed.
 
 More in [docs/08-data-policy.md](docs/08-data-policy.md).
+
+## Installing
+
+macOS (Apple Silicon) and Windows installers are attached to each [release](../../releases).
 
 ## Building
 
