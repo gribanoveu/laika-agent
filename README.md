@@ -13,6 +13,10 @@
   Tauri v2 · Rust · React · macOS / Windows / Linux · GPL-3.0
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Laika Agent: chat, changes and terminal">
+</p>
+
 ---
 
 ## What it does
