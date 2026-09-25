@@ -428,7 +428,7 @@ describe("the header", () => {
     expect(screen.queryByRole("menu")).toBeNull();
 
     fireEvent.click(screen.getByTitle("More"));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Export chat/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Export as Markdown/ }));
 
     expect(exported).toBe(1);
     expect(screen.queryByRole("menu")).toBeNull();

@@ -548,8 +548,7 @@ export function ChatPanel({
       ? [
           {
             id: "export",
-            label: "Export chat…",
-            hint: "The whole conversation as Markdown",
+            label: "Export as Markdown…",
             icon: <Download size={14} />,
             divided: Boolean(onOpenPanel),
             onSelect: onExport,
