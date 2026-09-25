@@ -75,6 +75,7 @@ yaml_serde = "0.10"
 tree-sitter-bash = "0.25"
 portable-pty = "0.9.0"
 vt100 = "0.16.2"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

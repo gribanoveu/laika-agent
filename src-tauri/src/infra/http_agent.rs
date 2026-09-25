@@ -1,40 +1,212 @@
 //! The `ureq::Agent` every provider request goes through.
 //!
 //! TLS trust is configured per agent rather than globally, so a provider that
-//! needs its own certificate authority trusted gets it without changing what
-//! any other provider trusts.
+//! needs its own certificate trusted gets it without changing what any other
+//! provider trusts.
 //!
-//! Small module, two hard-won details. Both are in the comments below, because
-//! both look like details worth simplifying away and are not.
+//! Small module, three hard-won details. All are in the comments below,
+//! because all look like details worth simplifying away and are not.
 
+use std::fmt;
+use std::io::{Read, Write};
+use std::sync::Arc;
+
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::crypto::CryptoProvider;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned};
 use thiserror::Error;
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::{
+    Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout,
+    TcpConnector, Transport, TransportAdapter,
+};
 
 #[derive(Debug, Error)]
 #[error("tls configuration error: {0}")]
 pub struct TlsError(pub String);
 
-/// Builds an agent, optionally trusting a specific certificate authority.
+/// Builds an agent, optionally trusting specific certificates.
 ///
 /// When `trusted_cert_pem` is `Some`, those certificates **replace** the trust
 /// store rather than adding to it. That is the right shape here: a provider
-/// either needs its own internal CA trusted or it does not, and every provider
+/// either needs its own certificate trusted or it does not, and every provider
 /// has its own agent, so narrowing one cannot affect another.
+///
+/// Not ureq's own `RootCerts::Specific`: webpki takes a certificate only as an
+/// issuer, and refuses one that is also the server's own (`CaUsedAsEndEntity`)
+/// — which is every self-signed certificate `openssl req -x509` makes. So the
+/// TLS layer here is ours, with [`Pinned`] deciding what is trusted.
 pub fn build_agent(trusted_cert_pem: Option<&str>) -> Result<ureq::Agent, TlsError> {
     // Turns off ureq's habit of converting a non-2xx status into a bare error
     // *before* the caller can read the response body. That default is what
     // makes a provider's rejection arrive as an undiagnosable "http status:
     // 400" with the explanation still sitting unread in the body.
-    let mut builder = ureq::Agent::config_builder().http_status_as_error(false);
+    let config = ureq::Agent::config_builder().http_status_as_error(false).build();
 
-    if let Some(pem) = trusted_cert_pem {
-        let certs = parse_trusted_certs(pem)?;
-        let tls = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(certs)))
-            .build();
-        builder = builder.tls_config(tls);
+    let Some(pem) = trusted_cert_pem else {
+        return Ok(config.new_agent());
+    };
+    let tls = client_config(parse_trusted_certs(pem)?)?;
+    // ureq's default chain less its own TLS: a proxy from the environment,
+    // then the socket, then ours.
+    let connector = ()
+        .chain(ConnectProxyConnector::default())
+        .chain(TcpConnector::default())
+        .chain(PinnedTls(Arc::new(tls)));
+    Ok(ureq::Agent::with_parts(config, connector, DefaultResolver::default()))
+}
+
+fn client_config(certs: Vec<ureq::tls::Certificate<'static>>) -> Result<ClientConfig, TlsError> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let certs: Vec<CertificateDer<'static>> =
+        certs.iter().map(|c| CertificateDer::from(c.der().to_vec())).collect();
+    let mut roots = RootCertStore::empty();
+    roots.add_parsable_certificates(certs.iter().cloned());
+    // A certificate webpki cannot take as an issuer can still be pinned; with
+    // none it can, only the pin is left.
+    let issuers = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+        .build()
+        .ok();
+    let verifier = Pinned { certs, issuers, provider: provider.clone() };
+    Ok(ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| TlsError(e.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth())
+}
+
+/// Trusts a server whose certificate *is* one of the pasted ones, byte for
+/// byte — a self-signed server, pinned — and otherwise one whose chain leads
+/// to them, checked as usual.
+///
+/// The pin skips the host name and the dates. It is an exact match on the
+/// key, which is what the name and dates exist to establish, and a
+/// self-signed certificate's name is commonly `localhost` on a server
+/// reached by its address.
+#[derive(Debug)]
+struct Pinned {
+    certs: Vec<CertificateDer<'static>>,
+    issuers: Option<Arc<WebPkiServerVerifier>>,
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for Pinned {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        if self.certs.iter().any(|c| c.as_ref() == end_entity.as_ref()) {
+            return Ok(ServerCertVerified::assertion());
+        }
+        match &self.issuers {
+            Some(issuers) => {
+                issuers.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            }
+            None => Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)),
+        }
     }
 
-    Ok(builder.build().new_agent())
+    // The signatures are checked whichever way the certificate was trusted:
+    // they are what proves the server holds the key.
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// ureq's rustls connector, less its choice of verifier.
+struct PinnedTls(Arc<ClientConfig>);
+
+impl fmt::Debug for PinnedTls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PinnedTls")
+    }
+}
+
+impl<In: Transport> Connector<In> for PinnedTls {
+    type Out = Either<In, PinnedTransport>;
+
+    fn connect(&self, details: &ConnectionDetails, chained: Option<In>) -> Result<Option<Self::Out>, ureq::Error> {
+        let Some(transport) = chained else {
+            return Ok(None);
+        };
+        if !details.needs_tls() || transport.is_tls() {
+            return Ok(Some(Either::A(transport)));
+        }
+        // `host()` keeps an IPv6 address in its brackets; a server name has none.
+        let host = details.uri.host().unwrap_or_default().trim_start_matches('[').trim_end_matches(']');
+        let name = ServerName::try_from(host.to_string()).map_err(|_| ureq::Error::Tls("invalid server name"))?;
+        let mut conn = ClientConnection::new(self.0.clone(), name)?;
+        let mut sock = TransportAdapter::new(transport.boxed());
+        sock.set_timeout(details.timeout);
+        conn.complete_io(&mut sock)?;
+        let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
+        Ok(Some(Either::B(PinnedTransport { buffers, stream: StreamOwned { conn, sock } })))
+    }
+}
+
+struct PinnedTransport {
+    buffers: LazyBuffers,
+    stream: StreamOwned<ClientConnection, TransportAdapter>,
+}
+
+impl fmt::Debug for PinnedTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PinnedTransport")
+    }
+}
+
+impl Transport for PinnedTransport {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.stream.get_mut().set_timeout(timeout);
+        let output = &self.buffers.output()[..amount];
+        self.stream.write_all(output)?;
+        Ok(())
+    }
+
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        self.stream.get_mut().set_timeout(timeout);
+        let input = self.buffers.input_append_buf();
+        let amount = self.stream.read(input)?;
+        self.buffers.input_appended(amount);
+        Ok(amount > 0)
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.stream.get_mut().get_mut().is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        true
+    }
 }
 
 /// Parses **every** certificate in `pem`, not just the first.
@@ -154,9 +326,83 @@ gxvaf8JES4ZQc67yzeks3IKB5uhP+V2w2QD5KrA=\n\
         }
     }
 
+    // A TLS server in the test, on real certificates made for it by
+    // `openssl req` (EC, valid for a century, so the tests do not expire):
+    // `self` is self-signed and CA:TRUE, as `openssl req -x509` makes it;
+    // `leaf` is issued by `ca` for localhost and 127.0.0.1.
+    const SELF: &str = include_str!("testdata/tls/self.pem");
+    const SELF_KEY: &str = include_str!("testdata/tls/self.key");
+    const CA: &str = include_str!("testdata/tls/ca.pem");
+    const LEAF: &str = include_str!("testdata/tls/leaf.pem");
+    const LEAF_KEY: &str = include_str!("testdata/tls/leaf.key");
+
+    /// Answers every request with an empty 200 over TLS; the port it listens on.
+    fn serve_tls(cert_pem: &str, key_pem: &str) -> u16 {
+        use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+        let certs = parse_trusted_certs(cert_pem)
+            .unwrap()
+            .iter()
+            .map(|c| CertificateDer::from(c.der().to_vec()))
+            .collect();
+        let key = ureq::tls::parse_pem(key_pem.as_bytes())
+            .find_map(|item| match item {
+                Ok(ureq::tls::PemItem::PrivateKey(key)) => Some(key.der().to_vec()),
+                _ => None,
+            })
+            .unwrap();
+        let config = Arc::new(
+            rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(certs, PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)))
+                .unwrap(),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for socket in listener.incoming().flatten() {
+                let mut tls = StreamOwned::new(rustls::ServerConnection::new(config.clone()).unwrap(), socket);
+                // A refused handshake fails the read; the next client is served.
+                if tls.read(&mut [0u8; 4096]).is_ok() {
+                    let _ = tls.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                    let _ = tls.flush();
+                }
+            }
+        });
+        port
+    }
+
+    fn get(trusted: &str, port: u16) -> Result<u16, ureq::Error> {
+        let agent = build_agent(Some(trusted)).expect("agent");
+        agent.get(&format!("https://127.0.0.1:{port}/")).call().map(|r| r.status().as_u16())
+    }
+
+    /// The reason this module has its own TLS layer: webpki alone refuses
+    /// this certificate as its own server's (`CaUsedAsEndEntity`). Reached by
+    /// address, too, though it names only `localhost` — a pin is the key.
+    #[test]
+    fn a_self_signed_server_is_trusted_when_its_certificate_is_pasted() {
+        assert_eq!(get(SELF, serve_tls(SELF, SELF_KEY)).expect("pinned"), 200);
+    }
+
+    #[test]
+    fn a_server_is_trusted_through_the_ca_that_issued_it() {
+        assert_eq!(get(CA, serve_tls(LEAF, LEAF_KEY)).expect("chain"), 200);
+    }
+
+    /// Pasting *a* certificate must not become trusting every server.
+    #[test]
+    fn a_server_whose_certificate_was_not_pasted_is_refused() {
+        assert!(get(CA, serve_tls(SELF, SELF_KEY)).is_err(), "unrelated self-signed server");
+        assert!(get(SELF, serve_tls(LEAF, LEAF_KEY)).is_err(), "server issued by an unpasted CA");
+    }
+
     #[test]
     fn damaged_certificate_data_is_refused() {
         let damaged = ROOT_1.replace("MII", "!!!");
         assert!(parse_trusted_certs(&damaged).is_err());
     }
 }
+
+

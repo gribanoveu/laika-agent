@@ -2521,6 +2521,7 @@ dependencies = [
  "rand 0.8.8",
  "regex",
  "rusqlite",
+ "rustls",
  "secrecy",
  "serde",
  "serde_json",
