@@ -421,6 +421,8 @@ export type ChatSummary = {
   updatedAt: number;
   /** The chat this one was branched from. A branch shares its title. */
   branchedFrom?: string | null;
+  /** Filed away: shown under the sidebar's "Archived" filter, not in the list. */
+  archived: boolean;
 };
 
 /**
@@ -474,6 +476,11 @@ export async function saveChat(
 export async function exportChat(id: string, path: string): Promise<void> {
   requireBackend();
   return invoke("chat_export", { id, path });
+}
+
+export async function setChatArchived(id: string, archived: boolean): Promise<void> {
+  requireBackend();
+  return invoke("chat_set_archived", { id, archived });
 }
 
 export async function deleteChat(id: string): Promise<void> {

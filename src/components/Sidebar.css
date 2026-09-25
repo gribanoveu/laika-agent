@@ -105,6 +105,57 @@
   box-shadow: 0 0 0 1px var(--border) inset;
 }
 
+/* "Chats" and the filter over the list. */
+.group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 2px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+/* A row is the chat and its ⋮, which shows on hover or while its menu is open. */
+.chat-row {
+  position: relative;
+}
+.chat-row > .chat-menu-wrap {
+  /* As tall as the row, centring the button whatever the font size makes it.
+     The chat's top margin collapses through the row, so the row is the chat. */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+}
+.chat-row:hover > .chat-menu-wrap,
+.chat-row:focus-within > .chat-menu-wrap,
+.chat-row > .chat-menu-wrap:has(.chat-menu) {
+  opacity: 1;
+}
+.chat-row:hover > .chat {
+  padding-right: 34px;
+}
+.chat-row .chat-menu-button {
+  width: 24px;
+  height: 24px;
+}
+/* Narrower than the header's: it opens inside the sidebar. */
+.chat-row .chat-menu {
+  min-width: 150px;
+}
+.chat-row.archived > .chat:not(:hover):not(.active) {
+  color: var(--text-faint);
+}
+
+.sidebar-delete-text {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
 .sidebar-bottom {
   margin-top: auto;
   padding: 10px;

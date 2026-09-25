@@ -147,7 +147,8 @@ export default function App() {
   );
   const branch = useGitBranch(workspace.path, agent.turn.status);
   const changeTotals = useChangeTotals(workspace.path);
-  useFolderConversation(workspace.path, workspace.resumed, history.chats[0]?.id, agent);
+  // An archived chat is not where the user left off, even when it was touched last.
+  useFolderConversation(workspace.path, workspace.resumed, history.chats.find((one) => !one.archived)?.id, agent);
   // Servers start with an Agent turn and may stop during one.
   // Settings shows both in "Where your data goes".
   const mcp = useMcp(shown("mcp") || mcpEditing || settingsOpen, agent.turn.status);
@@ -346,6 +347,12 @@ export default function App() {
           activeChat={agent.chatId}
           onSelectChat={agent.open}
           onNewChat={newChat}
+          onArchiveChat={(id, archived) => history.archive(id, archived).catch((e) => toast.show(String(e)))}
+          onDeleteChat={(id) => {
+            // The open chat goes first: left on screen, its next save would write it back.
+            if (id === agent.chatId) agent.reset();
+            history.remove(id).catch((e) => toast.show(String(e)));
+          }}
           // Held on its rail by the viewer beside the chat: opening it closes the viewer.
           onToggleCollapse={() => (rail && !collapsed ? viewer.closeAll() : setCollapsed((v) => !v))}
           onOpenSettings={() => setSettingsOpen(true)}

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   ChevronRight,
   Clock,
   GitBranch,
@@ -8,18 +10,40 @@ import {
   PanelLeft,
   Plus,
   Settings,
+  Trash2,
   UserRound,
 } from "lucide-react";
+import { ChatMenu } from "./ChatMenu";
+import { Dropdown } from "./Dropdown";
 import { GettingStarted } from "./GettingStarted";
+import { Modal } from "./Modal";
 import type { ChatSummary } from "../lib/chat";
 import type { AsideTab } from "../types";
 import "./Sidebar.css";
+
+type Filter = "active" | "archived" | "all";
+
+/** The list's one filter, as Claude Code's sidebar has it: archived chats are
+    out of sight until asked for, not in a section of their own. */
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "archived", label: "Archived" },
+  { value: "all", label: "All" },
+];
+
+const EMPTY: Record<Filter, string> = {
+  active: "Every chat here is archived.",
+  archived: "No archived chats.",
+  all: "No chats yet.",
+};
 
 type Props = {
   chats: ChatSummary[];
   activeChat: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
+  onArchiveChat: (id: string, archived: boolean) => void;
+  onDeleteChat: (id: string) => void;
   onToggleCollapse: () => void;
   onOpenSettings: () => void;
   onOnboardingAction: (tab: AsideTab) => void;
@@ -30,11 +54,16 @@ export function Sidebar({
   activeChat,
   onSelectChat,
   onNewChat,
+  onArchiveChat,
+  onDeleteChat,
   onToggleCollapse,
   onOpenSettings,
   onOnboardingAction,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [filter, setFilter] = useState<Filter>("active");
+  const [deleting, setDeleting] = useState<ChatSummary | null>(null);
+  const listed = chats.filter((chat) => filter === "all" || chat.archived === (filter === "archived"));
   const userWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -64,23 +93,96 @@ export function Sidebar({
       </div>
 
       <div className="group">
-        {chats.length === 0 ? (
-          <div className="empty">No chats yet.</div>
+        {chats.length > 0 && (
+          <div className="group-head">
+            <span>Chats</span>
+            <Dropdown
+              label={FILTERS.find((f) => f.value === filter)?.label}
+              title="Which chats to list"
+              options={FILTERS}
+              value={filter}
+              onPick={(value) => setFilter(value as Filter)}
+              below
+              right
+            />
+          </div>
+        )}
+        {listed.length === 0 ? (
+          <div className="empty">{chats.length === 0 ? "No chats yet." : EMPTY[filter]}</div>
         ) : (
-          chats.map((chat) => (
-            <button
-              key={chat.id}
-              type="button"
-              className={`chat${chat.id === activeChat ? " active" : ""}`}
-              onClick={() => onSelectChat(chat.id)}
-              title={chat.branchedFrom ? "A branch of an earlier chat" : undefined}
-            >
-              {chat.branchedFrom ? <GitBranch size={14} /> : <MessageSquare size={14} />}
-              <span>{chat.title}</span>
-            </button>
+          listed.map((chat) => (
+            <div key={chat.id} className={`chat-row${chat.archived ? " archived" : ""}`}>
+              <button
+                type="button"
+                className={`chat${chat.id === activeChat ? " active" : ""}`}
+                onClick={() => onSelectChat(chat.id)}
+                title={chat.archived ? "Archived" : chat.branchedFrom ? "A branch of an earlier chat" : undefined}
+              >
+                {chat.archived ? (
+                  <Archive size={14} />
+                ) : chat.branchedFrom ? (
+                  <GitBranch size={14} />
+                ) : (
+                  <MessageSquare size={14} />
+                )}
+                <span>{chat.title}</span>
+              </button>
+              <ChatMenu
+                items={[
+                  chat.archived
+                    ? {
+                        id: "unarchive",
+                        label: "Unarchive",
+                        icon: <ArchiveRestore size={14} />,
+                        onSelect: () => onArchiveChat(chat.id, false),
+                      }
+                    : {
+                        id: "archive",
+                        label: "Archive",
+                        icon: <Archive size={14} />,
+                        onSelect: () => onArchiveChat(chat.id, true),
+                      },
+                  {
+                    id: "delete",
+                    label: "Delete",
+                    icon: <Trash2 size={14} />,
+                    divided: true,
+                    onSelect: () => setDeleting(chat),
+                  },
+                ]}
+              />
+            </div>
           ))
         )}
       </div>
+
+      <Modal
+        title="Delete this chat?"
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => setDeleting(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                if (deleting) onDeleteChat(deleting.id);
+                setDeleting(null);
+              }}
+            >
+              Delete
+            </button>
+          </>
+        }
+      >
+        <p className="sidebar-delete-text">
+          <b>{deleting?.title}</b> and its whole transcript will be gone for good. Archive it instead to keep it out of
+          the list.
+        </p>
+      </Modal>
 
       <div className="sidebar-bottom">
         <GettingStarted onAction={onOnboardingAction} onOpenSettings={onOpenSettings} />

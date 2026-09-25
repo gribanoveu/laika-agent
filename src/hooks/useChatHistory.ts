@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { listChats, deleteChat, type ChatSummary } from "../lib/chat";
+import { listChats, deleteChat, setChatArchived, type ChatSummary } from "../lib/chat";
 
 /**
  * The sidebar's list of saved conversations.
@@ -30,5 +30,13 @@ export function useChatHistory(workspace: string | null) {
     [refresh],
   );
 
-  return { chats, refresh, remove };
+  const archive = useCallback(
+    async (id: string, archived: boolean) => {
+      await setChatArchived(id, archived);
+      refresh();
+    },
+    [refresh],
+  );
+
+  return { chats, refresh, remove, archive };
 }

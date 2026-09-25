@@ -23,7 +23,8 @@ export type ChatMenuItem = {
  * header so it stays a title and a branch.
  *
  * A list rather than one button because that is what it is for: exporting is
- * the first of these, and the next one is a row in `items`.
+ * the first of these, and the next one is a row in `items`. The sidebar's
+ * rows use it too, for archiving and deleting a chat.
  */
 export function ChatMenu({ items }: { items: ChatMenuItem[] }) {
   const [open, setOpen] = useState(false);
