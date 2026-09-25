@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app-icon.png" width="128" alt="Kibo Agent">
+  <img src="src/assets/kibo-logo.png" width="160" alt="Kibo Agent">
 </p>
 
 <h1 align="center">Kibo Agent</h1>
