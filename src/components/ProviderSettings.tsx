@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, FileUp, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Check, Circle, CircleDot, FileUp, Plus, RefreshCw, Search, X } from "lucide-react";
 import type { LlmSettings, ProviderConfig, ProviderKind } from "../lib/chat";
 import { certificateCount, filterModels, pemFromBytes } from "../lib/providerForm";
 import "./ProviderSettings.css";
@@ -387,7 +387,11 @@ function ModelList({
       className={`model-row${model === current ? " active" : ""}`}
       onClick={() => onPick(model)}
     >
-      <span className="model-radio" aria-hidden />
+      {model === current ? (
+        <CircleDot className="model-radio" size={15} aria-hidden />
+      ) : (
+        <Circle className="model-radio" size={15} aria-hidden />
+      )}
       <span className="model-name">{label}</span>
       {hint && <span className="model-hint">{hint}</span>}
       {model === current && <span className="model-badge">default</span>}

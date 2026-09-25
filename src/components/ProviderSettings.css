@@ -177,20 +177,17 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text);
 }
-/* The dot is the background clipped to the content box, so the gap around it
-   is the row's own colour — tinted when the row is the default. */
 .model-radio {
   flex: none;
-  width: 14px;
-  height: 14px;
-  padding: 2.5px;
-  border: 1.5px solid var(--text-faint);
-  border-radius: 50%;
-  background-clip: content-box;
+  color: var(--text-faint);
 }
 .model-row.active .model-radio {
-  border-color: var(--accent);
-  background-color: var(--accent);
+  color: var(--accent);
+}
+/* Lucide's dot is a pinpoint; a wide stroke around it makes the radio's dot,
+   drawn in the same SVG as the ring, so the two stay centred on each other. */
+.model-row.active .model-radio circle:first-child {
+  stroke-width: 7;
 }
 .model-name {
   min-width: 0;
