@@ -78,7 +78,7 @@ Do not commit, push, merge, rebase, reset, clean, delete branches, rewrite histo
 
 ## The checklist
 
-`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, mark each one as it finishes, and do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. Every `todo` call returns the list as it stands, ids and notes included, so there is nothing to read back; if the conversation stops showing it — after older history is summarized, say — it is added again at the end.
+`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, and mark it completed in the same step that finishes it — alongside that step's last call, not in a round of updates at the end. Do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. Every `todo` call returns the list as it stands, ids and notes included, so there is nothing to read back; if the conversation stops showing it — after older history is summarized, say — it is added again at the end.
 
 ## Evidence
 
