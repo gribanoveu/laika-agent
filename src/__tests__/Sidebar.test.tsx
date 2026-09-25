@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Sidebar } from "../components/Sidebar";
 import type { ChatSummary } from "../lib/chat";
+import { IS_MAC } from "../lib/shortcuts";
 
 const chats: ChatSummary[] = [
   { id: "a", title: "kept in view", updatedAt: 2, archived: false },
@@ -73,5 +74,27 @@ describe("the chat list", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(removed).toEqual(["a"]);
+  });
+});
+
+describe("the account menu", () => {
+  test("opens the keyboard shortcuts, and Escape closes them", () => {
+    sidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Keyboard shortcuts" }));
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    expect(screen.getByText("Show or hide the sidebar")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("the shortcut for the shortcuts opens and closes them from anywhere", () => {
+    sidebar();
+    const press = () => fireEvent.keyDown(window, { key: "/", code: "Slash", ...(IS_MAC ? { metaKey: true } : { ctrlKey: true }) });
+    press();
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    press();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

@@ -17,6 +17,8 @@ import { ChatMenu } from "./ChatMenu";
 import { Dropdown } from "./Dropdown";
 import { GettingStarted } from "./GettingStarted";
 import { Modal } from "./Modal";
+import { useShortcuts } from "../hooks/useShortcuts";
+import { comboKeys, SHORTCUTS, type ShortcutId } from "../lib/shortcuts";
 import type { ChatSummary } from "../lib/chat";
 import type { AsideTab } from "../types";
 import "./Sidebar.css";
@@ -30,6 +32,13 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "archived", label: "Archived" },
   { value: "all", label: "All" },
 ];
+
+/** The registry's entries under their group headings, in its order. */
+type Listed = (typeof SHORTCUTS)[ShortcutId] & { id: string };
+const SHORTCUT_GROUPS = Object.entries(SHORTCUTS).reduce<Record<string, Listed[]>>((groups, [id, entry]) => {
+  (groups[entry.group] ??= []).push({ id, ...entry });
+  return groups;
+}, {});
 
 const EMPTY: Record<Filter, string> = {
   active: "Every chat here is archived.",
@@ -63,6 +72,8 @@ export function Sidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("active");
   const [deleting, setDeleting] = useState<ChatSummary | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useShortcuts({ shortcuts: () => setShortcutsOpen((v) => !v) });
   const listed = chats.filter((chat) => filter === "all" || chat.archived === (filter === "archived"));
   const userWrap = useRef<HTMLDivElement>(null);
 
@@ -184,6 +195,32 @@ export function Sidebar({
         </p>
       </Modal>
 
+      <Modal title="Keyboard shortcuts" wide open={shortcutsOpen} onClose={() => setShortcutsOpen(false)}>
+        <div className="sidebar-shortcut-groups">
+          {Object.entries(SHORTCUT_GROUPS).map(([group, entries]) => (
+            <section key={group} className="sidebar-shortcuts">
+              <h3>{group}</h3>
+              <dl>
+                {entries.map(({ id, label, combos }) => (
+                  <div key={id}>
+                    <dt>{label}</dt>
+                    <dd>
+                      {combos.map((combo) => (
+                        <span key={combo.code} className="combo">
+                          {comboKeys(combo).map((k) => (
+                            <kbd key={k}>{k}</kbd>
+                          ))}
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
+        </div>
+      </Modal>
+
       <div className="sidebar-bottom">
         <GettingStarted onAction={onOnboardingAction} onOpenSettings={onOpenSettings} />
         <div className="user-wrap" ref={userWrap}>
@@ -218,7 +255,10 @@ export function Sidebar({
                 className="user-menu-item"
                 role="menuitem"
                 type="button"
-                onClick={() => setMenuOpen(false)}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setShortcutsOpen(true);
+                }}
               >
                 <span className="ico">
                   <Keyboard size={14} />

@@ -228,7 +228,7 @@ describe("FileViewer", () => {
     expect(document.querySelector(".file-viewer-step-count")?.textContent).toBe("2 / 3");
     fireEvent.click(screen.getByTitle("Next changed file (Alt+↓)"));
     fireEvent.click(screen.getByTitle("Previous changed file (Alt+↑)"));
-    fireEvent.keyDown(document.querySelector(".file-viewer")!, { key: "ArrowDown", altKey: true });
+    fireEvent.keyDown(document.querySelector(".file-viewer")!, { key: "ArrowDown", code: "ArrowDown", altKey: true });
     expect(shown).toEqual([
       { path: "c.rs", side: "staged" },
       { path: "a.rs", side: "unstaged" },

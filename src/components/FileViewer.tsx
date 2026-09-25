@@ -8,6 +8,7 @@ import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 import { sameFile, stepThrough } from "../hooks/useOpenFiles";
 import { useStaging } from "../hooks/useStaging";
+import { matches } from "../lib/shortcuts";
 import { Tabs } from "./Tabs";
 import "./FileViewer.css";
 
@@ -168,9 +169,9 @@ export function FileViewer({
       onKeyDown={(e) => {
         if (e.defaultPrevented) return;
         if (e.key === "Escape") onCloseAll();
-        else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        else if (matches(e, "nextFile") || matches(e, "prevFile")) {
           e.preventDefault();
-          step(e.key === "ArrowDown" ? 1 : -1);
+          step(matches(e, "nextFile") ? 1 : -1);
         }
       }}
     >

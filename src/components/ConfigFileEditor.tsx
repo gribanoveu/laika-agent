@@ -1,5 +1,6 @@
 import { useEffect, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { jsonError, type Merged } from "../lib/configSnippets";
+import { matches } from "../lib/shortcuts";
 import "./ConfigFileEditor.css";
 
 // A settings file edited whole, in one box, because its format is one that
@@ -68,7 +69,7 @@ export function ConfigFileEditor({ label, text, error, note, example, merge, onS
   };
 
   const keys = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    if (matches(e, "save")) {
       e.preventDefault();
       void save();
     } else if (e.key === "Tab" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {

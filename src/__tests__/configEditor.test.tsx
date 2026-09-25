@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, jsonError, mergeHooks, mergeMcp } from "../lib/configSnippets";
 import { ConfigFileEditor } from "../components/ConfigFileEditor";
+import { IS_MAC } from "../lib/shortcuts";
+
+const MOD = IS_MAC ? { metaKey: true } : { ctrlKey: true };
 
 // The MCP and hooks files are JSON edited in one box: a snippet pasted from a
 // README joins the file, and broken JSON says where it broke before Save.
@@ -116,12 +119,12 @@ describe("the editor", () => {
     expect(screen.getByText(/^Line 3, column 2:/)).toBeTruthy();
     const save = screen.getByText("Save") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    fireEvent.keyDown(box(), { key: "s", metaKey: true });
+    fireEvent.keyDown(box(), { key: "s", code: "KeyS", ...MOD });
 
     fireEvent.change(box(), { target: { value: '{\n  "mcpServers": {}\n}' } });
     expect(save.disabled).toBe(false);
     await act(async () => {
-      fireEvent.keyDown(box(), { key: "s", metaKey: true });
+      fireEvent.keyDown(box(), { key: "s", code: "KeyS", ...MOD });
     });
     expect(saved).toEqual(['{\n  "mcpServers": {}\n}']);
   });

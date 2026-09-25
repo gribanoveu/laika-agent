@@ -38,7 +38,8 @@ import { isBoolean, useStoredState } from "./hooks/useStoredState";
 import { McpServerForm, HookForm } from "./components/ConfigEntryForm";
 import { removeHook, removeMcpServer } from "./lib/configEntries";
 import { HOOKS_EXAMPLE, MCP_EXAMPLE, mergeHooks, mergeMcp } from "./lib/configSnippets";
-import { changesShown, openPane, toggleChanges, toggleTerminal, type Docks } from "./lib/docks";
+import { changesShown, openPane, toggleChanges, togglePane, toggleTerminal, type Docks } from "./lib/docks";
+import { useShortcuts } from "./hooks/useShortcuts";
 import { exportChat, setConversationMode, type ConversationMode } from "./lib/chat";
 import { isAsideTab, type AsideTab } from "./types";
 import { useFolderSwitch } from "./hooks/useFolderSwitch";
@@ -185,20 +186,25 @@ export default function App() {
     // Once per ask: not again when the layout changes.
   }, [terminalPaste]);
 
-  // Ctrl+` shows and hides the Terminal, as in VS Code. Caught before the
-  // terminal itself sees it, which would send the shell a NUL. Focus leaves
-  // the composer, so the shell that opens takes the typing.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.code !== "Backquote") return;
-      e.preventDefault();
-      e.stopPropagation();
-      (document.activeElement as HTMLElement | null)?.blur();
-      setDocks(toggleTerminal(docks));
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [tab, topHidden, bottomShown, dockFits]);
+  // Held on its rail by the viewer beside the chat: opening it closes the viewer.
+  const toggleSidebar = () => (rail && !collapsed ? viewer.closeAll() : setCollapsed((v) => !v));
+
+  // A pane's key shows it, or hides it where it already is (`lib/shortcuts.ts`).
+  useShortcuts({
+    ...Object.fromEntries(
+      PANES.map(({ id, dock }) => [
+        id,
+        () => {
+          // Focus leaves the composer, so the shell that opens takes the typing.
+          if (id === "terminal") (document.activeElement as HTMLElement | null)?.blur();
+          setDocks(togglePane(docks, id, dock));
+        },
+      ]),
+    ),
+    newChat: () => newChat(),
+    sidebar: toggleSidebar,
+    settings: () => setSettingsOpen(true),
+  });
 
   // A plan the agent has just finished writing is shown, once, when its turn
   // ends — not mid-turn, while it is still filling in the checklist.
@@ -353,8 +359,7 @@ export default function App() {
             if (id === agent.chatId) agent.reset();
             history.remove(id).catch((e) => toast.show(String(e)));
           }}
-          // Held on its rail by the viewer beside the chat: opening it closes the viewer.
-          onToggleCollapse={() => (rail && !collapsed ? viewer.closeAll() : setCollapsed((v) => !v))}
+          onToggleCollapse={toggleSidebar}
           onOpenSettings={() => setSettingsOpen(true)}
           onOnboardingAction={openTab}
         />

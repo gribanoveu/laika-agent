@@ -15,16 +15,17 @@ export function openPane(docks: Docks, pane: AsideTab, dock: "right" | "bottom")
   return { ...docks, top: pane, topHidden: false };
 }
 
-/** The header's button is Changes' own: shown anywhere, it hides it; otherwise it opens it like the menu would. */
-export function toggleChanges(docks: Docks): Docks {
-  if (docks.bottom === "changes") return { ...docks, bottom: null };
-  if (docks.top === "changes" && !docks.topHidden) return { ...docks, topHidden: true };
-  return openPane(docks, "changes", "right");
+/** A pane's button or shortcut: shown anywhere, it hides it; otherwise it opens it like the menu would. */
+export function togglePane(docks: Docks, pane: AsideTab, dock: "right" | "bottom"): Docks {
+  if (docks.bottom === pane) return { ...docks, bottom: null };
+  if (docks.top === pane && !docks.topHidden) return { ...docks, topHidden: true };
+  return openPane(docks, pane, dock);
 }
+
+export const toggleChanges = (docks: Docks) => togglePane(docks, "changes", "right");
 
 export const changesShown = (docks: Docks) =>
   docks.bottom === "changes" || (docks.top === "changes" && !docks.topHidden);
 
 /** The header's Terminal button: Terminal only ever sits in the bottom dock. */
-export const toggleTerminal = (docks: Docks): Docks =>
-  docks.bottom === "terminal" ? { ...docks, bottom: null } : openPane(docks, "terminal", "bottom");
+export const toggleTerminal = (docks: Docks) => togglePane(docks, "terminal", "bottom");

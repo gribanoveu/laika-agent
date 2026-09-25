@@ -25,6 +25,7 @@ import { ChatEmptyState } from "./ChatEmptyState";
 import { ChatMenu, type ChatMenuItem } from "./ChatMenu";
 import { DiffView } from "./DiffView";
 import { PANES } from "./panes";
+import { shortcutText } from "../lib/shortcuts";
 import type { AsideTab } from "../types";
 import { Markdown } from "./Markdown";
 import { describeActive, describeRun, describeTool } from "../lib/describeTool";
@@ -539,6 +540,7 @@ export function ChatPanel({
           id,
           label,
           icon: <Icon size={14} />,
+          shortcut: shortcutText(id),
           onSelect: () => onOpenPanel(id),
         }))
       : []),
@@ -579,7 +581,7 @@ export function ChatPanel({
             <button
               type="button"
               className={`iconbtn aside-button${terminalOpen ? " on" : ""}`}
-              title={terminalOpen ? "Hide terminal" : "Show terminal"}
+              title={`${terminalOpen ? "Hide terminal" : "Show terminal"} (${shortcutText("terminal")})`}
               aria-pressed={terminalOpen}
               onClick={onToggleTerminal}
             >
@@ -590,7 +592,7 @@ export function ChatPanel({
             <button
               type="button"
               className={`iconbtn aside-button${asideOpen ? " on" : ""}`}
-              title={asideOpen ? "Hide changes" : "Show changes"}
+              title={`${asideOpen ? "Hide changes" : "Show changes"} (${shortcutText("changes")})`}
               aria-pressed={asideOpen}
               onClick={onToggleAside}
             >

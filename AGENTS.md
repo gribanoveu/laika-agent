@@ -111,6 +111,8 @@ A clock that only redraws elapsed time (`ChatPanel`) is not polling.
 
 The pattern for a dropdown is a `<button>` trigger plus a `role="listbox"` menu of `role="option"` buttons, dismissed by an outside `pointerdown` or `Escape`. It is written once, in `src/components/Dropdown.tsx` — use that component instead of a second implementation (`Composer`, `Sidebar`, `ChatMenu` and `ToolLog` all do). The same applies to anything else the platform would draw its own way: dialogs go through `src/components/Modal.tsx`, never `alert`/`confirm`.
 
+**A key the app answers to is an entry in `src/lib/shortcuts.ts`.** A window-wide one is handled through `useShortcuts({ id: handler })`; a key local to one component checks `matches(e, id)` instead of spelling out `e.key`. The shortcuts dialog and the menus' hints are drawn from that registry, so a key written anywhere else is one the user is never told about.
+
 Colours, spacing and fonts come from the tokens in `src/styles/tokens.css` (`--bg-*`, `--text-*`, `--border`, `--accent`, `--font-ui*`). A literal hex or pixel font size in a component is a bug: it will not follow the user's theme or font-size preference.
 
 A component used from more than one place carries its own styles rather than borrowing a neighbour's — CSS is bundled globally, so borrowing appears to work right up until the neighbour is deleted.

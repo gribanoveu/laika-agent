@@ -156,6 +156,70 @@
   line-height: 1.5;
 }
 
+/* As many columns as fit, three at most; a group is never split across two. */
+.sidebar-shortcut-groups {
+  columns: 3 240px;
+  column-gap: 28px;
+}
+.sidebar-shortcuts {
+  break-inside: avoid;
+  margin-bottom: 16px;
+}
+.sidebar-shortcuts:last-child {
+  margin-bottom: 0;
+}
+.sidebar-shortcuts h3 {
+  margin: 0 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.sidebar-shortcuts dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs-md);
+}
+.sidebar-shortcuts dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sidebar-shortcuts dl > div:last-child {
+  border-bottom: 0;
+}
+.sidebar-shortcuts dt {
+  color: var(--text-dim);
+}
+.sidebar-shortcuts dd {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+.sidebar-shortcuts .combo {
+  display: flex;
+  gap: 4px;
+}
+.sidebar-shortcuts kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--text);
+}
+
 .sidebar-bottom {
   margin-top: auto;
   padding: 10px;

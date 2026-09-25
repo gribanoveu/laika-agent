@@ -75,3 +75,11 @@
   font-size: var(--fs-xs);
   color: var(--text-faint);
 }
+
+.chat-menu-shortcut {
+  margin-left: auto;
+  padding-left: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}

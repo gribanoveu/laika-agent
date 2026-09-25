@@ -11,6 +11,8 @@ export type ChatMenuItem = {
   id: string;
   label: string;
   hint?: string;
+  /** The key that does the same, drawn at the row's end. */
+  shortcut?: string;
   icon?: ReactNode;
   disabled?: boolean;
   /** Starts a new group: a line above this row. */
@@ -79,6 +81,7 @@ export function ChatMenu({ items }: { items: ChatMenuItem[] }) {
                 <span>{item.label}</span>
                 {item.hint && <span className="hint">{item.hint}</span>}
               </span>
+              {item.shortcut && <kbd className="chat-menu-shortcut" aria-hidden>{item.shortcut}</kbd>}
             </button>
           ))}
         </div>
