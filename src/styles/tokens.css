@@ -31,21 +31,24 @@
   --text-dim: #b8b8c2;
   --text-faint: #8b8b97;
 
-  --accent: #6ba4e6;
+  /* The coral of Laika's collar. Errors are rose, not red: beside a red-orange
+     accent a red of their own would read as the accent. */
+  --accent: #ff7a57;
   --accent-contrast: #08080a;
   --green: #62d29a;
-  --red: #ec8079;
+  --red: #f0719a;
   --amber: #e0b35f;
   --purple: #b39bff;
 
   /* The terminal's sixteen ANSI colours (xterm.js reads them as values).
      The named ones follow the palette above; "black" has to show on the
-     panel, and "white" is dimmer than the text, as terminals draw it. */
+     panel, and "white" is dimmer than the text, as terminals draw it. Red
+     and blue are the terminal's own: the accent is not blue, the error is not red. */
   --term-black: #4a4a55;
-  --term-red: var(--red);
+  --term-red: #ec8079;
   --term-green: var(--green);
   --term-yellow: var(--amber);
-  --term-blue: var(--accent);
+  --term-blue: #6ba4e6;
   --term-magenta: var(--purple);
   --term-cyan: #5fc7d4;
   --term-white: var(--text-dim);
@@ -78,19 +81,19 @@
   --text-dim: #55555f;
   --text-faint: #767683;
 
-  --accent: #2f6fb8;
+  --accent: #c43c1a;
   --accent-contrast: #ffffff;
   --green: #1f8f5c;
-  --red: #c2453d;
+  --red: #c0264f;
   --amber: #8c650f;
   --purple: #6146c9;
 
   /* On a light panel "white" has to show too. */
   --term-black: var(--text);
-  --term-red: var(--red);
+  --term-red: #c2453d;
   --term-green: var(--green);
   --term-yellow: var(--amber);
-  --term-blue: var(--accent);
+  --term-blue: #2f6fb8;
   --term-magenta: var(--purple);
   --term-cyan: #1b7f8c;
   --term-white: #a3a3ae;
