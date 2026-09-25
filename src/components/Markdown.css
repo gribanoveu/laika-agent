@@ -217,3 +217,12 @@
   background: var(--bg-panel-soft);
   font-weight: 600;
 }
+
+/* Streamdown fades each new word in while an answer streams; under reduced
+   motion the words simply appear. */
+@media (prefers-reduced-motion: reduce) {
+  .md [data-sd-animate],
+  .md [data-sd-animate-marker]::marker {
+    animation: none;
+  }
+}

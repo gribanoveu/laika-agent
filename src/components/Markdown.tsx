@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { defaultRemarkPlugins, Streamdown, useIsCodeFenceIncomplete, type Components } from "streamdown";
 import { highlight, splitLines, type Token } from "../lib/highlight";
 import { wrapAsciiTrees } from "../lib/wrapAsciiTrees";
+import "streamdown/styles.css";
 import "./Markdown.css";
 
 /** A fenced block's text, back out of the React children Streamdown made of it. */
@@ -181,6 +182,10 @@ const remarkPlugins = [...Object.values(defaultRemarkPlugins), fileLinks];
  * `![`, the bracket of an unmatched `[`. Mid-stream that costs a frame; on a
  * finished answer it would lose what the model wrote (`arr[0` is ordinary).
  *
+ * `animated`, also only while streaming: each new word fades in, cascaded
+ * across a delta, so text arriving in bursts reads as a flow rather than
+ * jumps. A finished answer renders without the per-word spans.
+ *
  * `memo`: every delta re-renders the transcript, and past answers must not
  * re-parse and re-highlight for a token that changed only the last one.
  */
@@ -232,6 +237,7 @@ export const Markdown = memo(function Markdown({
   return (
     <Streamdown
       className="md"
+      animated
       isAnimating={streaming}
       parseIncompleteMarkdown={streaming}
       linkSafety={{ enabled: false }}

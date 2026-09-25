@@ -29,6 +29,7 @@ import { shortcutText } from "../lib/shortcuts";
 import type { AsideTab } from "../types";
 import { Markdown } from "./Markdown";
 import { describeActive, describeRun, describeTool } from "../lib/describeTool";
+import { useFollowBottom } from "../hooks/useFollowBottom";
 import { useSteadyValue } from "../hooks/useSteadyValue";
 import type { Block, TurnState } from "../lib/chatTurnReducer";
 import {
@@ -38,7 +39,6 @@ import {
   type ToolCallDecision,
   type ToolPreview,
 } from "../lib/chat";
-import { useStickToBottom } from "use-stick-to-bottom";
 import "./ChatPanel.css";
 
 const TOOL_ICON: Record<string, typeof FileText> = {
@@ -524,12 +524,12 @@ export function ChatPanel({
   const planReady = onImplement && turn.status === "done" && groups[groups.length - 1]?.role === "agent";
   // The thread follows the answer as it grows, until the user scrolls up to
   // read; scrolling back to the end picks it up again.
-  const { scrollRef, contentRef, scrollToBottom } = useStickToBottom({ initial: "instant" });
+  const { scrollRef, contentRef, scrollToBottom } = useFollowBottom();
   // A new message, or another chat, is where the user is looking now —
   // follow it even if they had scrolled away.
   const lastUserId = turn.blocks.filter((block) => block.kind === "user").pop()?.id;
   useEffect(() => {
-    void scrollToBottom("instant");
+    scrollToBottom();
   }, [lastUserId, scrollToBottom]);
 
   // The side panels first — they are what the menu is opened for — then what
