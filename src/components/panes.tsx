@@ -104,6 +104,8 @@ function mcpItems(view: McpView | null): PanelItem[] {
           title: server.name,
           desc: server.command,
           enabled: server.enabled,
+          // The process's own trouble, when it has one, says more than the entry's.
+          note: server.warning ?? undefined,
           ...(server.enabled ? mcpState(server.state) : {}),
         },
   );

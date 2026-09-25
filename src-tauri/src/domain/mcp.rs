@@ -34,15 +34,20 @@ pub struct McpConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
-    /// Empty for an HTTP server's entry, which has a `url` instead — kept in
-    /// `extra` and reported, not refused, so pasting a mixed config still
-    /// loads the servers this build can run.
+    /// Empty for an HTTP server's entry, which has a `url` instead.
     #[serde(default)]
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Where an HTTP server listens — Streamable HTTP, one endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Sent with every request to `url`; routinely a token, so never shown
+    /// outside the file's own editor.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,12 +74,15 @@ impl McpServerConfig {
 #[serde(rename_all = "camelCase")]
 pub struct McpServerItem {
     pub name: String,
-    /// The command line as it will run, for reading — not for running.
+    /// The command line as it will run, or the URL — for reading, not for
+    /// running.
     pub command: String,
     pub enabled: bool,
     /// Why this server will not start, when that is already known from its
     /// entry alone.
     pub error: Option<String>,
+    /// Something wrong that does not stop it from starting.
+    pub warning: Option<String>,
     /// What its process is doing. `items` does not know — it reads only the
     /// file — and says `NotStarted`; the running servers fill it in.
     pub state: McpServerState,
@@ -140,9 +148,10 @@ pub fn items(config: &McpConfig) -> Vec<McpServerItem> {
             seen.entry(key).or_insert(name);
             McpServerItem {
                 name: name.clone(),
-                command: command_line(server),
+                command: server.url.clone().unwrap_or_else(|| command_line(server)),
                 enabled: !server.disabled,
                 error: clash.or_else(|| problem(name, server)),
+                warning: warning(server),
                 state: McpServerState::NotStarted,
             }
         })
@@ -153,12 +162,17 @@ fn problem(name: &str, server: &McpServerConfig) -> Option<String> {
     if name.trim().is_empty() {
         return Some("the server needs a name".into());
     }
-    if server.command.trim().is_empty() {
-        return Some(if server.extra.contains_key("url") {
-            "HTTP servers are not supported yet — only ones started by a command".into()
-        } else {
-            "no command to start it with".into()
-        });
+    let has_command = !server.command.trim().is_empty();
+    match &server.url {
+        Some(_) if has_command => return Some("has both a command and a url — keep one".into()),
+        Some(url) if url_parts(url).is_none() => {
+            return Some(format!("url must be an http:// or https:// address with a host, not {url:?}"));
+        }
+        None if !has_command => return Some("no command to start it with".into()),
+        _ => {}
+    }
+    if server.extra.get("type").and_then(Value::as_str) == Some("sse") {
+        return Some("uses the old HTTP+SSE transport, which is not supported — only Streamable HTTP".into());
     }
     if server.weight == Some(0) {
         return Some("weight must be at least 1".into());
@@ -166,7 +180,30 @@ fn problem(name: &str, server: &McpServerConfig) -> Option<String> {
     if server.timeout_secs == Some(0) {
         return Some("timeoutSecs must be at least 1".into());
     }
+    if server.url.is_some() {
+        // Until F-7.4f adds the transport; it removes this.
+        return Some("HTTP servers are not supported yet — only ones started by a command".into());
+    }
     None
+}
+
+/// Plain `http://` to anywhere but this machine: the headers — a token, as a
+/// rule — travel readable by anyone on the way. Allowed, since a server on
+/// the local network may have no TLS, but said.
+fn warning(server: &McpServerConfig) -> Option<String> {
+    let (scheme, host) = url_parts(server.url.as_deref()?)?;
+    let local = host == "localhost" || host.starts_with("127.") || host == "[::1]";
+    (scheme == "http" && !local)
+        .then(|| format!("{host} is reached over plain http — its headers, and any token in them, are sent unencrypted"))
+}
+
+/// Scheme and host of an `http`/`https` URL, lowercased; `None` for anything
+/// else. `http::Uri` lowercases those two schemes itself.
+fn url_parts(url: &str) -> Option<(String, String)> {
+    let uri: http::Uri = url.parse().ok()?;
+    let scheme = uri.scheme_str()?.to_string();
+    let host = uri.host().filter(|h| !h.is_empty())?.to_ascii_lowercase();
+    (scheme == "http" || scheme == "https").then_some((scheme, host))
 }
 
 fn command_line(server: &McpServerConfig) -> String {
@@ -415,6 +452,7 @@ mod tests {
                 command: "npx -y @modelcontextprotocol/server-github".into(),
                 enabled: true,
                 error: None,
+                warning: None,
                 state: McpServerState::NotStarted,
             }]
         );
@@ -446,12 +484,83 @@ mod tests {
         .unwrap();
         let rows: BTreeMap<String, McpServerItem> =
             items(&config).into_iter().map(|i| (i.name.clone(), i)).collect();
-        assert!(rows["remote"].error.as_deref().unwrap().contains("HTTP"));
+        assert!(rows["remote"].error.as_deref().unwrap().contains("not supported yet"));
         assert!(rows["nothing"].error.as_deref().unwrap().contains("no command"));
         assert_eq!(rows["nothing"].command, "--flag", "no leading space for the missing command");
         assert!(rows["free"].error.as_deref().unwrap().contains("weight"));
         assert!(rows["instant"].error.as_deref().unwrap().contains("timeoutSecs"));
         assert_eq!((rows["off"].enabled, rows["off"].error.clone()), (false, None));
+    }
+
+    /// Claude Code's and Cursor's HTTP entry, verbatim: the URL is the row's
+    /// command, the headers go nowhere but the file.
+    #[test]
+    fn an_http_entry_reads_as_is_and_its_headers_stay_out_of_the_row() {
+        let text = r#"{"mcpServers":{"ctx":{"type":"http","url":"https://mcp.example.com/mcp",
+            "headers":{"Authorization":"Bearer secret"}}}}"#;
+        let config = parse(text).unwrap();
+        let ctx = &config.mcp_servers["ctx"];
+        assert_eq!(ctx.url.as_deref(), Some("https://mcp.example.com/mcp"));
+        assert_eq!(ctx.headers["Authorization"], "Bearer secret");
+        let row = &items(&config)[0];
+        assert_eq!(row.command, "https://mcp.example.com/mcp");
+        assert_eq!(row.warning, None);
+        assert!(!format!("{row:?}").contains("secret"));
+        let written = serde_json::to_value(&config).unwrap();
+        assert_eq!(written["mcpServers"]["ctx"]["type"], "http", "type survives a save");
+        assert_eq!(written["mcpServers"]["ctx"]["headers"]["Authorization"], "Bearer secret");
+        let stdio = serde_json::to_value(&parse(r#"{"mcpServers":{"a":{"command":"x"}}}"#).unwrap()).unwrap();
+        assert!(stdio["mcpServers"]["a"].get("url").is_none() && stdio["mcpServers"]["a"].get("headers").is_none());
+    }
+
+    #[test]
+    fn an_http_entry_that_cannot_run_says_why() {
+        let config = parse(
+            r#"{"mcpServers":{
+                "both":{"command":"x","url":"https://a.example/mcp"},
+                "ftp":{"url":"ftp://a.example/mcp"},
+                "hostless":{"url":"https:///mcp"},
+                "port-only":{"url":"http://:8080/mcp"},
+                "words":{"url":"not a url"},
+                "spaced":{"url":" https://a.example/mcp"},
+                "legacy":{"type":"sse","url":"https://a.example/sse"},
+                "legacy-stdio":{"type":"sse","command":"x"}
+            }}"#,
+        )
+        .unwrap();
+        let rows: BTreeMap<String, McpServerItem> =
+            items(&config).into_iter().map(|i| (i.name.clone(), i)).collect();
+        let error = |name: &str| rows[name].error.clone().unwrap_or_default();
+        assert!(error("both").contains("both a command and a url"), "{}", error("both"));
+        for name in ["ftp", "hostless", "port-only", "words", "spaced"] {
+            assert!(error(name).contains("http:// or https://"), "{name}: {}", error(name));
+        }
+        assert!(error("legacy").contains("HTTP+SSE"), "{}", error("legacy"));
+        assert!(error("legacy-stdio").contains("HTTP+SSE"), "type is read whatever else the entry has");
+    }
+
+    /// Warned, not refused: a server on the local network may have no TLS.
+    #[test]
+    fn plain_http_off_this_machine_is_a_warning() {
+        let config = parse(
+            r#"{"mcpServers":{
+                "lan":{"url":"HTTP://Box.lan:8080/mcp"},
+                "tls":{"url":"https://box.lan/mcp"},
+                "local":{"url":"http://localhost:3000/mcp"},
+                "loop":{"url":"http://127.0.0.1:3000/mcp"},
+                "v6":{"url":"http://[::1]:3000/mcp"},
+                "cmd":{"command":"x"}
+            }}"#,
+        )
+        .unwrap();
+        let rows: BTreeMap<String, McpServerItem> =
+            items(&config).into_iter().map(|i| (i.name.clone(), i)).collect();
+        let warning = rows["lan"].warning.as_deref().unwrap();
+        assert!(warning.contains("box.lan") && warning.contains("unencrypted"), "{warning}");
+        for name in ["tls", "local", "loop", "v6", "cmd"] {
+            assert_eq!(rows[name].warning, None, "{name}");
+        }
+        assert!(!rows["lan"].error.as_deref().unwrap_or_default().contains("http://"), "a warning, not an error");
     }
 
     /// Two entries that would share a tool-name prefix: the second is the

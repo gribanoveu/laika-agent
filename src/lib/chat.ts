@@ -540,12 +540,16 @@ export type McpServerState =
   | { state: "exited"; error: string }
   | { state: "failed"; error: string };
 
-/** Mirrors `domain::mcp::McpServerItem`. `error` is why it will not start, when the entry alone says. */
+/**
+ * Mirrors `domain::mcp::McpServerItem`. `command` is the URL for an HTTP server. `error` is why it
+ * will not start, when the entry alone says; `warning` is something wrong that does not stop it.
+ */
 export type McpServerItem = {
   name: string;
   command: string;
   enabled: boolean;
   error: string | null;
+  warning: string | null;
   state: McpServerState;
 };
 /** The file (`text`, for the editor), where it is, and its servers as rows. */

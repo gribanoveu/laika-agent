@@ -22,6 +22,7 @@ Claude Code Desktop.
 | [11-mutation-testing.md](11-mutation-testing.md) | Как тесты проверяются мутациями: метод переноса, исходы, `scripts/mutate.py` |
 | [12-tool-feedback.md](12-tool-feedback.md) | Инструменты агента: что чинить по бенчмарку модели — баги, подсказки, память между ходами, отложенное |
 | [15-terminal.md](15-terminal.md) | Терминал пользователя: PTY + xterm.js, решения, этапы A–C (бэкенд, UI, агент читает экран) |
+| [17-mcp-http.md](17-mcp-http.md) | MCP-серверы по HTTP: свой клиент на `ureq` вместо `rmcp`, решения, шаги F-7.4e…g, отложенное (OAuth, старый SSE) |
 
 ## Три тезиса, из которых растёт всё остальное
 

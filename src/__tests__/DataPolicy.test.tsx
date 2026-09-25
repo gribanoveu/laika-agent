@@ -11,6 +11,7 @@ const server = (name: string, enabled: boolean): McpServerItem => ({
   command: "npx",
   enabled,
   error: null,
+  warning: null,
   state: { state: "notStarted" },
 });
 const hook: HookItem = { event: "PreToolUse", matcher: "", command: "./guard.sh", timeoutSecs: 60, problem: null };

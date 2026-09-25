@@ -20,7 +20,7 @@ mock.module("@tauri-apps/api/core", () => ({
       } catch {
         return Promise.reject("the MCP configuration is not valid: EOF");
       }
-      disk = { ...disk, text, servers: [{ name: "pasted", command: "npx x", enabled: true, error: null, state: { state: "notStarted" } }] };
+      disk = { ...disk, text, servers: [{ name: "pasted", command: "npx x", enabled: true, error: null, warning: null, state: { state: "notStarted" } }] };
       return Promise.resolve(structuredClone(disk));
     }
     if (command === "mcp_server_connect") {
@@ -58,13 +58,13 @@ beforeEach(() => {
     path: "/home/.laika/mcp.json",
     text: '{\n  "mcpServers": {}\n}\n',
     servers: [
-      { name: "github", command: "npx -y server-github", enabled: true, error: null, state: { state: "running", tools: [
+      { name: "github", command: "npx -y server-github", enabled: true, error: null, warning: null, state: { state: "running", tools: [
         { name: "create_issue", description: "Opens an issue" },
         { name: "search_code", description: "Searches code" },
         { name: "get_file", description: "Reads a file" },
       ] } },
-      { name: "idle", command: "npx -y server-idle", enabled: true, error: null, state: { state: "notStarted" } },
-      { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet", state: { state: "notStarted" } },
+      { name: "idle", command: "npx -y server-idle", enabled: true, error: null, warning: null, state: { state: "notStarted" } },
+      { name: "remote", command: "", enabled: true, error: "HTTP servers are not supported yet", warning: null, state: { state: "notStarted" } },
     ],
   };
   calls = [];
@@ -193,6 +193,23 @@ describe("the MCP tab", () => {
     expect(screen.getByText("failed")).toBeTruthy();
     expect(screen.getByText("Switch off and on to try again")).toBeTruthy();
     expect(screen.queryByText("stale")).toBeNull();
+  });
+
+  test("an entry's warning shows in the open row, and the process's own trouble wins over it", () => {
+    const server = disk.servers[1];
+    const warning = "box.lan is reached over plain http";
+    panel({
+      ...disk,
+      servers: [
+        { ...server, name: "lan", command: "http://box.lan/mcp", warning },
+        { ...server, name: "bad", command: "http://bad.lan/mcp", warning, state: { state: "failed", error: "refused" } },
+      ],
+    });
+    fireEvent.click(screen.getByText("http://box.lan/mcp"));
+    expect(screen.getByText(warning)).toBeTruthy();
+    fireEvent.click(screen.getByText("http://bad.lan/mcp"));
+    expect(screen.getByText("refused")).toBeTruthy();
+    expect(screen.getAllByText(warning)).toHaveLength(1);
   });
 
   test("opening a server that has not started asks for it, and only on the way open", () => {
