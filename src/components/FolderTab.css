@@ -1,11 +1,15 @@
-/* A strip joined to the top of the composer, inset from its sides. */
+/* A strip joined to the top of the composer, inset from its sides. Outlined:
+   in a light theme panel-soft is nearly the window's own colour, and without
+   an edge the tab dissolves into it. */
 .folder-tab {
   display: flex;
   align-items: center;
   gap: 12px;
   margin: 0 24px;
-  padding: 4px 12px 3px 8px;
+  padding: 3px 11px 3px 7px;
   background: var(--bg-panel-soft);
+  border: 1px solid var(--border);
+  border-bottom: 0;
   border-radius: var(--radius) var(--radius) 0 0;
   min-width: 0;
 }
