@@ -153,6 +153,7 @@ pub fn run() {
             commands::settings::llm_active_provider_set,
             commands::settings::llm_debug_logging_set,
             commands::settings::llm_models_list,
+            commands::settings::llm_models_probe,
             commands::settings::agent_readiness,
             commands::skills::skills_list,
             commands::mcp::mcp_config_get,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   listModels,
   llmSettings,
+  probeModels,
   removeProvider,
   saveApiKey,
   saveProvider,
@@ -78,6 +79,13 @@ export function useLlmSettings() {
     }
   }, [settings]);
 
+  /** What the form's provider serves. Kept for the composer's menu too, once it is saved. */
+  const probe = useCallback(async (provider: ProviderConfig, apiKey: string | null) => {
+    const list = await probeModels(provider, apiKey);
+    setServed((prev) => ({ ...prev, [provider.id]: list }));
+    return list;
+  }, []);
+
   /** Makes `providerId` active and pins `model` on it. */
   const pickModel = useCallback(
     (providerId: string, model: string | null) => {
@@ -102,6 +110,8 @@ export function useLlmSettings() {
     models: modelChoices(settings, served),
     loadModels,
     pickModel,
+    probe,
+    served,
   };
 }
 

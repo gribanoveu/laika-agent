@@ -7,11 +7,12 @@
 
 use std::sync::Arc;
 
+use secrecy::SecretString;
 use serde::Serialize;
 use tauri::State;
 
 use crate::domain::settings::ProviderConfig;
-use crate::infra::{llm_credentials_store, settings_store};
+use crate::infra::{http_agent, llm_credentials_store, settings_store};
 use crate::services::llm_session;
 
 use super::chat::AgentState;
@@ -51,12 +52,24 @@ pub fn llm_settings_get() -> Result<LlmSettingsView, String> {
 }
 
 #[tauri::command]
-pub fn llm_provider_save(provider: ProviderConfig) -> Result<(), String> {
+pub fn llm_provider_save(mut provider: ProviderConfig) -> Result<(), String> {
     if provider.id.trim().is_empty() {
         return Err("a provider needs a name".to_string());
     }
     if provider.base_url.trim().is_empty() {
         return Err("a provider needs a base URL".to_string());
+    }
+    if provider.temperature.is_some_and(|t| !(0.0..=2.0).contains(&t)) {
+        return Err("temperature is between 0 and 2".to_string());
+    }
+    if provider.top_p.is_some_and(|p| !(0.0..=1.0).contains(&p)) {
+        return Err("top P is between 0 and 1".to_string());
+    }
+    // Refused here rather than at the first turn, where a certificate that
+    // does not parse would read as a provider that does not answer.
+    provider.trusted_cert_pem = provider.trusted_cert_pem.filter(|pem| !pem.trim().is_empty());
+    if let Some(pem) = &provider.trusted_cert_pem {
+        http_agent::parse_trusted_certs(pem).map_err(|e| format!("the certificate: {}", e.0))?;
     }
     llm_session::save_provider(provider).map_err(|e| e.to_string())
 }
@@ -97,6 +110,19 @@ pub async fn llm_models_list(id: Option<String>) -> Result<Vec<String>, String> 
             .list_models()
             .map(|models| models.into_iter().map(|m| m.id).collect())
             .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("the request thread failed: {e}"))?
+}
+
+/// What a provider serves, asked from the settings form before it is saved —
+/// so a refresh reflects the URL, key and certificate as typed. `api_key`
+/// `None` uses the stored one.
+#[tauri::command]
+pub async fn llm_models_probe(provider: ProviderConfig, api_key: Option<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = api_key.filter(|k| !k.trim().is_empty()).map(|k| SecretString::from(k.trim().to_string()));
+        llm_session::list_models_for(&provider, api_key).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("the request thread failed: {e}"))?
@@ -192,6 +218,31 @@ mod tests {
             llm_api_key_save("gateway".to_string(), "  ".to_string()).unwrap();
 
             assert!(!llm_settings_get().unwrap().providers[0].has_api_key);
+        });
+    }
+
+    #[test]
+    fn sampling_out_of_range_is_refused_and_in_range_kept() {
+        with_app_dir("cmd-settings-sampling", || {
+            let with = |temperature, top_p| ProviderConfig { temperature, top_p, ..provider("gateway") };
+            assert!(llm_provider_save(with(Some(2.5), None)).is_err());
+            assert!(llm_provider_save(with(Some(-0.1), None)).is_err());
+            assert!(llm_provider_save(with(None, Some(1.5))).is_err());
+            llm_provider_save(with(Some(2.0), Some(0.0))).unwrap();
+            let saved = &llm_settings_get().unwrap().providers[0].config;
+            assert_eq!((saved.temperature, saved.top_p), (Some(2.0), Some(0.0)));
+        });
+    }
+
+    /// A blank box is no certificate; a damaged one is said so at save.
+    #[test]
+    fn a_certificate_is_checked_at_save_and_a_blank_one_is_none() {
+        with_app_dir("cmd-settings-cert", || {
+            let with = |pem: &str| ProviderConfig { trusted_cert_pem: Some(pem.to_string()), ..provider("gateway") };
+            let err = llm_provider_save(with("not a certificate")).expect_err("refused");
+            assert!(err.contains("certificate"), "{err}");
+            llm_provider_save(with("  \n")).unwrap();
+            assert_eq!(llm_settings_get().unwrap().providers[0].config.trusted_cert_pem, None);
         });
     }
 

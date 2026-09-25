@@ -78,13 +78,6 @@
 .settings-hint {
   margin: -6px 0 14px 144px;
 }
-.settings .provider-actions,
-.settings .provider-settings > .modal-note {
-  margin-left: 144px;
-}
-.settings .provider-settings > .modal-note {
-  margin-top: 10px;
-}
 .settings-pane > .settings-hint {
   max-width: 416px;
 }

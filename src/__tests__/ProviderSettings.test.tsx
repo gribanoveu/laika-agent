@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
 import { ProviderSettings } from "../components/ProviderSettings";
 import type { LlmSettings, ProviderConfig } from "../lib/chat";
 
@@ -277,5 +277,186 @@ describe("saving", () => {
 
     fireEvent.change(field("API key"), { target: { value: "sk-newer" } });
     expect(screen.queryByText("Saved.")).toBeNull();
+  });
+});
+
+describe("the model list", () => {
+  const many = Array.from({ length: 12 }, (_, i) => `model-${i}`).concat("claude-sonnet-4-5");
+
+  const listed = (served: Record<string, string[]>, onProbe?: (p: ProviderConfig, k: string | null) => Promise<string[]>) => {
+    const saved: Saved[] = [];
+    render(
+      <ProviderSettings
+        settings={settings()}
+        busy={false}
+        error={null}
+        onSave={(provider, apiKey) => saved.push({ provider, apiKey })}
+        onRemove={() => {}}
+        onSelect={() => {}}
+        served={served}
+        onProbe={onProbe}
+      />,
+    );
+    return saved;
+  };
+  const saveNow = () =>
+    act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+
+  test("a listed model is picked as the default and sent", async () => {
+    const saved = listed({ local: ["qwen", "llama"] });
+    expect(screen.getByText("qwen").closest("button")?.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(screen.getByText("llama"));
+    await saveNow();
+    expect(saved[0]?.provider.model).toBe("llama");
+  });
+
+  test("auto is a choice, and sends no model", async () => {
+    const saved = listed({ local: ["qwen", "llama"] });
+    fireEvent.click(screen.getByText("Auto"));
+    await saveNow();
+    expect(saved[0]?.provider.model).toBeNull();
+  });
+
+  test("a short list has no search, a long one does", () => {
+    listed({ local: ["qwen", "llama"] });
+    expect(document.querySelector('input[type="search"]')).toBeNull();
+    cleanup();
+    listed({ local: many });
+    expect(document.querySelector('input[type="search"]')).toBeTruthy();
+  });
+
+  test("the search narrows by every word, and Enter picks the first match without saving", async () => {
+    const saved = listed({ local: many });
+    const search = document.querySelector('input[type="search"]') as HTMLInputElement;
+
+    fireEvent.change(search, { target: { value: "sonnet 4" } });
+    expect(screen.queryByText("model-3")).toBeNull();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(saved).toHaveLength(0);
+
+    await saveNow();
+    expect(saved[0]?.provider.model).toBe("claude-sonnet-4-5");
+  });
+
+  test("a name the provider does not list can still be used", async () => {
+    const saved = listed({ local: many });
+    fireEvent.change(document.querySelector('input[type="search"]') as HTMLInputElement, {
+      target: { value: "my-finetune" },
+    });
+    fireEvent.click(screen.getByText("Use “my-finetune”"));
+    await saveNow();
+    expect(saved[0]?.provider.model).toBe("my-finetune");
+  });
+
+  /// The pinned model is what the next turn sends: gone from the list is not gone.
+  test("a default the provider no longer lists stays in view", () => {
+    listed({ local: ["llama"] });
+    expect(screen.getByText("not listed")).toBeTruthy();
+    expect(screen.getByText("qwen").closest("button")?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  test("refresh asks with the form as typed, key included", async () => {
+    const asked: { provider: ProviderConfig; key: string | null }[] = [];
+    listed({ local: ["qwen"] }, async (provider, key) => {
+      asked.push({ provider, key });
+      return ["qwen"];
+    });
+    fireEvent.change(field("Base URL"), { target: { value: "http://10.0.0.5/v1" } });
+    fireEvent.change(field("API key"), { target: { value: "sk-typed" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Refresh"));
+    });
+
+    expect(asked.at(-1)?.provider.baseUrl).toBe("http://10.0.0.5/v1");
+    expect(asked.at(-1)?.key).toBe("sk-typed");
+  });
+
+  test("a stored provider with a key is asked once when opened, and a refusal is shown", async () => {
+    const asked: string[] = [];
+    await act(async () => {
+      listed({}, async (provider) => {
+        asked.push(provider.id);
+        throw new Error("tls: unknown issuer");
+      });
+    });
+    expect(asked).toEqual(["local"]);
+    expect(screen.getByText(/unknown issuer/)).toBeTruthy();
+  });
+});
+
+describe("sampling", () => {
+  const slider = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  test("unset is sent as nothing, a moved slider as its number", async () => {
+    const { saved } = form();
+    expect(screen.getAllByText("default")).toHaveLength(2);
+
+    fireEvent.change(slider("Temperature"), { target: { value: "0.3" } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.temperature).toBe(0.3);
+    expect(saved[0]?.provider.topP).toBeNull();
+  });
+
+  test("a stored value opens rounded, and reset returns it to the default", async () => {
+    const { saved } = form({
+      providers: [{ id: "local", baseUrl: "u", temperature: 0.699999988, topP: 0.9, hasApiKey: true }],
+    });
+    expect(screen.getByText("0.70")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Reset Top P"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.temperature).toBe(0.7);
+    expect(saved[0]?.provider.topP).toBeNull();
+  });
+
+  test("Anthropic with both set is warned about", () => {
+    form({
+      providers: [{ id: "c", kind: "anthropic", baseUrl: "u", temperature: 0.5, topP: 0.9, hasApiKey: true }],
+      activeProviderId: "c",
+    });
+    expect(screen.getByText(/refuse a request that sets both/)).toBeTruthy();
+  });
+});
+
+describe("the certificate", () => {
+  const PEM = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+
+  test("none is sent as nothing", async () => {
+    const { saved } = form();
+    expect(screen.getByText(/public roots/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.trustedCertPem).toBeNull();
+  });
+
+  test("a pasted one is counted and sent", async () => {
+    const { saved } = form();
+    fireEvent.click(screen.getByText("Paste"));
+    fireEvent.change(document.querySelector("textarea") as HTMLTextAreaElement, { target: { value: PEM + PEM } });
+    expect(screen.getByText(/2 certificates/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.trustedCertPem).toBe(PEM + PEM);
+  });
+
+  test("a stored one is kept, and removing it sends nothing", async () => {
+    const { saved } = form({ providers: [{ id: "local", baseUrl: "u", trustedCertPem: PEM, hasApiKey: true }] });
+    expect(screen.getByText(/1 certificate —/)).toBeTruthy();
+
+    const removes = screen.getAllByText("Remove");
+    fireEvent.click(removes[0]); // the certificate's, above the provider's
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.trustedCertPem).toBeNull();
   });
 });

@@ -51,17 +51,20 @@ pub struct OpenAiCompatibleProvider {
     api_key: SecretString,
     request_headers: HashMap<String, String>,
     temperature: Option<f32>,
+    top_p: Option<f32>,
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
 }
 
 impl OpenAiCompatibleProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         agent: ureq::Agent,
         base_url: String,
         api_key: SecretString,
         request_headers: HashMap<String, String>,
         temperature: Option<f32>,
+        top_p: Option<f32>,
         max_tokens: Option<u32>,
         reasoning_effort: Option<String>,
     ) -> Self {
@@ -71,6 +74,7 @@ impl OpenAiCompatibleProvider {
             api_key,
             request_headers,
             temperature,
+            top_p,
             max_tokens,
             reasoning_effort,
         }
@@ -116,6 +120,7 @@ impl OpenAiCompatibleProvider {
             stream,
             stream_options: stream.then_some(StreamOptions { include_usage: true }),
             temperature: self.temperature,
+            top_p: self.top_p,
             max_tokens: self.max_tokens,
             reasoning_effort: self.reasoning_effort.clone(),
         }
@@ -345,6 +350,8 @@ struct WireRequest<'a> {
     stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1069,6 +1076,7 @@ pub(super) mod tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -1270,6 +1278,20 @@ pub(super) mod tests {
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             ["m1", "m2"]
         );
+    }
+
+    /// Sampling goes out only when set: some reasoning models refuse any
+    /// temperature but their own.
+    #[test]
+    fn sampling_is_sent_only_when_set() {
+        let request = ChatRequest { messages: vec![], tools: vec![], model: "m".into() };
+        let unset = serde_json::to_value(provider("http://unused".into()).body(&request, true)).unwrap();
+        assert!(unset.get("temperature").is_none() && unset.get("top_p").is_none());
+
+        let mut p = provider("http://unused".into());
+        (p.temperature, p.top_p) = (Some(0.25), Some(0.5));
+        let set = serde_json::to_value(p.body(&request, true)).unwrap();
+        assert_eq!((set["temperature"].as_f64(), set["top_p"].as_f64()), (Some(0.25), Some(0.5)));
     }
 
     /// An empty `tools` array with `tool_choice: "auto"` is pointless, and some

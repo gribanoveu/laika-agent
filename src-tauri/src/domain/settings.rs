@@ -53,6 +53,10 @@ pub struct ProviderConfig {
     /// field.
     #[serde(default)]
     pub temperature: Option<f32>,
+    /// Nucleus sampling. `None` sends nothing, as with `temperature` — and
+    /// several Anthropic models refuse a request that sets both.
+    #[serde(default)]
+    pub top_p: Option<f32>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
     /// How big this model's context window is, in tokens. `None` means it

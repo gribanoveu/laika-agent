@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use secrecy::SecretString;
+
 use crate::domain::llm::{LlmError, LlmProvider};
 use crate::domain::settings::{ProviderConfig, SettingsError, DEFAULT_CONTEXT_LIMIT};
 use crate::infra::{llm_credentials_store, llm_providers, settings_store};
@@ -80,6 +82,15 @@ pub fn effective_model(
         })?;
     pin_model(&config.id, &model).map_err(settings_error)?;
     Ok(model)
+}
+
+/// What `config` serves, asked before it is saved — the settings form's
+/// model list. The key is the one typed into the form, or else the one stored
+/// under the provider's name.
+pub fn list_models_for(config: &ProviderConfig, api_key: Option<SecretString>) -> Result<Vec<String>, LlmError> {
+    let api_key = api_key.or_else(|| llm_credentials_store::get_api_key(&config.id));
+    let provider = llm_providers::provider_for(config, api_key)?;
+    Ok(provider.list_models()?.into_iter().map(|m| m.id).collect())
 }
 
 /// Every configured provider, in the order the user added them.

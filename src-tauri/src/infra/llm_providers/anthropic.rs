@@ -53,21 +53,24 @@ pub struct AnthropicProvider {
     api_key: SecretString,
     request_headers: HashMap<String, String>,
     temperature: Option<f32>,
+    top_p: Option<f32>,
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
 }
 
 impl AnthropicProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         agent: ureq::Agent,
         base_url: String,
         api_key: SecretString,
         request_headers: HashMap<String, String>,
         temperature: Option<f32>,
+        top_p: Option<f32>,
         max_tokens: Option<u32>,
         reasoning_effort: Option<String>,
     ) -> Self {
-        Self { agent, base_url, api_key, request_headers, temperature, max_tokens, reasoning_effort }
+        Self { agent, base_url, api_key, request_headers, temperature, top_p, max_tokens, reasoning_effort }
     }
 
     fn url(&self, suffix: &str) -> String {
@@ -111,6 +114,7 @@ impl LlmProvider for AnthropicProvider {
             &request,
             self.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             self.temperature,
+            self.top_p,
         );
         if let Some(effort) = &self.reasoning_effort {
             for (key, value) in thinking_params(effort) {
@@ -290,7 +294,7 @@ fn stream_error(error: ErrorBody) -> LlmError {
 
 // ---------------------------------------------------------------- wire out
 
-fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Value {
+fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>, top_p: Option<f32>) -> Value {
     let messages = &request.messages;
     // What the app says before the conversation, and the conversation. Nothing
     // comes after it: the checklist lives in the history.
@@ -321,6 +325,9 @@ fn body(request: &ChatRequest, max_tokens: u32, temperature: Option<f32>) -> Val
     }
     if let Some(temperature) = temperature {
         body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = top_p {
+        body["top_p"] = json!(top_p);
     }
     body
 }
@@ -566,6 +573,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -595,7 +603,7 @@ mod tests {
             LlmMessage::assistant("done"),
         ];
         let wire = json!(wire_messages(&messages));
-        let body = body(&request(messages), 100, Some(0.5));
+        let body = body(&request(messages), 100, Some(0.5), Some(0.9));
 
         assert_eq!(
             body["system"],
@@ -618,6 +626,7 @@ mod tests {
             ])
         );
         assert_eq!((body["max_tokens"].as_u64(), body["temperature"].as_f64()), (Some(100), Some(0.5)));
+        assert_eq!(body["top_p"].as_f64().map(|p| (p * 100.0).round()), Some(90.0));
         assert_eq!(body["stream"], true);
     }
 
@@ -633,7 +642,7 @@ mod tests {
             LlmMessage::tool_requests(vec![call("c1", "{}")]),
             LlmMessage::tool_result("c1", "result"),
         ];
-        let body = body(&request(messages), 1, None);
+        let body = body(&request(messages), 1, None, None);
         let cached = json!({"type":"ephemeral"});
 
         assert_eq!(body["system"][0]["cache_control"], cached);
@@ -657,9 +666,10 @@ mod tests {
             description: "search".into(),
             parameters: json!({"type":"object"}),
         }];
-        let body = body(&req, 1, None);
+        let body = body(&req, 1, None, None);
         assert_eq!(body["tools"], json!([{"name":"grep","description":"search","input_schema":{"type":"object"}}]));
         assert!(body.get("temperature").is_none(), "unset is not sent");
+        assert!(body.get("top_p").is_none(), "unset is not sent");
         assert!(body.get("system").is_none(), "no system messages, no field");
     }
 

@@ -326,6 +326,8 @@ export type ProviderConfig = {
   trustedCertPem?: string | null;
   requestHeaders?: Record<string, string>;
   temperature?: number | null;
+  /** Nucleus sampling. Unset sends nothing, leaving the model's default. */
+  topP?: number | null;
   maxTokens?: number | null;
   /** The model's context window in tokens. Unset means the app does not know. */
   contextLimit?: number | null;
@@ -382,6 +384,15 @@ export async function setDebugLogging(enabled: boolean): Promise<void> {
 export async function listModels(id?: string): Promise<string[]> {
   requireBackend();
   return invoke<string[]>("llm_models_list", { id: id ?? null });
+}
+
+/**
+ * What `provider` serves, as the form has it now — saved or not. `apiKey`
+ * `null` uses the stored key.
+ */
+export async function probeModels(provider: ProviderConfig, apiKey: string | null): Promise<string[]> {
+  requireBackend();
+  return invoke<string[]>("llm_models_probe", { provider, apiKey });
 }
 
 export async function readiness(): Promise<Readiness> {
