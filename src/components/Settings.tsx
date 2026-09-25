@@ -42,7 +42,7 @@ const SOURCES: Record<SkillSourceItem["id"], { badge: string; title: string; des
     title: "The repository's",
     desc: ".claude/skills and .agents/skills, from the open folder up to the git root",
   },
-  app: { badge: "LA", title: "Laika's", desc: "This app's own skills folder" },
+  app: { badge: "KI", title: "Kibo's", desc: "This app's own skills folder" },
   agents: { badge: "AG", title: "Codex and other agents'", desc: "Where skill installers put them" },
   claude: { badge: "CL", title: "Claude Code's", desc: "Your personal Claude Code skills" },
 };

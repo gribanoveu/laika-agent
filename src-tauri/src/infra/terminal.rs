@@ -480,12 +480,12 @@ mod tests {
         let (sink, seen) = screen();
         terminals.attach(id, 1, sink).unwrap();
         // One byte at a time, the way keys arrive: the queue keeps the order.
-        for byte in "echo laika-$((6*7)); pwd; echo $TERM\n".bytes() {
+        for byte in "echo kibo-$((6*7)); pwd; echo $TERM\n".bytes() {
             terminals.write(id, vec![byte]).unwrap();
         }
         until("the answer", || {
             let out = text(&seen);
-            out.contains("laika-42") && out.contains(&dir.display().to_string()) && out.contains("xterm-256color")
+            out.contains("kibo-42") && out.contains(&dir.display().to_string()) && out.contains("xterm-256color")
         });
     }
 
@@ -613,7 +613,7 @@ mod tests {
         let (sink, seen) = screen();
         terminals.attach(id, 1, sink).unwrap();
         let started = Instant::now();
-        type_line(&terminals, id, "yes laika | head -n 200000; echo done-$((2*2))");
+        type_line(&terminals, id, "yes kibo | head -n 200000; echo done-$((2*2))");
         until("the end of it", || text(&seen).contains("done-4"));
         let frames = seen.lock().unwrap().1 as u128;
         let at_most = started.elapsed().as_millis() / FRAME.as_millis() + 2;
@@ -740,9 +740,9 @@ mod tests {
     fn the_shell_is_told_it_is_in_an_xterm_in_the_folder() {
         let mut command = CommandBuilder::new_default_prog();
         command.env("TERM_PROGRAM", "iTerm.app");
-        prepare(&mut command, Path::new("/work/laika"));
-        assert_eq!(command.get_cwd().map(PathBuf::from), Some(PathBuf::from("/work/laika")));
-        assert_eq!(command.get_env("PWD"), Some("/work/laika".as_ref()));
+        prepare(&mut command, Path::new("/work/kibo"));
+        assert_eq!(command.get_cwd().map(PathBuf::from), Some(PathBuf::from("/work/kibo")));
+        assert_eq!(command.get_env("PWD"), Some("/work/kibo".as_ref()));
         assert_eq!(command.get_env("TERM"), Some("xterm-256color".as_ref()));
         assert_eq!(command.get_env("COLORTERM"), Some("truecolor".as_ref()));
         assert_eq!(command.get_env("TERM_PROGRAM"), None);

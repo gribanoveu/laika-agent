@@ -21,7 +21,7 @@ type Over = {
 const tab = (over: Over = {}) =>
   render(
     <FolderTab
-      path={over.path === undefined ? "/work/laika" : over.path}
+      path={over.path === undefined ? "/work/kibo" : over.path}
       recent={over.recent ?? []}
       branch={over.branch}
       index={over.index}
@@ -50,17 +50,17 @@ describe("the folder", () => {
   /// Picking the folder already open is not a switch: it would reload its chats for nothing.
   test("names the open one, the whole path on hover, and switches only to another", () => {
     const opened: string[] = [];
-    tab({ recent: ["/work/laika", "/work/atlas"], onOpenFolder: (p) => opened.push(p) });
-    expect(trigger().textContent).toContain("laika");
-    expect(trigger().getAttribute("title")).toBe("/work/laika");
+    tab({ recent: ["/work/kibo", "/work/atlas"], onOpenFolder: (p) => opened.push(p) });
+    expect(trigger().textContent).toContain("kibo");
+    expect(trigger().getAttribute("title")).toBe("/work/kibo");
 
     fireEvent.click(trigger());
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "laika/work/laika",
+      "kibo/work/kibo",
       "atlas/work/atlas",
       "Open folder…",
     ]);
-    fireEvent.click(screen.getByRole("option", { name: /^laika/ }));
+    fireEvent.click(screen.getByRole("option", { name: /^kibo/ }));
     fireEvent.click(trigger());
     fireEvent.click(screen.getByRole("option", { name: /^atlas/ }));
     expect(opened).toEqual(["/work/atlas"]);
@@ -81,7 +81,7 @@ describe("the branch", () => {
 
 describe("the index", () => {
   test("its state is shown, with the detail on hover", () => {
-    tab({ index: fromSnapshot({ root: "/work/laika", syncing: false, embedded: 3, skipped: 2, embeddingError: null }) });
+    tab({ index: fromSnapshot({ root: "/work/kibo", syncing: false, embedded: 3, skipped: 2, embeddingError: null }) });
     const badge = screen.getByRole("status");
     expect(badge.textContent).toBe("Indexed");
     expect(badge.getAttribute("title")).toContain("2 files not indexed");

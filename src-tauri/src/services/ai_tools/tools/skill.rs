@@ -40,7 +40,7 @@ pub fn skill(args: &SkillArgs, deps: &ToolDeps) -> Result<ToolResult, ToolError>
 /// anything else the catalog found in the repository. Said, because a
 /// user's skill may be about another stack than this one.
 fn provenance(dir: &std::path::Path) -> String {
-    const USER: [&str; 3] = ["Laika's skills folder", "~/.agents/skills", "~/.claude/skills"];
+    const USER: [&str; 3] = ["Kibo's skills folder", "~/.agents/skills", "~/.claude/skills"];
     let user = skills_store::user_dirs().ok().and_then(|dirs| dirs.iter().position(|d| dir.starts_with(d)));
     match user {
         Some(i) => format!("{} — the user's own, shared by every project, not this repository's", USER[i]),
@@ -120,7 +120,7 @@ mod tests {
                     name: "release".into(),
                     instructions: "Bump the version.\n".into(),
                     files: vec!["checklist.md".into()],
-                    from: "Laika's skills folder — the user's own, shared by every project, not this repository's".into(),
+                    from: "Kibo's skills folder — the user's own, shared by every project, not this repository's".into(),
                 }
             );
             assert_eq!(

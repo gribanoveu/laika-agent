@@ -6,7 +6,7 @@ import type { RuleListItem, SkillListItem, SkillsView } from "../lib/chat";
 // so each tab re-reads them; a switch is shown at once and then settled by
 // what the backend saved.
 
-let disk: SkillsView = { dir: "/home/.laika/skills", skills: [] };
+let disk: SkillsView = { dir: "/home/.kibo/skills", skills: [] };
 let calls: string[] = [];
 let failToggle = false;
 // Holds a switch's save until the test lets it go, to see what is shown meanwhile.
@@ -56,7 +56,7 @@ const skill = (name: string, enabled = true, extra: Partial<SkillListItem> = {})
   enabled,
   error: null,
   source: "user",
-  path: `/home/.laika/skills/${name}`,
+  path: `/home/.kibo/skills/${name}`,
   shadowedBy: null,
   ...extra,
 });
@@ -64,7 +64,7 @@ const theirs = (name: string, extra: Partial<SkillListItem> = {}) =>
   skill(name, true, { source: "project", path: `/repo/.claude/skills/${name}`, ...extra });
 
 beforeEach(() => {
-  disk = { dir: "/home/.laika/skills", skills: [skill("release"), skill("review")], sources: [] };
+  disk = { dir: "/home/.kibo/skills", skills: [skill("release"), skill("review")], sources: [] };
   calls = [];
   failToggle = false;
   holdToggle = null;
@@ -223,16 +223,16 @@ describe("the skills tab", () => {
   });
 
   test("an empty folder says where skills go, the repository's folders too", () => {
-    panel({ dir: "/home/.laika/skills", skills: [] });
+    panel({ dir: "/home/.kibo/skills", skills: [] });
     expect(
-      screen.getByText(/in \/home\/\.laika\/skills, ~\/\.agents\/skills or ~\/\.claude\/skills for every repository, or in the repository's \.claude\/skills or \.agents\/skills/),
+      screen.getByText(/in \/home\/\.kibo\/skills, ~\/\.agents\/skills or ~\/\.claude\/skills for every repository, or in the repository's \.claude\/skills or \.agents\/skills/),
     ).toBeTruthy();
     expect(screen.queryByText("This repository")).toBeNull();
   });
 
   test("a copy hidden by another of the user's names that folder, not its whole path", () => {
     panel({
-      dir: "/home/.laika/skills",
+      dir: "/home/.kibo/skills",
       skills: [
         skill("rspack-debugging", true, { path: "/Users/me/.agents/skills/rspack-debugging" }),
         skill("rspack-debugging", true, {
@@ -254,7 +254,7 @@ describe("the skills tab", () => {
     const toggled: [string, boolean][] = [];
     panel(
       {
-        dir: "/home/.laika/skills",
+        dir: "/home/.kibo/skills",
         skills: [
           theirs("release"),
           skill("release", true, { shadowedBy: "/repo/.claude/skills/release" }),
@@ -271,7 +271,7 @@ describe("the skills tab", () => {
     expect(screen.getByText("hidden")).toBeTruthy();
     expect(screen.getByText("Used instead: this repository")).toBeTruthy();
     // Each of the user's says which folder it is from.
-    expect(screen.getByText("~/.laika/skills")).toBeTruthy();
+    expect(screen.getByText("~/.kibo/skills")).toBeTruthy();
     expect(screen.getByText("~/.agents/skills")).toBeTruthy();
 
     // The switch is by name, whichever row it is on.

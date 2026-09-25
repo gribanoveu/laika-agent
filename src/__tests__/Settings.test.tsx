@@ -8,7 +8,7 @@ import type { SkillsView } from "../lib/chat";
 
 const SOURCES: SkillsView["sources"] = [
   { id: "project", path: "/repo", enabled: true },
-  { id: "app", path: "/Users/me/.laika/skills", enabled: true },
+  { id: "app", path: "/Users/me/.kibo/skills", enabled: true },
   { id: "agents", path: "/Users/me/.agents/skills", enabled: false },
   { id: "claude", path: "/Users/me/.claude/skills", enabled: true },
 ];
@@ -24,7 +24,7 @@ const dialog = (debugLogging = false) => {
   render(
     <Settings
       skills={{
-        view: { dir: "/Users/me/.laika/skills", skills: [], sources: SOURCES },
+        view: { dir: "/Users/me/.kibo/skills", skills: [], sources: SOURCES },
         error: null,
         onToggle: (id, on) => sources.push([id, on]),
       }}
@@ -83,7 +83,7 @@ describe("the settings dialog", () => {
   test("Skills lists the folders skills come from, in the order a name is looked up, each with a switch", () => {
     const { sources } = dialog();
     fireEvent.click(screen.getByText("Skills"));
-    const titles = ["The repository's", "Laika's", "Codex and other agents'", "Claude Code's"].map((t) => screen.getByText(t));
+    const titles = ["The repository's", "Kibo's", "Codex and other agents'", "Claude Code's"].map((t) => screen.getByText(t));
     for (let i = 1; i < titles.length; i++) {
       expect(titles[i - 1].compareDocumentPosition(titles[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }

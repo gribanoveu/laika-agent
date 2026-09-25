@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 #[cfg(not(test))]
 pub fn dir() -> Result<PathBuf, String> {
     dirs::home_dir()
-        .map(|home| home.join(".laika"))
+        .map(|home| home.join(".kibo"))
         .ok_or_else(|| "no home directory".to_string())
 }
 

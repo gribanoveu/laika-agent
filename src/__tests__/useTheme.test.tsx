@@ -32,18 +32,10 @@ describe("the theme", () => {
     expect(result.current.choice).toEqual({ mode: "system", light: "latte", dark: "one-dark" });
   });
 
-  test("an older build's single name carries over as a mode and a palette", () => {
-    localStorage.setItem("atlas-cli-theme", "one-dark");
-    expect(renderHook(() => useTheme()).result.current.choice).toEqual({ mode: "dark", light: "light", dark: "one-dark" });
-    localStorage.clear();
-    localStorage.setItem("atlas-cli-theme", "light");
-    expect(renderHook(() => useTheme()).result.current.choice.mode).toBe("light");
-  });
-
   test("what does not fit — a theme since removed, a palette on the wrong side — is the default", () => {
-    localStorage.setItem("atlas-cli-theme", "github-light");
-    expect(renderHook(() => useTheme()).result.current.choice.mode).toBe("system");
-    localStorage.setItem("laika-theme", JSON.stringify({ mode: "dark", light: "one-dark", dark: "dark" }));
+    localStorage.setItem("kibo-theme", JSON.stringify({ mode: "light", light: "github-light", dark: "dark" }));
+    expect(renderHook(() => useTheme()).result.current.choice.light).toBe("light");
+    localStorage.setItem("kibo-theme", JSON.stringify({ mode: "dark", light: "one-dark", dark: "dark" }));
     expect(renderHook(() => useTheme()).result.current.choice).toEqual({ mode: "system", light: "light", dark: "dark" });
   });
 });

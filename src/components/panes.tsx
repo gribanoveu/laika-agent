@@ -215,7 +215,7 @@ type SkillsListProps = {
  */
 export function folderOf(path: string): string {
   const dir = path.replace(/[\\/][^\\/]*$/, "");
-  const agent = /[\\/](\.laika|\.agents|\.claude)[\\/]skills$/.exec(dir);
+  const agent = /[\\/](\.kibo|\.agents|\.claude)[\\/]skills$/.exec(dir);
   return agent ? `~/${agent[1]}/skills` : dir;
 }
 

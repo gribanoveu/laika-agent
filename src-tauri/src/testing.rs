@@ -16,7 +16,7 @@ pub fn temp_dir(label: &str) -> PathBuf {
         .expect("clock is after the epoch")
         .as_nanos();
     let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("laika-{label}-{nanos}-{n}"));
+    let dir = std::env::temp_dir().join(format!("kibo-{label}-{nanos}-{n}"));
     std::fs::create_dir_all(&dir).expect("temp dir is creatable");
     dir
 }

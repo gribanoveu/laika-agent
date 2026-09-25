@@ -30,9 +30,7 @@ export type Mode = (typeof MODES)[number];
 export type ThemeChoice = { mode: Mode; light: Theme; dark: Theme };
 
 const DEFAULT: ThemeChoice = { mode: "system", light: "light", dark: "dark" };
-const KEY = "laika-theme";
-/** An older build kept one name for all three: a mode, or a palette. */
-const OLD_KEY = "atlas-cli-theme";
+const KEY = "kibo-theme";
 
 const isMode = (value: unknown): value is Mode => (MODES as readonly unknown[]).includes(value);
 const isTheme = (value: unknown): value is Theme => typeof value === "string" && value in SCHEMES;
@@ -42,14 +40,11 @@ const isChoice = (value: unknown): value is ThemeChoice => {
   return isMode(mode) && isTheme(light) && SCHEMES[light] === "light" && isTheme(dark) && SCHEMES[dark] === "dark";
 };
 
-/** What was stored — by this build, or carried over from the older one — else the default. */
+/** What was stored, else the default. */
 function stored(): ThemeChoice {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (isChoice(value)) return value;
-    const old = localStorage.getItem(OLD_KEY);
-    if (isMode(old)) return { ...DEFAULT, mode: old };
-    if (isTheme(old)) return { ...DEFAULT, mode: SCHEMES[old], [SCHEMES[old]]: old };
   } catch {
     // Storage that refuses, or a value that does not parse, leaves the default.
   }

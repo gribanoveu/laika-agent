@@ -13,9 +13,9 @@ Context for AI coding agents (Claude Code and others) working in this repository
 
 ## Project - this app
 
-**Laika Agent** - a cli agent like claude code desktop 
+**Kibo Agent** - a cli agent like claude code desktop 
 
-- Identifier: `com.eugene.laika-agent`
+- Identifier: `com.kibo.agent`
 - Stack: Tauri v2, React + TypeScript frontend, Rust backend
 - Package manager: **bun** — always use `bun`/`bunx`, never `npm`/`pnpm`/`yarn`
 

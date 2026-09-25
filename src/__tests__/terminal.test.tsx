@@ -148,7 +148,7 @@ describe("useTerminals", () => {
 
 describe("TerminalPanel", () => {
   const panel = (props: Partial<Parameters<typeof TerminalPanel>[0]> = {}) => (
-    <TerminalPanel active workspace="/work/laika" processFocus={null} terminalPaste={null} onTerminalPasted={() => {}} onAddToChat={() => {}} {...props} />
+    <TerminalPanel active workspace="/work/kibo" processFocus={null} terminalPaste={null} onTerminalPasted={() => {}} onAddToChat={() => {}} {...props} />
   );
 
   test("opening the tab with no shell gives one, and draws it", async () => {

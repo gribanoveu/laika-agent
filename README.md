@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="app-icon.png" width="128" alt="Laika Agent">
+  <img src="app-icon.png" width="128" alt="Kibo Agent">
 </p>
 
-<h1 align="center">Laika Agent</h1>
+<h1 align="center">Kibo Agent</h1>
 
 <p align="center">
   A desktop coding agent that works in your repository.<br>
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Laika Agent: chat, changes and terminal">
+  <img src="docs/screenshot.png" alt="Kibo Agent: chat, changes and terminal">
 </p>
 
 ---

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    laika_agent_lib::run()
+    kibo_agent_lib::run()
 }

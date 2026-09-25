@@ -2,7 +2,7 @@
   "app": {
     "windows": [
       {
-        "title": "Laika Agent",
+        "title": "Kibo Agent",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 14, "y": 12 },

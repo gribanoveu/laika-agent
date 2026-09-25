@@ -55,7 +55,7 @@ const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
 beforeEach(() => {
   disk = {
-    path: "/home/.laika/mcp.json",
+    path: "/home/.kibo/mcp.json",
     text: '{\n  "mcpServers": {}\n}\n',
     servers: [
       { name: "github", command: "npx -y server-github", enabled: true, error: null, warning: null, state: { state: "running", tools: [

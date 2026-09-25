@@ -274,7 +274,7 @@ export function Sidebar({
                 <span className="ico">
                   <Clock size={14} />
                 </span>
-                About Laika Agent
+                About Kibo Agent
               </button>
             </div>
           )}

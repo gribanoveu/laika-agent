@@ -1,5 +1,5 @@
 import { FolderGit2 } from "lucide-react";
-import logo from "../assets/laika-logo.png";
+import logo from "../assets/kibo-logo.png";
 import "./ChatEmptyState.css";
 
 type Props = {

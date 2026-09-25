@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Laika Agent",
+  "productName": "Kibo Agent",
   "version": "0.1.1",
-  "identifier": "com.eugene.laika-agent",
+  "identifier": "com.kibo.agent",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Laika Agent",
+        "title": "Kibo Agent",
         "decorations": false,
         "transparent": true,
         "width": 1340,

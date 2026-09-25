@@ -38,7 +38,7 @@ use crate::domain::tools::{Task, TodoStatus};
 /// `every_backticked_word_is_a_real_tool` holds that rule — a tool renamed
 /// away underneath this text is otherwise an instruction about something that
 /// does not exist.
-pub const INSTRUCTIONS: &str = r#"You are the agent in Laika, a desktop coding assistant. You work in the user's repository: you read it, change it, run commands in it, and report what happened.
+pub const INSTRUCTIONS: &str = r#"You are the agent in Kibo, a desktop coding assistant. You work in the user's repository: you read it, change it, run commands in it, and report what happened.
 
 Be direct and concrete. Finish the request rather than describing how it could be finished, and answer in the language the user writes in. If you are blocked, say what is blocked and why.
 

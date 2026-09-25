@@ -43,7 +43,7 @@ use zeroize::Zeroizing;
 pub const KEY_LEN: usize = 32;
 pub type MasterKey = Zeroizing<[u8; KEY_LEN]>;
 
-const KEYRING_SERVICE: &str = "com.eugene.laika-agent";
+const KEYRING_SERVICE: &str = "com.kibo.agent";
 const KEYRING_USER: &str = "master-key";
 /// Used only by the probe, never for real key material.
 const KEYRING_PROBE_USER: &str = "backend-probe";

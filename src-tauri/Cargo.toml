@@ -1,5 +1,5 @@
 [package]
-name = "laika-agent"
+name = "kibo-agent"
 version = "0.1.1"
 # GPL because `domain::command_risk` builds on sh-guard's rules (GPL-3.0-only).
 license = "GPL-3.0-only"
@@ -13,7 +13,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "laika_agent_lib"
+name = "kibo_agent_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -112,7 +112,7 @@ keyring = { version = "3", features = ["windows-native"] }
 libc = "0.2.189"
 
 # One running copy: a second launch focuses the first and exits. Two copies
-# would share `~/.laika` — chats, the index and the call log — and
+# would share `~/.kibo` — chats, the index and the call log — and
 # write over each other.
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.3"

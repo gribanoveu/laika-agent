@@ -343,7 +343,7 @@ export default function App() {
       <div className="titlebar" onMouseDown={dragOrMaximize}>
         <WindowControls />
         <span className="titlebar-title">
-          Laika{workspace.path && <span> · {workspace.path.split("/").pop()}</span>}
+          Kibo{workspace.path && <span> · {workspace.path.split("/").pop()}</span>}
         </span>
       </div>
 

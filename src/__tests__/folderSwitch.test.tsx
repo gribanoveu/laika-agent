@@ -29,7 +29,7 @@ const { FolderSwitchDialog } = await import("../components/FolderSwitchDialog");
 const proc = (id: number, command: string, state: ProcessView["state"]): ProcessView => ({
   id,
   command,
-  cwd: "/work/laika",
+  cwd: "/work/kibo",
   state,
   tail: "",
 });
@@ -89,7 +89,7 @@ describe("the dialog", () => {
       go: () => went++,
     };
     const { unmount } = render(
-      <FolderSwitchDialog blocked={blocked} folder="/work/laika" onStopAgent={() => {}} onClose={() => closed++} />,
+      <FolderSwitchDialog blocked={blocked} folder="/work/kibo" onStopAgent={() => {}} onClose={() => closed++} />,
     );
     expect(screen.getByText("bun run dev")).toBeTruthy();
     expect(screen.getByText("terminal: zsh")).toBeTruthy();
@@ -104,15 +104,15 @@ describe("the dialog", () => {
   test("offers to stop the agent, not to switch", () => {
     let stopped = 0;
     render(
-      <FolderSwitchDialog blocked={{ kind: "agent" }} folder="/work/laika" onStopAgent={() => stopped++} onClose={() => {}} />,
+      <FolderSwitchDialog blocked={{ kind: "agent" }} folder="/work/kibo" onStopAgent={() => stopped++} onClose={() => {}} />,
     );
-    expect(screen.getByRole("dialog").textContent).toContain("laika");
+    expect(screen.getByRole("dialog").textContent).toContain("kibo");
     fireEvent.click(screen.getByText("Stop the agent"));
     expect(stopped).toBe(1);
   });
 
   test("nothing blocked, nothing shown", () => {
-    render(<FolderSwitchDialog blocked={null} folder="/work/laika" onStopAgent={() => {}} onClose={() => {}} />);
+    render(<FolderSwitchDialog blocked={null} folder="/work/kibo" onStopAgent={() => {}} onClose={() => {}} />);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
