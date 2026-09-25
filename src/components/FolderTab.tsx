@@ -31,7 +31,7 @@ type Props = {
     top edge — this is read before sending, not looked up in the sidebar. */
 export function FolderTab({ path, recent, onOpenFolder, onPickFolder, branch = null, index = null, changes = null, onOpenChanges }: Props) {
   return (
-    <div className={`folder-tab${path ? "" : " empty"}`}>
+    <div className={`folder-tab${path ? "" : " no-folder"}`}>
       <Dropdown
         title={path ?? "Choose the folder the agent works in"}
         heading="Folder"

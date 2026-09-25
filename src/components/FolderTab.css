@@ -22,7 +22,7 @@
   max-width: 240px;
 }
 /* No folder yet: the one thing to do before sending, so it reads as an action. */
-.folder-tab.empty .chip {
+.folder-tab.no-folder .chip {
   color: var(--accent);
 }
 .folder-tab-branch {
