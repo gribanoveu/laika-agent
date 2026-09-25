@@ -89,3 +89,118 @@
 .settings-list-note {
   margin: 4px 8px 0;
 }
+
+/* The palettes for each side, as cards across the pane rather than in a
+   field's control column: each card is the app's own elements, scaled down. */
+.theme-group {
+  margin: 4px 0 16px;
+}
+.theme-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.theme-group-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+}
+.theme-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.theme-card .theme-preview {
+  border-radius: 10px;
+  outline: 1px solid var(--border);
+  transition: outline-color 120ms ease;
+}
+.theme-card:hover .theme-preview {
+  outline-color: var(--text-faint);
+}
+.theme-card.active .theme-preview {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-card:hover,
+.theme-card.active {
+  color: var(--text);
+}
+.theme-card-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 2px;
+  font-size: var(--fs-sm);
+}
+.theme-card-name svg {
+  color: var(--accent);
+}
+
+/* Drawn at full size and zoomed down, so the elements keep their real
+   proportions — padding, radii, line height — instead of approximations. */
+.theme-preview {
+  display: block;
+  overflow: hidden;
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.theme-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 16px;
+  zoom: 0.62;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+}
+.theme-preview-ask {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: 7px 11px;
+}
+.theme-preview-diff {
+  display: block;
+  padding: 4px 0;
+  border-radius: 7px;
+  background: var(--bg-bubble);
+  border: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.theme-preview-diff .diff-row {
+  grid-template-columns: 2.5ch 1fr;
+}
+.theme-preview-diff .diff-sign {
+  text-align: center;
+}
+/* The diff's own marks take their colour from the highlighter; here there is
+   none, and a mark's default text is black. */
+.theme-preview-diff mark {
+  color: inherit;
+}
+.theme-preview-actions {
+  display: flex;
+  gap: 8px;
+}

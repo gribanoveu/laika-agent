@@ -157,10 +157,10 @@
 }
 
 /* Shiki gives each token both themes' colours; the app's theme picks one. */
-:root[data-theme="light"] .md-code-text span {
+:root[data-scheme="light"] .md-code-text span {
   color: var(--shiki-light);
 }
-:root:not([data-theme="light"]) .md-code-text span {
+:root:not([data-scheme="light"]) .md-code-text span {
   color: var(--shiki-dark);
 }
 

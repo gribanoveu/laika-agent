@@ -102,7 +102,7 @@ const cache = new Map<string, Promise<Token[][] | null>>();
 /** Colours for `source`, one token list per line, or `null` for an unknown
  * language or a grammar that failed — callers show the text uncoloured.
  * Each token carries both themes as `--shiki-light`/`--shiki-dark`; the
- * stylesheet picks one by the app's `data-theme`. */
+ * stylesheet picks one by the app's `data-scheme`. */
 export function highlight(source: string, raw: string | null): Promise<Token[][] | null> {
   const lang = resolveLanguage(raw);
   if (!lang) return Promise.resolve(null);

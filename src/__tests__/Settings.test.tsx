@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { Settings } from "../components/Settings";
 import type { SkillsView } from "../lib/chat";
 
@@ -16,6 +16,8 @@ const SOURCES: SkillsView["sources"] = [
 const dialog = (debugLogging = false) => {
   const logging: boolean[] = [];
   const sizes: string[] = [];
+  const modes: string[] = [];
+  const palettes: string[] = [];
   const wraps: boolean[] = [];
   const sources: [string, boolean][] = [];
   let logOpened = 0;
@@ -36,8 +38,9 @@ const dialog = (debugLogging = false) => {
       }}
       debugLogging={debugLogging}
       onDebugLogging={(enabled) => logging.push(enabled)}
-      theme="system"
-      onTheme={() => {}}
+      theme={{ mode: "system", light: "light", dark: "one-dark" }}
+      onThemeMode={(mode) => modes.push(mode)}
+      onThemePalette={(theme) => palettes.push(theme)}
       fontSize="large"
       onFontSize={(size) => sizes.push(size)}
       wrapLines
@@ -46,7 +49,7 @@ const dialog = (debugLogging = false) => {
       policy={{ provider: null, debugLogging, mcpServers: [], hooks: [] }}
     />,
   );
-  return { logging, sizes, wraps, sources, logOpened: () => logOpened };
+  return { logging, sizes, wraps, sources, modes, palettes, logOpened: () => logOpened };
 };
 
 describe("the settings dialog", () => {
@@ -58,6 +61,23 @@ describe("the settings dialog", () => {
     fireEvent.click(screen.getByText("Appearance"));
     expect(screen.getByRole("radiogroup", { name: "Theme" })).toBeDefined();
     expect(screen.queryByText("Model provider")).toBeNull();
+  });
+
+  test("a theme is a mode, and a palette for each side, each card drawn in its own", () => {
+    const { modes, palettes } = dialog();
+    fireEvent.click(screen.getByText("Appearance"));
+
+    // "Dark" is a mode and a palette too: each is asked for in its own group.
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Theme" })).getByRole("radio", { name: "Dark" }));
+    expect(modes).toEqual(["dark"]);
+
+    // One card per palette, drawn in it; the picked one on each side is checked.
+    const latte = screen.getByRole("radio", { name: "Latte" });
+    expect((latte.querySelector(".theme-preview") as HTMLElement).dataset.theme).toBe("latte");
+    expect(screen.getByRole("radio", { name: "One Dark" }).getAttribute("aria-checked")).toBe("true");
+    expect(latte.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(latte);
+    expect(palettes).toEqual(["latte"]);
   });
 
   test("Skills lists the folders skills come from, in the order a name is looked up, each with a switch", () => {

@@ -2,9 +2,15 @@
  * Theme tokens — the only place colours are defined.
  *
  * A theme is one block of custom properties keyed by `data-theme` on <html>.
- * To add one: copy a block, rename the key, change the values; nothing in the
- * components needs to know. `useTheme` writes the attribute, so "system" is
- * resolved to a concrete theme rather than duplicated as a media query here.
+ * The key is not tied to <html>: custom properties cascade, so any element
+ * carrying `data-theme` draws its subtree in that palette — which is how the
+ * settings show each theme in miniature.
+ * To add one: copy a block, rename the key, change the values, and list it in
+ * `useTheme` with the scheme it is on; nothing in the components needs to
+ * know. `useTheme` writes the attribute, so "system" is resolved to a concrete
+ * theme rather than duplicated as a media query here. It also writes
+ * `data-scheme` — light or dark — for what comes in only those two variants,
+ * like the code colours.
  *
  * The surfaces form a deliberate ladder — app < window < panel < panel-soft <
  * hover < active — with enough distance between the steps to stay readable on
@@ -12,44 +18,50 @@
  */
 
 :root,
-:root[data-theme="dark"] {
-  --bg-app: #08080a;
-  --bg-window: #16161a;
-  --bg-panel: #242429;
-  --bg-panel-soft: #2c2c33;
-  --bg-hover: #34343c;
-  --bg-active: #3f3f49;
-  --bg-bubble: #2e2e36;
+[data-theme="dark"] {
+  /* Built on Apple's dark-mode system colours. The surfaces are its neutral
+     greys (#1c1c1e, #2c2c2e, #3a3a3c), lighter as they rise. Text is not white:
+     the primary is about macOS's 85% label, 12:1 on a panel instead of 14:1,
+     which glares less; secondary and faint text keep 4.7:1 or better even on
+     a hovered row. */
+  --bg-app: #000000;
+  --bg-window: #0c0c0e;
+  --bg-panel: #1c1c1e;
+  --bg-panel-soft: #232326;
+  --bg-hover: #2c2c2e;
+  --bg-active: #3a3a3c;
+  --bg-bubble: #262629;
 
-  --border: #3f3f4a;
-  --border-soft: #33333c;
+  --border: #38383a;
+  --border-soft: #2c2c2e;
   /* Outline around the whole window: the dark themes need it to separate the
      app from the desktop, a light one does not. */
-  --window-border: #3f3f4a;
+  --window-border: #38383a;
 
-  --text: #f2f2f5;
-  --text-dim: #b8b8c2;
-  --text-faint: #8b8b97;
+  --text: #dcdce0;
+  --text-dim: #a8a8b0;
+  --text-faint: #96969d;
 
-  /* The coral of Laika's collar. Errors are rose, not red: beside a red-orange
-     accent a red of their own would read as the accent. */
+  /* The coral of Laika's collar. Errors are Apple's accessible pink, not red:
+     beside a red-orange accent a red of their own would read as the accent.
+     Green and purple are Apple's too; yellow is its system yellow, softened. */
   --accent: #ff7a57;
   --accent-contrast: #08080a;
-  --green: #62d29a;
-  --red: #f0719a;
-  --amber: #e0b35f;
-  --purple: #b39bff;
+  --green: #30d158;
+  --red: #ff6482;
+  --amber: #ffcc4d;
+  --purple: #da8fff;
 
   /* The terminal's sixteen ANSI colours (xterm.js reads them as values).
-     The named ones follow the palette above; "black" has to show on the
-     panel, and "white" is dimmer than the text, as terminals draw it. Red
-     and blue are the terminal's own: the accent is not blue, the error is not red. */
-  --term-black: #4a4a55;
+     They are the terminal's own rather than the palette's, so a change to the
+     app's accent or status colours does not recolour a program's output;
+     "black" has to show on the panel, and "white" is dimmer than the text. */
+  --term-black: #48484a;
   --term-red: #ec8079;
-  --term-green: var(--green);
-  --term-yellow: var(--amber);
+  --term-green: #62d29a;
+  --term-yellow: #e0b35f;
   --term-blue: #6ba4e6;
-  --term-magenta: var(--purple);
+  --term-magenta: #b39bff;
   --term-cyan: #5fc7d4;
   --term-white: var(--text-dim);
   --term-bright-black: var(--text-faint);
@@ -64,37 +76,47 @@
   color-scheme: dark;
 }
 
-:root[data-theme="light"] {
-  --bg-app: #c9c9d2;
-  --bg-window: #eeeef2;
+[data-theme="light"] {
+  /* Built on Apple's light-mode system colours, as the dark theme is on its
+     dark ones: white content on its grey ground, #e5e5ea and #d1d1d6 for what
+     rises or divides. Text is about macOS's 85% black label, 15:1 rather than
+     a near-black 17:1. Apple's own secondary grey is 3.4:1 on white — too
+     faint to read — so the secondary and faint text here are chosen by
+     contrast instead: 6.4:1 and 4.7:1 or better, even on a hovered row. */
+  --bg-app: #d1d1d6;
+  --bg-window: #eeeef3;
   --bg-panel: #ffffff;
-  --bg-panel-soft: #f4f4f8;
-  --bg-hover: #e8e8ef;
-  --bg-active: #dcdce5;
-  --bg-bubble: #f4f4f8;
+  --bg-panel-soft: #f5f5f7;
+  --bg-hover: #ececf0;
+  --bg-active: #e5e5ea;
+  --bg-bubble: #f2f2f7;
 
-  --border: #cdcdd8;
-  --border-soft: #e1e1e9;
+  --border: #d1d1d6;
+  --border-soft: #e5e5ea;
   --window-border: transparent;
 
-  --text: #191920;
-  --text-dim: #55555f;
-  --text-faint: #767683;
+  --text: #262628;
+  --text-dim: #505055;
+  --text-faint: #68686e;
 
+  /* Apple's accessible pink for errors, as in the dark theme; its green
+     darkened a step to read on a light panel; its purple as it is. Its yellow
+     is too near the coral, so the amber stays the app's own. */
   --accent: #c43c1a;
   --accent-contrast: #ffffff;
-  --green: #1f8f5c;
-  --red: #c0264f;
-  --amber: #8c650f;
-  --purple: #6146c9;
+  --green: #1f7a35;
+  --red: #d30f45;
+  --amber: #8a6100;
+  --purple: #8944ab;
 
-  /* On a light panel "white" has to show too. */
+  /* The terminal's own, as in the dark theme. On a light panel "white" has
+     to show too. */
   --term-black: var(--text);
   --term-red: #c2453d;
-  --term-green: var(--green);
-  --term-yellow: var(--amber);
+  --term-green: #1f8f5c;
+  --term-yellow: #8c650f;
   --term-blue: #2f6fb8;
-  --term-magenta: var(--purple);
+  --term-magenta: #6146c9;
   --term-cyan: #1b7f8c;
   --term-white: #a3a3ae;
   --term-bright-black: var(--text-faint);
@@ -105,6 +127,104 @@
   --term-bright-magenta: #7a5fe0;
   --term-bright-cyan: #2296a5;
   --term-bright-white: #c4c4ce;
+
+  color-scheme: light;
+}
+
+/* After Atom's One Dark, with the app's coral for its accent. Its own greys
+   are too faint to read on its panels (comments are 2.6:1), so the secondary
+   text is lifted to 4.8:1 and better; its red sat too near the coral, so errors
+   are rose, as in the default dark. */
+[data-theme="one-dark"] {
+  --bg-app: #181a1f;
+  --bg-window: #21252b;
+  --bg-panel: #282c34;
+  --bg-panel-soft: #2c313a;
+  --bg-hover: #323842;
+  --bg-active: #3a404b;
+  --bg-bubble: #2f343e;
+
+  --border: #3e4451;
+  --border-soft: #333842;
+  --window-border: #3e4451;
+
+  --text: #dcdfe4;
+  --text-dim: #abb2bf;
+  --text-faint: #959dab;
+
+  --accent: #ff7a57;
+  --accent-contrast: #1e2227;
+  --green: #98c379;
+  --red: #f07ba0;
+  --amber: #e5c07b;
+  --purple: #cd84e3;
+
+  --term-black: #4b5263;
+  --term-red: #e06c75;
+  --term-green: #98c379;
+  --term-yellow: #e5c07b;
+  --term-blue: #61afef;
+  --term-magenta: #c678dd;
+  --term-cyan: #56b6c2;
+  --term-white: var(--text-dim);
+  --term-bright-black: var(--text-faint);
+  --term-bright-red: #f08a92;
+  --term-bright-green: #b0d494;
+  --term-bright-yellow: #f0d197;
+  --term-bright-blue: #85c1f5;
+  --term-bright-magenta: #d897e8;
+  --term-bright-cyan: #7cc9d2;
+  --term-bright-white: var(--text);
+
+  color-scheme: dark;
+}
+
+/* After Catppuccin Latte: a light theme that is not white. The panels are its
+   grey-lavender and the text slate, 9:1 rather than the default's near-black
+   17:1, so there is less glare. Latte's own green, yellow and peach are too pale
+   to read (2–3:1); every colour here is darkened to 4.8:1 or better on the
+   surfaces it is drawn on. The accent is the app's coral, a shade darker than
+   the default light's for the lavender panels. */
+[data-theme="latte"] {
+  --bg-app: #ccd0da;
+  --bg-window: #dce0e8;
+  --bg-panel: #eff1f5;
+  --bg-panel-soft: #e9ecf1;
+  --bg-hover: #e1e5ec;
+  --bg-active: #d6dbe4;
+  --bg-bubble: #e3e7ee;
+
+  --border: #ccd0da;
+  --border-soft: #dde1e8;
+  --window-border: transparent;
+
+  --text: #3c3f55;
+  --text-dim: #50536b;
+  --text-faint: #5c5f77;
+
+  --accent: #b83a1c;
+  --accent-contrast: #ffffff;
+  --green: #27701a;
+  --red: #c20e35;
+  --amber: #835500;
+  --purple: #b3286f;
+
+  --term-black: var(--text);
+  --term-red: #c20e35;
+  --term-green: #27701a;
+  --term-yellow: #835500;
+  --term-blue: #1a56c9;
+  --term-magenta: #7a2fd6;
+  --term-cyan: #136f75;
+  --term-white: #8c8fa1;
+  --term-bright-black: var(--text-faint);
+  --term-bright-red: #d20f39;
+  --term-bright-green: #2d7d1c;
+  --term-bright-yellow: #9a6400;
+  --term-bright-blue: #1e66f5;
+  --term-bright-magenta: #8839ef;
+  --term-bright-cyan: #1a8088;
+  --term-bright-white: #acb0be;
 
   color-scheme: light;
 }

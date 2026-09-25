@@ -1,11 +1,11 @@
 import { useState, type ComponentProps } from "react";
-import { Bot, Palette, Shield, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, Check, Palette, Shield, ShieldCheck, Sparkles } from "lucide-react";
 import { ProviderSettings } from "./ProviderSettings";
 import { DataPolicy } from "./DataPolicy";
 import { ItemList } from "./ItemList";
 import type { RememberScope, SkillSourceItem, SkillsView } from "../lib/chat";
 import type { PanelItem } from "../types";
-import { THEMES, type ThemePreference } from "../hooks/useTheme";
+import { MODES, sideOf, THEME_LABELS, themesOf, type Mode, type Theme, type ThemeChoice } from "../hooks/useTheme";
 import { FONT_SIZES, type FontSize } from "../hooks/useChatFontSize";
 import "./Settings.css";
 
@@ -66,8 +66,9 @@ type Props = {
   onRemember: (remember: RememberScope) => void;
   debugLogging: boolean;
   onDebugLogging: (enabled: boolean) => void;
-  theme: ThemePreference;
-  onTheme: (theme: ThemePreference) => void;
+  theme: ThemeChoice;
+  onThemeMode: (mode: Mode) => void;
+  onThemePalette: (theme: Theme) => void;
   fontSize: FontSize;
   onFontSize: (size: FontSize) => void;
   /** The file viewer's long lines: wrapped, or scrolled sideways. */
@@ -85,7 +86,8 @@ export function Settings({
   debugLogging,
   onDebugLogging,
   theme,
-  onTheme,
+  onThemeMode,
+  onThemePalette,
   fontSize,
   onFontSize,
   wrapLines,
@@ -126,20 +128,51 @@ export function Settings({
             <div className="modal-field">
               <label>Theme</label>
               <div className="segmented" role="radiogroup" aria-label="Theme">
-                {THEMES.map((name) => (
+                {MODES.map((mode) => (
                   <button
-                    key={name}
+                    key={mode}
                     type="button"
                     role="radio"
-                    aria-checked={theme === name}
-                    className={`segment${theme === name ? " active" : ""}`}
-                    onClick={() => onTheme(name)}
+                    aria-checked={theme.mode === mode}
+                    className={`segment${theme.mode === mode ? " active" : ""}`}
+                    onClick={() => onThemeMode(mode)}
                   >
-                    {name}
+                    {MODE_LABELS[mode]}
                   </button>
                 ))}
               </div>
             </div>
+            <p className="modal-note settings-hint">
+              {theme.mode === "system"
+                ? `As the system is set: ${THEME_LABELS[theme.light]} by day, ${THEME_LABELS[theme.dark]} at night.`
+                : `Always ${THEME_LABELS[theme[theme.mode]]}, whatever the system is set to.`}
+            </p>
+            {(["light", "dark"] as const).map((side) => (
+              <section key={side} className="theme-group">
+                <h4 className="theme-group-title">
+                  {side === "light" ? "Light theme" : "Dark theme"}
+                  {sideOf(theme) === side && <span className="theme-group-badge">showing</span>}
+                </h4>
+                <div className="theme-cards" role="radiogroup" aria-label={side === "light" ? "Light theme" : "Dark theme"}>
+                  {themesOf(side).map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      role="radio"
+                      aria-checked={theme[side] === name}
+                      className={`theme-card${theme[side] === name ? " active" : ""}`}
+                      onClick={() => onThemePalette(name)}
+                    >
+                      <ThemePreview theme={name} />
+                      <span className="theme-card-name">
+                        {theme[side] === name && <Check size={13} aria-hidden />}
+                        {THEME_LABELS[name]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
             <div className="modal-field">
               <label>Chat text size</label>
               <div className="segmented" role="radiogroup" aria-label="Chat text size">
@@ -263,5 +296,45 @@ export function Settings({
         )}
       </div>
     </div>
+  );
+}
+
+const MODE_LABELS: Record<Mode, string> = { system: "System", light: "Light", dark: "Dark" };
+
+/**
+ * A few of the app's own elements — a message, an answer with code and a
+ * link, a changed line, a button — in `theme`'s palette, drawn with the classes
+ * the chat and the diff use, so a card shows what the app will look like
+ * rather than a picture of it. The palette comes from `data-theme` on it.
+ */
+function ThemePreview({ theme }: { theme: Theme }) {
+  return (
+    <span className="theme-preview" data-theme={theme} aria-hidden>
+      <span className="theme-preview-body">
+        <span className="bubble theme-preview-ask">Why does the index rebuild?</span>
+        <span className="theme-preview-answer">
+          The watcher reports the path, and <code className="md-code-inline">index_sync.rs</code> updates the
+          keywords. <span className="md-link">Notes</span>
+        </span>
+        <span className="theme-preview-diff">
+          <span className="diff-row diff-del">
+            <span className="diff-sign">-</span>
+            <span className="diff-text">
+              let <mark>old</mark> = watch(root);
+            </span>
+          </span>
+          <span className="diff-row diff-add">
+            <span className="diff-sign">+</span>
+            <span className="diff-text">
+              let <mark>watcher</mark> = watch(root);
+            </span>
+          </span>
+        </span>
+        <span className="theme-preview-actions">
+          <span className="btn btn-primary">Implement</span>
+          <span className="btn btn-ghost">Review</span>
+        </span>
+      </span>
+    </span>
   );
 }

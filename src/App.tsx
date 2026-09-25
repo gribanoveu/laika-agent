@@ -516,8 +516,9 @@ export default function App() {
           }}
           debugLogging={llm.settings?.debugLogging ?? false}
           onDebugLogging={llm.debugLogging}
-          theme={theme.preference}
-          onTheme={theme.setPreference}
+          theme={theme.choice}
+          onThemeMode={theme.setMode}
+          onThemePalette={theme.setPalette}
           fontSize={fontSize.size}
           onFontSize={fontSize.setSize}
           wrapLines={wrapLines}
