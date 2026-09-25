@@ -1,0 +1,125 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Setup NASM (needed by git2 vendored OpenSSL build)
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Tauri app
+        run: bun run tauri build
+
+      - name: Upload MSI/NSIS installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    env:
+      # Vite bundle (monaco, shiki, mermaid) exceeds default ~2 GiB heap on CI runners.
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Tauri app
+        run: bun run tauri build
+        env:
+          CI: true
+
+      - name: Upload DMG installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Описание релиза - тело сообщения аннотированного тега, и берётся оно
+      # через API, а не из клона: actions/checkout заводит у себя легковесный
+      # тег, а на нём `git tag --format=%(contents:body)` молча отдаёт тело
+      # сообщения коммита вместо тега (так в релиз 0.6.1 уехал один trailer
+      # Co-Authored-By). Первые две строки - заголовок тега и пустая строка за
+      # ним - отбрасываются: заголовок уже стоит в названии релиза.
+      - name: Release notes from the tag message
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.message' \
+            | tail -n +3 > "$RUNNER_TEMP/notes.md"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ runner.temp }}/notes.md
+          generate_release_notes: true
+          files: |
+            dist/**/*.msi
+            dist/**/*.exe
+            dist/**/*.dmg

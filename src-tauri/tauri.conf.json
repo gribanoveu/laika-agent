@@ -48,6 +48,9 @@
     ],
     "resources": [
       "models/potion-multilingual-128M-int8-ru-en"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
