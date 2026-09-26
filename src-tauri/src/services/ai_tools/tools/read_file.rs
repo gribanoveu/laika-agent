@@ -12,12 +12,17 @@
 //! [`MAX_READ_BYTES`], and says where it stopped. Without it a 6000-line CSV
 //! read "to have a look" rode along in every later round of the turn — 550k
 //! tokens for a task that costs 50k (`agent_bench`, `truncated-output`).
+//!
+//! A large log or data file read without a range stops much sooner, at
+//! [`DATA_HEAD_LINES`]: enough to see its format, and it is grep that finds
+//! what is in it. Three 350 KB logs read whole put 145k tokens into one round
+//! of `log-forensics`, and the model went on to grep them anyway.
 
 use crate::domain::llm::LlmToolDefinition;
 use std::fs;
 
 use crate::domain::chunk_index::qualified_name;
-use crate::domain::repo_index::detect_language;
+use crate::domain::repo_index::{detect_language, extension_of};
 use crate::domain::tools::{OutlineEntry, ReadFileArgs, ReadFiles, ToolError, ToolResult, ToolScope};
 use crate::infra::language_indexers::indexer_for;
 
@@ -30,6 +35,17 @@ pub const MAX_READ_LINES: u32 = 2000;
 /// The most bytes one read returns: ~25k tokens. Binds before the line limit
 /// on long lines — data, generated code, a minified bundle.
 pub const MAX_READ_BYTES: usize = 100_000;
+
+/// Where a read of a large log or data file without a range stops.
+pub const DATA_HEAD_LINES: u32 = 50;
+
+/// Above this a log or data file is large: a small one — a fixture, a sample —
+/// is still read whole, and so can still be rewritten.
+const DATA_WHOLE_BYTES: usize = 20_000;
+
+/// Log and data files, by extension: read by searching, not start to end.
+// ponytail: extensions only; `app.log.1` and extensionless dumps read as text.
+const DATA_EXTENSIONS: &[&str] = &[".log", ".csv", ".tsv", ".jsonl", ".ndjson"];
 
 pub fn read_file(
     scope: &ToolScope,
@@ -53,7 +69,11 @@ pub fn read_file(
     // a whole-file read the limit cut short: the model has not seen the rest.
     let relative = relative_to_root(scope, &path)?;
     let asked_whole = args.start_line.is_none() && args.end_line.is_none();
-    let result = slice_lines(&content, args.start_line, args.end_line);
+    let data = asked_whole
+        && content.len() > DATA_WHOLE_BYTES
+        && DATA_EXTENSIONS.contains(&extension_of(&args.path).as_str());
+    let max_lines = if data { DATA_HEAD_LINES } else { MAX_READ_LINES };
+    let result = slice_lines(&content, args.start_line, args.end_line, max_lines);
     let whole = asked_whole && !matches!(result, ToolResult::File { truncated: true, .. });
     reads.record(&relative, &content, whole);
     Ok(result)
@@ -79,7 +99,7 @@ fn outline(path: &str, content: &str) -> ToolResult {
 }
 
 /// Clamps the requested range into the file rather than erroring, and stops
-/// at the read limit.
+/// at the read limit: `max_lines`, and [`MAX_READ_BYTES`].
 ///
 /// A whole file within the limit is handed back byte-identical to what was
 /// read — no split-and-rejoin round trip for the common case, which would
@@ -89,10 +109,10 @@ fn outline(path: &str, content: &str) -> ToolResult {
 /// `start_line` after each is independently clamped into `[1, total_lines]`,
 /// `end_line` rises to `start_line` and one line comes back — still an answer,
 /// where an error would only have cost a round trip.
-fn slice_lines(content: &str, start_line: Option<u32>, end_line: Option<u32>) -> ToolResult {
+fn slice_lines(content: &str, start_line: Option<u32>, end_line: Option<u32>, max_lines: u32) -> ToolResult {
     let total_lines = content.lines().count() as u32;
     let whole = start_line.is_none() && end_line.is_none();
-    if whole && total_lines <= MAX_READ_LINES && content.len() <= MAX_READ_BYTES {
+    if whole && total_lines <= max_lines && content.len() <= MAX_READ_BYTES {
         return ToolResult::File {
             content: content.to_string(),
             start_line: if total_lines == 0 { 0 } else { 1 },
@@ -123,7 +143,7 @@ fn slice_lines(content: &str, start_line: Option<u32>, end_line: Option<u32>) ->
     let mut taken: u32 = 0;
     let mut bytes = 0;
     for line in &lines[(start - 1) as usize..asked_end as usize] {
-        if taken == MAX_READ_LINES || bytes + line.len() + 1 > MAX_READ_BYTES {
+        if taken == max_lines || bytes + line.len() + 1 > MAX_READ_BYTES {
             break;
         }
         bytes += line.len() + 1;
@@ -161,7 +181,7 @@ fn slice_lines(content: &str, start_line: Option<u32>, end_line: Option<u32>) ->
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "readFile".to_string(),
-        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read in full, and an outline does not count. To read several files, call readFile for each in the same response — they run together, in one round. One read returns at most 2000 lines or 100 KB; a longer file or range stops there, and the result says so."
+        description: "Read one file by its path relative to the workspace root, optionally restricted to a line range, or ask for its outline instead. Paths returned by grep and listFiles are already rooted correctly — pass them back unchanged. A range outside the file is cut to fit, and the result says so. Reading is also what unlocks writing: writeFile and deleteFile refuse a file this turn has not read in full, and an outline does not count. To read several files, call readFile for each in the same response — they run together, in one round. One read returns at most 2000 lines or 100 KB; a longer file or range stops there, and the result says so. A log or data file (.log, .csv, .tsv, .jsonl, .ndjson) over 20 KB read without a range stops after 50 lines — enough to see its format; grep it for the rest."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -470,6 +490,38 @@ mod tests {
         assert!(content.len() <= MAX_READ_BYTES + 1, "{}", content.len());
         assert!(content.len() >= MAX_READ_BYTES - 1, "{}", content.len());
         assert!(content.starts_with("aé") && content.ends_with("é\n"));
+    }
+
+    /// A large log read without a range is its first lines only, and a
+    /// partial read. The same text under another extension, a range asked
+    /// for, or a small data file are not cut.
+    #[test]
+    fn a_large_data_file_read_whole_stops_at_its_head() {
+        let body: String = (1..=1500).map(|i| format!("{i} request ok\n")).collect();
+        assert!(body.len() > DATA_WHOLE_BYTES);
+        let (scope, root) = fixture("read-data-head", &body);
+        std::fs::write(root.join("app.LOG"), &body).unwrap();
+        let small: String = (1..=100).map(|i| format!("{i},2\n")).collect();
+        std::fs::write(root.join("small.csv"), &small).unwrap();
+        let mut reads = ReadFiles::default();
+
+        let result = read_file(&scope, &args("app.LOG", None, None), &mut reads).unwrap();
+        assert!(truncated(&result));
+        let (content, start, end, total) = unwrap_file(result);
+        assert_eq!((start, end, total), (1, DATA_HEAD_LINES, 1500));
+        assert!(content.ends_with("50 request ok\n"), "{content}");
+        assert!(reads.check("app.LOG", &body, true).is_err(), "a head is a partial read");
+
+        let text = read(&scope, &args("file.txt", None, None)).unwrap();
+        assert_eq!(unwrap_file(text).2, 1500, "not a data file: read whole");
+
+        let range = read(&scope, &args("app.LOG", Some(100), Some(400))).unwrap();
+        assert!(!truncated(&range), "a range asked for is not cut to the head");
+        assert_eq!(unwrap_file(range).2, 400);
+
+        let result = read_file(&scope, &args("small.csv", None, None), &mut reads).unwrap();
+        assert!(!truncated(&result), "a small data file past the head is still read whole");
+        assert_eq!(reads.check("small.csv", &small, true), Ok(()));
     }
 
     // ------------------------------------------------------------ outline

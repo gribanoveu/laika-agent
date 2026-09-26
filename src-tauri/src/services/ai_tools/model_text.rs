@@ -19,7 +19,6 @@ use crate::domain::tools::{BlameHunk, GitFileDiff, GitFileStatus, GitUpstream, L
 use crate::domain::prompt::{checklist_rows, CHECKLIST_LEGEND};
 use crate::services::ai_tools::tools::list_files::render_file_tree;
 use crate::services::ai_tools::tools::git::MAX_DIFF_CHARS;
-use crate::services::ai_tools::tools::read_file::{MAX_READ_BYTES, MAX_READ_LINES};
 use crate::services::text_diff::render_for_model;
 
 pub fn for_model(result: &ToolResult) -> String {
@@ -112,10 +111,7 @@ fn file(content: &str, start: u32, end: u32, total: u32, clamped: bool, truncate
     let cut = if clamped { " (the range asked for was cut to fit the file)" } else { "" };
     // Said with the way on, or the model takes the first screen for the file.
     let limit = if truncated {
-        format!(
-            " (stopped at the read limit of {MAX_READ_LINES} lines or {} KB — read on with startLine, or grep for what you need)",
-            MAX_READ_BYTES / 1000
-        )
+        " (stopped at the read limit — read on with startLine, or grep for what you need)".to_string()
     } else {
         String::new()
     };
@@ -488,7 +484,7 @@ mod tests {
         let stopped = for_model(&ToolResult::File { content: "a\n".into(), start_line: 1, end_line: 1, total_lines: 9000, clamped: false, truncated: true });
         assert_eq!(
             stopped,
-            "Lines 1-1 of 9000 (stopped at the read limit of 2000 lines or 100 KB — read on with startLine, or grep for what you need):\na\n"
+            "Lines 1-1 of 9000 (stopped at the read limit — read on with startLine, or grep for what you need):\na\n"
         );
     }
 
