@@ -1,15 +1,18 @@
+import type { CommandFile } from "./chat";
+
 /**
  * A command typed into the composer as `/name` or `/name arguments`.
  *
  * The composer knows only this shape — where a command comes from is not its
- * business. The built-in ones are made in `App.tsx`; commands from files (a
- * prompt in `.claude/commands`) will be more entries in the same list, whose
- * `run` sends the prompt with the arguments put in.
+ * business. The built-in ones are made in `App.tsx`; the user's own are files
+ * in `.kibo/commands`, turned into entries by `fileCommands`.
  */
 export type SlashCommand = {
   name: string;
-  /** What it does, on the line under its name in the menu. */
+  /** What it does, beside its name in the menu. */
   hint: string;
+  /** What to type after the name, shown beside it: `<file>`. */
+  argumentHint?: string;
   /** Why it cannot run now, shown in its place; absent when it can. */
   unavailable?: string;
   run: (args: string) => void;
@@ -46,4 +49,35 @@ export function suggestCommands(commands: readonly SlashCommand[], text: string)
   if (!m) return [];
   const typed = (m[1] ?? "").toLowerCase();
   return commands.filter((c) => c.name.startsWith(typed));
+}
+
+/**
+ * A command file's prompt with what was typed after its name put in, for
+ * every `$ARGUMENTS`. A prompt without the placeholder still gets them, after
+ * a blank line: arguments typed and silently dropped are worse than ones put
+ * somewhere the author did not plan for.
+ */
+export function expandTemplate(template: string, args: string): string {
+  if (template.includes("$ARGUMENTS")) return template.split("$ARGUMENTS").join(args);
+  return args ? `${template}\n\n${args}` : template;
+}
+
+/**
+ * The user's command files as menu entries, each sending its prompt. A file
+ * named like a built-in is left out — `/compact` stays the app's — and so is
+ * one whose name the list already has.
+ */
+export function fileCommands(
+  files: readonly CommandFile[],
+  builtIn: readonly SlashCommand[],
+  send: (text: string) => void,
+): SlashCommand[] {
+  return files
+    .filter((file) => !builtIn.some((c) => c.name === file.name))
+    .map((file) => ({
+      name: file.name,
+      hint: file.description,
+      argumentHint: file.argumentHint ?? undefined,
+      run: (args: string) => send(expandTemplate(file.template, args)),
+    }));
 }

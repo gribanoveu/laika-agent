@@ -557,6 +557,22 @@ export async function skillsList(): Promise<SkillsView> {
   return invoke<SkillsView>("skills_list");
 }
 
+/** A command the user wrote in `.kibo/commands`. Mirrors `domain::slash_commands::CommandFile`. */
+export type CommandFile = {
+  name: string;
+  description: string;
+  argumentHint: string | null;
+  /** The prompt; `$ARGUMENTS` stands for what is typed after the name. */
+  template: string;
+  source: "project" | "user";
+};
+
+/** The open folder's command files and the user's, the folder's first on a shared name. */
+export async function commandFilesList(): Promise<CommandFile[]> {
+  if (!inTauri()) return [];
+  return invoke<CommandFile[]>("slash_commands_list");
+}
+
 /** A skills folder read or not, for every repository. */
 export async function setSkillSourceEnabled(id: SkillSourceItem["id"], enabled: boolean): Promise<void> {
   requireBackend();

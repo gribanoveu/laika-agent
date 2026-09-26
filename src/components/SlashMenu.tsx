@@ -31,7 +31,10 @@ export function SlashMenu({ commands, active, onPick }: Props) {
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => onPick(command)}
         >
-          <span className="slash-name">/{command.name}</span>
+          <span className="slash-name">
+            /{command.name}
+            {command.argumentHint && <span className="slash-args"> {command.argumentHint}</span>}
+          </span>
           <span className="slash-hint">{command.unavailable ?? command.hint}</span>
         </button>
       ))}

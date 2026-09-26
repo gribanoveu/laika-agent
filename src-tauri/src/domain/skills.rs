@@ -163,7 +163,7 @@ pub fn parse_skill_md(contents: &str, dir_name: &str) -> Result<ParsedSkill, Ski
     })
 }
 
-fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
     let text = contents.trim_start_matches('\u{feff}');
     let rest = text.strip_prefix("---")?;
     let rest = rest.strip_prefix('\r').unwrap_or(rest).strip_prefix('\n')?;

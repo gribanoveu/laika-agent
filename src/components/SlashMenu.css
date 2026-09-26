@@ -43,6 +43,9 @@
   flex: none;
   font-family: var(--font-mono);
 }
+.slash-args {
+  color: var(--text-faint);
+}
 .slash-hint {
   min-width: 0;
   font-size: var(--fs-xs);

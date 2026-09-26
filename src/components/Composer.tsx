@@ -61,6 +61,8 @@ type Props = {
   onCompact: () => void;
   /** What `/name` in the box runs instead of sending it; offered in a menu as it is typed. */
   commands?: SlashCommand[];
+  /** Called as the `/` menu opens — for commands read from files, which change outside the app. */
+  onCommandsOpen?: () => void;
 };
 
 export function Composer({
@@ -82,6 +84,7 @@ export function Composer({
   usage,
   onCompact,
   commands = [],
+  onCommandsOpen,
 }: Props) {
   const [text, setText] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
@@ -96,6 +99,7 @@ export function Composer({
 
   useEffect(() => {
     if (!menuOpen) return;
+    onCommandsOpen?.();
     const onDown = (e: PointerEvent) => {
       if (!box.current?.contains(e.target as Node)) setDismissed(true);
     };

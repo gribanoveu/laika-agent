@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { commandFor, parseCommand, suggestCommands, type SlashCommand } from "../lib/slashCommands";
+import {
+  commandFor,
+  expandTemplate,
+  fileCommands,
+  parseCommand,
+  suggestCommands,
+  type SlashCommand,
+} from "../lib/slashCommands";
+import type { CommandFile } from "../lib/chat";
 
 const command = (name: string): SlashCommand => ({ name, hint: "", run: () => {} });
 const commands = [command("compact"), command("fork")];
@@ -39,5 +47,37 @@ describe("the offered commands", () => {
     expect(suggestCommands(commands, " /fork")).toEqual([]);
     expect(suggestCommands(commands, "hello")).toEqual([]);
     expect(suggestCommands(commands, "")).toEqual([]);
+  });
+});
+
+describe("a command file", () => {
+  test("puts what was typed where the prompt says", () => {
+    expect(expandTemplate("Review $ARGUMENTS, then $ARGUMENTS again", "src/a.ts")).toBe(
+      "Review src/a.ts, then src/a.ts again",
+    );
+    expect(expandTemplate("Review $ARGUMENTS", "")).toBe("Review ");
+  });
+
+  /// Typed and dropped would be worse than typed and put at the end.
+  test("without the placeholder, keeps what was typed after the prompt", () => {
+    expect(expandTemplate("Fix the build", "only the linux job")).toBe("Fix the build\n\nonly the linux job");
+    expect(expandTemplate("Fix the build", "")).toBe("Fix the build");
+  });
+
+  const file = (name: string, template = "Do $ARGUMENTS"): CommandFile => ({
+    name,
+    description: `about ${name}`,
+    argumentHint: name === "review" ? "<file>" : null,
+    template,
+    source: "project",
+  });
+
+  test("sends its prompt, and never takes a built-in's name", () => {
+    const sent: string[] = [];
+    const listed = fileCommands([file("review"), file("compact")], commands, (text) => sent.push(text));
+
+    expect(listed.map((c) => [c.name, c.hint, c.argumentHint])).toEqual([["review", "about review", "<file>"]]);
+    listed[0].run("src/a.ts");
+    expect(sent).toEqual(["Do src/a.ts"]);
   });
 });

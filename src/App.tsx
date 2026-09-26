@@ -49,7 +49,8 @@ import { useBranchPicker } from "./hooks/useBranchPicker";
 import { BranchConflictDialog } from "./components/BranchConflictDialog";
 import { useWorktreeRemoval } from "./hooks/useWorktreeRemoval";
 import { WorktreeRemoveDialog } from "./components/WorktreeRemoveDialog";
-import type { SlashCommand } from "./lib/slashCommands";
+import { fileCommands, type SlashCommand } from "./lib/slashCommands";
+import { useCommandFiles } from "./hooks/useCommandFiles";
 import "./App.css";
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
@@ -163,6 +164,7 @@ export default function App() {
   // Settings has its own copy: which skills folders are read. The Skills
   // pane reads the same list for itself while it is open.
   const skillSources = useSkills(settingsOpen, workspace.path);
+  const commandFiles = useCommandFiles(workspace.path);
   const llm = useLlmSettings();
   const theme = useTheme();
   const fontSize = useChatFontSize();
@@ -231,10 +233,10 @@ export default function App() {
     }
   };
 
-  // What `/name` in the composer runs. Commands read from files will join
-  // this list; the composer takes whatever is in it.
+  // What `/name` in the composer runs: the app's own, then the user's files
+  // in `.kibo/commands`. The composer takes whatever is in the list.
   const busy = agent.turn.status === "running" || agent.turn.status === "awaitingApproval";
-  const commands: SlashCommand[] = [
+  const builtIn: SlashCommand[] = [
     {
       name: "compact",
       hint: "Fold older history into a summary to free the context window",
@@ -252,6 +254,8 @@ export default function App() {
       run: () => agent.branch(),
     },
   ];
+  // `send` is declared further down; the arrow reaches it when a command runs.
+  const commands = [...builtIn, ...fileCommands(commandFiles.files, builtIn, (text) => void send(text))];
 
   const pickConversation = async (mode: ConversationMode) => {
     const failed = await conversation.pick(mode);
@@ -489,6 +493,7 @@ export default function App() {
             usage={agent.turn.usage}
             onCompact={compactNow}
             commands={commands}
+            onCommandsOpen={commandFiles.reload}
           />
         </main>
 

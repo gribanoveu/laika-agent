@@ -427,6 +427,41 @@ describe("slash commands", () => {
     expect(sent).toEqual([]);
   });
 
+  /// Command files are edited outside the app: the list is asked for again
+  /// each time the menu opens, not once at start-up.
+  test("opening the menu asks for the list again, and shows what to type after a name", () => {
+    let asked = 0;
+    render(
+      <Composer
+        onSend={() => {}}
+        onStop={() => {}}
+        running={false}
+        conversation="agent"
+        onConversation={() => {}}
+        unattended={false}
+        onUnattended={() => {}}
+        models={{ choices: [], current: null }}
+        onModel={() => {}}
+        onEffort={() => {}}
+        onLoadModels={() => {}}
+        context={null}
+        usage={null}
+        onCompact={() => {}}
+        commands={[{ name: "review", hint: "Review a file", argumentHint: "<file>", run: () => {} }]}
+        onCommandsOpen={() => asked++}
+      />,
+    );
+    const box = screen.getByRole("textbox");
+    fireEvent.change(box, { target: { value: "/" } });
+    fireEvent.change(box, { target: { value: "/re" } });
+    expect(asked).toBe(1);
+    expect(screen.getByRole("option").textContent).toContain("/review <file>");
+
+    fireEvent.change(box, { target: { value: "" } });
+    fireEvent.change(box, { target: { value: "/" } });
+    expect(asked).toBe(2);
+  });
+
   /// It stays in the box, and the menu says why, rather than vanishing.
   test("a command that cannot run now says why and keeps the text", () => {
     const { ran, box, type, key } = withCommands("Nothing to fork yet");
