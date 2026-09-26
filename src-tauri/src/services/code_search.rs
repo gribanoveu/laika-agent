@@ -179,7 +179,7 @@ pub fn search_many(
 
     let mut seen = HashSet::new();
     let mut matches = Vec::with_capacity(top_k);
-    let mut docs_left_out = 0;
+    let mut docs_left_out: Vec<(ChunkMetadata, MatchSource)> = Vec::new();
     let mut paths_left_out = 0;
     let mut per_file: HashMap<String, usize> = HashMap::new();
     let mut later = Vec::new();
@@ -195,19 +195,10 @@ pub fn search_many(
             continue;
         }
         if !include_docs && is_documentation(&chunk.file_id.0) {
-            docs_left_out += 1;
+            docs_left_out.push((chunk, source));
             continue;
         }
-        // Changed on disk since it was indexed: the watcher is on its way.
-        let Ok(resolved) = resolve_chunk(indexer.root(), &chunk) else { continue };
-        let found = CodeMatch {
-            path: chunk.file_id.0,
-            start_line: resolved.start_line,
-            end_line: resolved.end_line,
-            name: chunk.qualified_name,
-            text: resolved.text,
-            source,
-        };
+        let Some(found) = resolved_match(indexer, chunk, source) else { continue };
         // A declaration the query named is exempt: it is the answer, however
         // many of its file's passages came before it.
         let count = per_file.entry(found.path.clone()).or_default();
@@ -220,6 +211,17 @@ pub fn search_many(
     }
     let room = top_k - matches.len();
     matches.extend(later.into_iter().take(room));
+    // No code at all — a folder of notes, say: the documentation left out is
+    // the answer there is, and a second search to ask for it only costs a round.
+    let docs_instead = matches.is_empty() && !docs_left_out.is_empty();
+    if docs_instead {
+        matches.extend(
+            std::mem::take(&mut docs_left_out)
+                .into_iter()
+                .filter_map(|(chunk, source)| resolved_match(indexer, chunk, source))
+                .take(top_k),
+        );
+    }
 
     let symbol_hits = matches.iter().filter(|m| m.source == MatchSource::Symbol).count() as u32;
     let (weak, hint) = weak_search_hint(SearchMetaInput {
@@ -283,13 +285,19 @@ pub fn search_many(
     };
     // Said even beside another hint: it is the one thing a second search can
     // change without rewording anything.
-    let hint = match (docs_left_out, hint) {
+    let hint = match (docs_left_out.len(), hint) {
+        _ if docs_instead => Some(
+            "No code matched, so these are documentation matches — documentation is left out of a search \
+             when anything else matches, unless includeDocs is set."
+                .to_string(),
+        ),
         (0, hint) => hint,
         (n, hint) => {
             let docs = format!(
-                "{n} documentation {} {} left out; search again with includeDocs if the answer may be in the docs.",
+                "{n} documentation {} {} left out ({}); search again with includeDocs if the answer may be in the docs.",
                 if n == 1 { "match" } else { "matches" },
                 if n == 1 { "was" } else { "were" },
+                files_named(docs_left_out.iter().map(|(chunk, _)| chunk.file_id.0.as_str())),
             );
             Some(hint.map_or(docs.clone(), |hint| format!("{hint} {docs}")))
         }
@@ -304,6 +312,35 @@ pub fn search_many(
         hint
     };
     Ok(CodeSearchResult { matches, meta: SearchMeta { tiers_used, weak, hint } })
+}
+
+/// A passage as it stands on disk now, or `None` when its file changed since
+/// it was indexed — the watcher is on its way.
+fn resolved_match(indexer: &RepoIndexer, chunk: ChunkMetadata, source: MatchSource) -> Option<CodeMatch> {
+    let resolved = resolve_chunk(indexer.root(), &chunk).ok()?;
+    Some(CodeMatch {
+        path: chunk.file_id.0,
+        start_line: resolved.start_line,
+        end_line: resolved.end_line,
+        name: chunk.qualified_name,
+        text: resolved.text,
+        source,
+    })
+}
+
+/// Up to three files by name, once each: `a.md, b.md and 4 more`.
+fn files_named<'a>(paths: impl Iterator<Item = &'a str>) -> String {
+    let mut unique: Vec<&str> = Vec::new();
+    for path in paths {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    let shown = unique.iter().take(3).copied().collect::<Vec<_>>().join(", ");
+    match unique.len() {
+        0..=3 => shown,
+        n => format!("{shown} and {} more", n - 3),
+    }
 }
 
 /// The words of the query ([`query_words`]) no indexed passage has, by the
@@ -472,11 +509,31 @@ mod tests {
         let code = search(&indexer, "where is parse_config called", None, 5, &code()).unwrap();
         assert!(code.matches.iter().all(|m| m.path == "config.rs"), "{:?}", summary(&code));
         let hint = code.meta.hint.unwrap_or_default();
-        assert!(hint.contains("1 documentation match was left out") && hint.contains("includeDocs"), "{hint}");
+        assert!(hint.contains("1 documentation match was left out (notes.md)") && hint.contains("includeDocs"), "{hint}");
 
         let all = search(&indexer, "where is parse_config called", None, 5, &all()).unwrap();
         assert!(all.matches.iter().any(|m| m.path == "notes.md"), "{:?}", summary(&all));
         assert!(!all.meta.hint.unwrap_or_default().contains("includeDocs"));
+    }
+
+    /// A folder of notes: with no code to show, the documentation is the
+    /// answer, and the hint says it came in place of code rather than beside it.
+    #[test]
+    fn with_no_code_matched_the_documentation_is_the_result() {
+        let indexer = indexed(
+            "search-docs-only",
+            &[
+                ("a.txt", "The deploy runs every night at two and ships the parser.\n"),
+                ("b.txt", "Holidays: the office closes in August.\n"),
+            ],
+            Arc::default(),
+        );
+
+        let found = search(&indexer, "when does the deploy run", None, 5, &code()).unwrap();
+        assert!(found.matches.iter().any(|m| m.path == "a.txt"), "{:?}", summary(&found));
+        let hint = found.meta.hint.unwrap_or_default();
+        assert!(hint.starts_with("No code matched, so these are documentation matches"), "{hint}");
+        assert!(!hint.contains("left out ("), "{hint}");
     }
 
     /// Prose that outranks the code on every measure fills the plain candidate

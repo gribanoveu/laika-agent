@@ -104,7 +104,7 @@ Returns at most {MAX_TOP_K} matches."
                 },
                 "includeDocs": {
                     "type": ["boolean", "null"],
-                    "description": "Search documentation too — docs folders, README, Markdown, AsciiDoc. Off by default, so code is not buried under prose that shares its words. Set it when the question is about documentation, design or how-to, or when meta.hint says documentation matches were left out."
+                    "description": "Search documentation too — docs folders, README, Markdown, AsciiDoc. Off by default, so code is not buried under prose that shares its words. Set it when the question is about documentation, design or how-to, or when meta.hint says documentation matches were left out. When no code matches at all, documentation comes back without it, and meta.hint says so."
                 }
             },
             "required": ["query"]
