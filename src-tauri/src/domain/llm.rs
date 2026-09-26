@@ -218,6 +218,14 @@ pub enum LlmError {
         retry_after_seconds: Option<u64>,
         message: String,
     },
+    /// The provider or a gateway in front of it failed on its own side — 500,
+    /// 502, 503, 504. Nothing about the request is wrong, so, like a rate
+    /// limit, it is worth sending again unchanged.
+    #[error("the provider is unavailable: {message}")]
+    Unavailable {
+        retry_after_seconds: Option<u64>,
+        message: String,
+    },
     #[error("http error: {0}")]
     Http(String),
     #[error("tls configuration error: {0}")]

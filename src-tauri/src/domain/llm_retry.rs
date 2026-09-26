@@ -44,6 +44,10 @@ pub fn retry_delay(error: &LlmError, attempt: u32, produced_output: bool) -> Opt
         LlmError::RateLimited {
             retry_after_seconds,
             ..
+        }
+        | LlmError::Unavailable {
+            retry_after_seconds,
+            ..
         } => Some(rate_limit_delay(*retry_after_seconds, attempt)?),
         // Only a drop with nothing received. Any other HTTP failure is the
         // provider's considered answer, and sending the same request again
@@ -136,6 +140,15 @@ mod tests {
         for error in [rate_limited(Some(1)), rate_limited(None), dropped()] {
             assert_eq!(retry_delay(&error, 0, true), None, "{error}");
         }
+    }
+
+    /// A gateway's 502 is waited out like a rate limit, hint and backoff alike.
+    #[test]
+    fn a_provider_failing_on_its_side_is_retried() {
+        let unavailable = |hint| LlmError::Unavailable { retry_after_seconds: hint, message: "http status 502".into() };
+        assert_eq!(retry_delay(&unavailable(Some(7)), 0, false), Some(Duration::from_secs(7)));
+        assert_eq!(retry_delay(&unavailable(None), 2, false), Some(Duration::from_secs(4)));
+        assert_eq!(retry_delay(&unavailable(None), 0, true), None, "not once output got out");
     }
 
     #[test]

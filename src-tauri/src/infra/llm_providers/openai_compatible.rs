@@ -299,6 +299,14 @@ pub(super) fn ok_or_status_error(
             message: format!("http status {}: {body}", status.as_u16()),
         });
     }
+    // A gateway timing out or restarting under a long turn. 501 and 505 are
+    // not here: they say the request itself is one the server will never take.
+    if matches!(status.as_u16(), 500 | 502 | 503 | 504) {
+        return Err(LlmError::Unavailable {
+            retry_after_seconds: retry_after_seconds(&headers),
+            message: format!("http status {}: {body}", status.as_u16()),
+        });
+    }
     Err(LlmError::Http(format!(
         "http status {}: {body}",
         status.as_u16()
@@ -1275,6 +1283,22 @@ pub(super) mod tests {
             matches!(err, LlmError::RateLimited { retry_after_seconds: None, .. }),
             "{err:?}"
         );
+    }
+
+    /// 5xx is the provider's own failure and retried; 501 is a refusal of
+    /// the request itself and stays an ordinary error.
+    #[test]
+    fn a_server_error_is_unavailable_but_not_implemented_is_not() {
+        for status in ["500 Internal Server Error", "502 Bad Gateway", "503 Service Unavailable", "504 Gateway Timeout"] {
+            let (url, server) = serve_with_headers(status, "Retry-After: 5\r\n", "{}".to_string());
+            let err = provider(url).list_models().expect_err(status);
+            server.join().ok();
+            assert!(matches!(err, LlmError::Unavailable { retry_after_seconds: Some(5), .. }), "{status}: {err:?}");
+        }
+        let (url, server) = serve("501 Not Implemented", "{}".to_string());
+        let err = provider(url).list_models().expect_err("501");
+        server.join().ok();
+        assert!(matches!(err, LlmError::Http(_)), "{err:?}");
     }
 
     #[test]
