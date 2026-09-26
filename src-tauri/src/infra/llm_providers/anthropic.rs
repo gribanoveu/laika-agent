@@ -231,7 +231,9 @@ impl LlmProvider for AnthropicProvider {
 /// What `reasoning_effort` asks for. A number is a thinking budget in
 /// tokens — the older models' `enabled` thinking, which the newer ones
 /// refuse. Anything else is an effort level (`low` … `max`) for adaptive
-/// thinking, the only kind the newer ones take. Passed through as written,
+/// thinking, the only kind the newer ones take — with its summary asked for,
+/// since the newer ones otherwise stream thinking blocks with no text and the
+/// reasoning pane stays empty. Passed through as written,
 /// like the OpenAI-compatible provider's: which levels a model accepts is
 /// the API's to say.
 fn thinking_params(effort: &str) -> Vec<(&'static str, Value)> {
@@ -239,7 +241,7 @@ fn thinking_params(effort: &str) -> Vec<(&'static str, Value)> {
     match effort.parse::<u32>() {
         Ok(budget) => vec![("thinking", json!({ "type": "enabled", "budget_tokens": budget }))],
         Err(_) => vec![
-            ("thinking", json!({ "type": "adaptive" })),
+            ("thinking", json!({ "type": "adaptive", "display": "summarized" })),
             ("output_config", json!({ "effort": effort })),
         ],
     }
@@ -961,7 +963,10 @@ mod tests {
     fn effort_asks_for_adaptive_thinking_and_a_number_for_a_budget() {
         assert_eq!(
             thinking_params(" high "),
-            vec![("thinking", json!({"type":"adaptive"})), ("output_config", json!({"effort":"high"}))]
+            vec![
+                ("thinking", json!({"type":"adaptive","display":"summarized"})),
+                ("output_config", json!({"effort":"high"}))
+            ]
         );
         assert_eq!(thinking_params("4096"), vec![("thinking", json!({"type":"enabled","budget_tokens":4096}))]);
     }
@@ -986,7 +991,11 @@ mod tests {
             let sent = server.join().expect("served");
             let body: Value = serde_json::from_str(sent.split("\r\n\r\n").nth(1).expect("a body")).expect("json");
             assert_eq!(body.get("output_config") == Some(&json!({"effort":"high"})), expected, "{sent}");
-            assert_eq!(body.get("thinking") == Some(&json!({"type":"adaptive"})), expected, "{sent}");
+            assert_eq!(
+                body.get("thinking") == Some(&json!({"type":"adaptive","display":"summarized"})),
+                expected,
+                "{sent}"
+            );
         }
     }
 
