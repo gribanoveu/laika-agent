@@ -285,34 +285,46 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   /**
    * Starts a new chat from the conversation as it was just before `bubbleId`,
    * and hands that message back to the composer to be changed and sent. The
-   * chat it came from is left as it is.
+   * chat it came from is left as it is. Without `bubbleId` it is a fork: the
+   * whole conversation, checklist and plan included, and nothing handed back.
    *
-   * Nothing is saved until the branch is sent: one abandoned is not a row in
-   * the sidebar. The checklist starts empty — the one kept is the latest, and
-   * part of it may be work done after this point — and the plan is the last
-   * one written before it.
+   * A branch is saved only once it is sent: one abandoned is not a row in the
+   * sidebar. A fork is saved at once — asked for by name, it is the chat the
+   * user means to keep. The branch's checklist starts empty — the one kept is
+   * the latest, and part of it may be work done after this point — and the
+   * plan is the last one written before it.
    */
   const branch = useCallback(
-    (bubbleId: string) => {
+    (bubbleId?: string) => {
       if (turn.status !== "done" && turn.status !== "cancelled") return;
-      const cut = branchAt(turn.blocks, history.current, bubbleId);
-      if (!cut) return;
+      const whole = bubbleId === undefined;
+      const cut = whole
+        ? { blocks: turn.blocks, history: history.current, text: null }
+        : branchAt(turn.blocks, history.current, bubbleId);
+      if (!cut || (whole && cut.blocks.length === 0)) return;
       subscribed.current?.();
       subscribed.current = null;
       branchedFrom.current = chatId;
       history.current = cut.history;
-      keepTodos([]);
-      keepPlan(writtenPlan(cut.blocks));
-      unsaved.current = false;
+      keepTodos(whole ? todos.current : []);
+      keepPlan(whole ? planRef.current : writtenPlan(cut.blocks));
+      // A fork is written by the save effect, under a new id since `chatId`
+      // is cleared. Its turn begins past the copied blocks, so the plan the
+      // original wrote is not announced again as just written.
+      unsaved.current = whole;
+      turnStart.current = cut.blocks.length;
       setChatId(null);
       setError(null);
       setTurn(
         appendNotice(
           restoredTurn(cut.blocks),
-          "Branched from here — files the agent changed later in the original chat are left as they are now",
+          whole
+            ? "Forked — a copy of the conversation; the original chat is left as it is"
+            : "Branched from here — files the agent changed later in the original chat are left as they are now",
         ),
       );
-      setDraft((last) => ({ text: cut.text, seq: (last?.seq ?? 0) + 1 }));
+      const text = cut.text;
+      if (text !== null) setDraft((last) => ({ text, seq: (last?.seq ?? 0) + 1 }));
       refreshContext();
     },
     [turn.status, turn.blocks, chatId, keepTodos, keepPlan, refreshContext],

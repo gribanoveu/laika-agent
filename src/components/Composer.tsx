@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SendHorizontal, Square, ShieldCheck, Bot, Brain } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import { ContextMeter } from "./ContextMeter";
+import { SlashMenu } from "./SlashMenu";
+import { commandFor, suggestCommands, type SlashCommand } from "../lib/slashCommands";
+import { matches } from "../lib/shortcuts";
 import type { ChatUsage, ContextUsage, ConversationMode } from "../lib/chat";
 import { choiceKey, type ModelChoice } from "../hooks/useLlmSettings";
 import { effortOptions } from "../lib/providerForm";
@@ -56,6 +59,8 @@ type Props = {
   context: ContextUsage | null;
   usage: ChatUsage | null;
   onCompact: () => void;
+  /** What `/name` in the box runs instead of sending it; offered in a menu as it is typed. */
+  commands?: SlashCommand[];
 };
 
 export function Composer({
@@ -76,9 +81,27 @@ export function Composer({
   context,
   usage,
   onCompact,
+  commands = [],
 }: Props) {
   const [text, setText] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
+  const box = useRef<HTMLElement>(null);
+  // The menu follows the text: shown while a name is being typed, until
+  // Escape or a click elsewhere — and back with the next keystroke.
+  const [dismissed, setDismissed] = useState(false);
+  const [active, setActive] = useState(0);
+  const offered = dismissed ? [] : suggestCommands(commands, text);
+  const menuOpen = offered.length > 0;
+  const at = Math.min(active, Math.max(offered.length - 1, 0));
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setDismissed(true);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [menuOpen]);
 
   const grow = () => {
     const el = area.current;
@@ -104,17 +127,36 @@ export function Composer({
   const effort = models.effort ?? "";
   const efforts = effortOptions(effort);
 
-  const send = () => {
-    if (!text.trim()) return;
-    onSend(text);
+  const clear = () => {
     setText("");
     requestAnimationFrame(grow);
+  };
+
+  // A command that cannot run now stays in the box, its menu row saying why.
+  const run = (command: SlashCommand, args = "") => {
+    if (command.unavailable) return;
+    command.run(args);
+    clear();
+  };
+
+  const send = () => {
+    if (!text.trim()) return;
+    const typed = commandFor(commands, text);
+    if (typed) return run(typed.command, typed.args);
+    onSend(text);
+    clear();
+  };
+
+  const complete = (command: SlashCommand) => {
+    setText(`/${command.name} `);
+    area.current?.focus();
   };
 
   return (
     <div className="composer-wrap">
       {tab}
-      <section className="composer">
+      <section className="composer" ref={box}>
+        {menuOpen && <SlashMenu commands={offered} active={at} onPick={(c) => run(c)} />}
         <textarea
           className="chat-text"
           ref={area}
@@ -123,9 +165,36 @@ export function Composer({
           value={text}
           onChange={(e) => {
             setText(e.target.value);
+            setDismissed(false);
+            setActive(0);
             grow();
           }}
           onKeyDown={(e) => {
+            if (menuOpen) {
+              const step = matches(e, "commandNext") ? 1 : matches(e, "commandPrev") ? -1 : 0;
+              if (step) {
+                e.preventDefault();
+                setActive((at + step + offered.length) % offered.length);
+                return;
+              }
+              if (matches(e, "commandComplete")) {
+                e.preventDefault();
+                complete(offered[at]);
+                return;
+              }
+              if (matches(e, "close")) {
+                // The menu's Escape, not the window's.
+                e.preventDefault();
+                e.stopPropagation();
+                setDismissed(true);
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                run(offered[at]);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               send();

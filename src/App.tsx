@@ -49,6 +49,7 @@ import { useBranchPicker } from "./hooks/useBranchPicker";
 import { BranchConflictDialog } from "./components/BranchConflictDialog";
 import { useWorktreeRemoval } from "./hooks/useWorktreeRemoval";
 import { WorktreeRemoveDialog } from "./components/WorktreeRemoveDialog";
+import type { SlashCommand } from "./lib/slashCommands";
 import "./App.css";
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
@@ -229,6 +230,28 @@ export default function App() {
       toast.show(agent.error ?? "Nothing worth folding away yet");
     }
   };
+
+  // What `/name` in the composer runs. Commands read from files will join
+  // this list; the composer takes whatever is in it.
+  const busy = agent.turn.status === "running" || agent.turn.status === "awaitingApproval";
+  const commands: SlashCommand[] = [
+    {
+      name: "compact",
+      hint: "Fold older history into a summary to free the context window",
+      unavailable: busy ? "Not while a turn is running" : undefined,
+      run: () => void compactNow(),
+    },
+    {
+      name: "fork",
+      hint: "Continue in a new chat with a copy of this conversation",
+      unavailable: busy
+        ? "Not while a turn is running"
+        : agent.turn.blocks.length === 0
+          ? "Nothing to fork yet"
+          : undefined,
+      run: () => agent.branch(),
+    },
+  ];
 
   const pickConversation = async (mode: ConversationMode) => {
     const failed = await conversation.pick(mode);
@@ -465,6 +488,7 @@ export default function App() {
             context={agent.context}
             usage={agent.turn.usage}
             onCompact={compactNow}
+            commands={commands}
           />
         </main>
 

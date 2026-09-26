@@ -1,4 +1,6 @@
 .composer {
+  /* The / menu opens above it. */
+  position: relative;
   flex: none;
   background: var(--bg-panel);
   border-radius: var(--radius);

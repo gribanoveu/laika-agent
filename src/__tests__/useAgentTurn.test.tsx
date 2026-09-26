@@ -342,6 +342,70 @@ describe("branching", () => {
     ]);
   });
 
+  /// `/fork`: the whole conversation in a new chat, nothing handed back, and
+  /// saved at once — a row in the sidebar before anything is sent to it.
+  test("a fork copies the whole conversation into a new chat, saved at once", async () => {
+    const { result } = await twoTurns();
+    const original = result.current.chatId;
+    const opened = result.current.planWritten;
+
+    act(() => result.current.branch());
+
+    expect(result.current.draft).toBeNull();
+    expect(result.current.turn.blocks.map((b) => b.kind)).toEqual(["user", "user", "notice"]);
+    await waitFor(() => expect(saved()).toHaveLength(3));
+
+    const fork = saved()[2].args;
+    expect(fork.id).not.toBe(original as string);
+    expect(fork.id).toBe(result.current.chatId as string);
+    expect(fork.branchedFrom).toBe(original as string);
+    expect(fork.messages).toEqual(saved()[1].args.messages);
+    expect(result.current.planWritten).toBe(opened);
+
+    results.chat_start = done("third answer");
+    await act(async () => {
+      await result.current.send("third");
+    });
+    await waitFor(() => expect(saved()).toHaveLength(4));
+    expect(saved()[3].args.id).toBe(fork.id);
+    expect(saved()[3].args.messages).toHaveLength(6);
+  });
+
+  /// The plan the original wrote in its last turn is copied, not announced
+  /// again: the Plan tab opens for a plan just written, not for a fork.
+  test("a fork of a chat whose last turn wrote a plan keeps it without reopening it", async () => {
+    results.chat_load = branchRecord;
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.open("b");
+    });
+
+    act(() => result.current.branch());
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    expect(saved()[0].args.plan).toBe("# Plan");
+    expect(result.current.planWritten).toBe(0);
+  });
+
+  test("a fork keeps the checklist", async () => {
+    results.chat_start = (args: Record<string, unknown>) => ({
+      status: "done",
+      value: { text: "ok", truncated: false, todos: [{ id: "1", title: "later", status: "pending" }], history: args.messages },
+    });
+    const { result } = renderHook(() => useAgentTurn());
+    await act(async () => {
+      await result.current.send("first");
+    });
+
+    act(() => result.current.branch());
+    expect(result.current.checklist).toHaveLength(1);
+  });
+
+  test("an empty chat is not forked", () => {
+    const { result } = renderHook(() => useAgentTurn());
+    act(() => result.current.branch());
+    expect(result.current.turn.blocks).toEqual([]);
+  });
+
   /// The checklist kept is the latest one, and part of it may be work done
   /// after the branch point.
   test("the branch starts without the checklist", async () => {

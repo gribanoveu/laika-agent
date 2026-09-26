@@ -323,3 +323,117 @@ describe("the model chip", () => {
     expect(ring.closest(".composer-bar")).toBeTruthy();
   });
 });
+
+describe("slash commands", () => {
+  function withCommands(unavailable?: string) {
+    const ran: string[] = [];
+    const sent: string[] = [];
+    const commands = [
+      { name: "compact", hint: "Fold older history", run: (args: string) => ran.push(`compact:${args}`) },
+      { name: "fork", hint: "Copy the chat", unavailable, run: (args: string) => ran.push(`fork:${args}`) },
+    ];
+    render(
+      <Composer
+        onSend={(text) => sent.push(text)}
+        onStop={() => {}}
+        running={false}
+        conversation="agent"
+        onConversation={() => {}}
+        unattended={false}
+        onUnattended={() => {}}
+        models={{ choices: [], current: null }}
+        onModel={() => {}}
+        onEffort={() => {}}
+        onLoadModels={() => {}}
+        context={null}
+        usage={null}
+        onCompact={() => {}}
+        commands={commands}
+      />,
+    );
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    const type = (text: string) => fireEvent.change(box, { target: { value: text } });
+    const key = (code: string, k = code) => fireEvent.keyDown(box, { code, key: k });
+    return { ran, sent, box, type, key };
+  }
+
+  test("a slash offers every command, and typing narrows them", () => {
+    const { type } = withCommands();
+    type("/");
+    expect(screen.getAllByRole("option").map((o) => o.querySelector(".slash-name")?.textContent)).toEqual([
+      "/compact",
+      "/fork",
+    ]);
+    type("/f");
+    expect(screen.getAllByRole("option").map((o) => o.querySelector(".slash-name")?.textContent)).toEqual(["/fork"]);
+    type("/f ");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  test("Enter runs the highlighted command instead of sending it, and the arrows move", () => {
+    const { ran, sent, box, type, key } = withCommands();
+    type("/");
+    key("ArrowDown");
+    key("Enter");
+    expect(ran).toEqual(["fork:"]);
+    expect(sent).toEqual([]);
+    expect(box.value).toBe("");
+  });
+
+  test("a typed command with arguments runs with them", () => {
+    const { ran, type, key } = withCommands();
+    type("/compact keep the plan");
+    key("Enter");
+    expect(ran).toEqual(["compact:keep the plan"]);
+  });
+
+  test("a click on a command runs it", () => {
+    const { ran, type } = withCommands();
+    type("/");
+    fireEvent.click(screen.getByRole("option", { name: /compact/ }));
+    expect(ran).toEqual(["compact:"]);
+  });
+
+  test("Tab completes the name and leaves room for arguments", () => {
+    const { ran, box, type, key } = withCommands();
+    type("/co");
+    key("Tab");
+    expect(box.value).toBe("/compact ");
+    expect(ran).toEqual([]);
+  });
+
+  /// `/tmp is full` is a message about a folder, not a command nobody wrote.
+  test("text with a slash but no such command is sent as it is", () => {
+    const { ran, sent, type, key } = withCommands();
+    type("/tmp is full");
+    key("Enter");
+    expect(sent).toEqual(["/tmp is full"]);
+    expect(ran).toEqual([]);
+  });
+
+  test("Escape closes the menu, and Enter then sends what is typed", () => {
+    const { ran, sent, type, key } = withCommands();
+    type("/x");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    type("/");
+    key("Escape");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    type("/compact");
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    key("Escape");
+    key("Enter");
+    // A command's name is still a command with the menu closed.
+    expect(ran).toEqual(["compact:"]);
+    expect(sent).toEqual([]);
+  });
+
+  /// It stays in the box, and the menu says why, rather than vanishing.
+  test("a command that cannot run now says why and keeps the text", () => {
+    const { ran, box, type, key } = withCommands("Nothing to fork yet");
+    type("/fork");
+    expect(screen.getByRole("option").textContent).toContain("Nothing to fork yet");
+    key("Enter");
+    expect(ran).toEqual([]);
+    expect(box.value).toBe("/fork");
+  });
+});
