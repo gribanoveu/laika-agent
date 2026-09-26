@@ -140,16 +140,20 @@ pub fn worktree_state(root: &Path) -> Result<WorktreeState, GitBranchError> {
     Ok(WorktreeState { main, branch, dirty: dirty(&repo)?, own_commits, keeps_branch })
 }
 
-/// Removes the linked worktree at `path` from the repository at `main_root`,
-/// with its folder. Its branch goes too when the app made it and nothing is
-/// on it that is not also elsewhere; otherwise it stays, and is returned.
+/// Removes the linked worktree at `path`, with its folder. Its branch goes
+/// too when the app made it and nothing is on it that is not also elsewhere;
+/// otherwise it stays, and is returned.
 ///
 /// Checked again here, not trusted from an earlier look: between the dialog
 /// and the click, a terminal may have written to it. Refused while anything
 /// in it is uncommitted — the folder goes, and git would not get it back.
-pub fn remove_worktree(main_root: &Path, path: &Path) -> Result<Option<String>, GitBranchError> {
-    let repo = open(main_root)?;
+pub fn remove_worktree(path: &Path) -> Result<Option<String>, GitBranchError> {
     let target = path.canonicalize().map_err(|_| GitBranchError::NotAWorktree)?;
+    let state = worktree_state(&target)?;
+    // Only as one of the repository's registered worktrees — not whatever the
+    // folder's `.git` file claims to be. The list is the shared `.git`'s, the
+    // same from any of its working trees.
+    let repo = open(&target)?;
     let names = repo.worktrees().map_err(git)?;
     let worktree = names
         .iter()
@@ -157,7 +161,6 @@ pub fn remove_worktree(main_root: &Path, path: &Path) -> Result<Option<String>, 
         .find(|wt| wt.path().canonicalize().ok().as_deref() == Some(target.as_path()))
         .ok_or(GitBranchError::NotAWorktree)?;
 
-    let state = worktree_state(&target)?;
     if !state.dirty.is_empty() {
         return Err(GitBranchError::Dirty(state.dirty));
     }
@@ -476,7 +479,7 @@ mod tests {
         assert_eq!(state.branch.as_deref(), Some("kibo/main-t"));
         assert_eq!((state.dirty.len(), state.own_commits, state.keeps_branch), (0, 0, false));
 
-        assert_eq!(remove_worktree(&dir, &path).unwrap(), None);
+        assert_eq!(remove_worktree(&path).unwrap(), None);
         assert!(!path.exists());
         assert!(repo.find_branch("kibo/main-t", BranchType::Local).is_err());
         assert_eq!(repo.worktrees().unwrap().len(), 0);
@@ -486,12 +489,12 @@ mod tests {
 
     #[test]
     fn uncommitted_work_keeps_the_worktree_whole() {
-        let (dir, repo, path, _linked) = worktree("remove-dirty");
+        let (_dir, repo, path, _linked) = worktree("remove-dirty");
         fs::write(path.join("a.txt"), "edited\n").unwrap();
         fs::write(path.join("new.txt"), "untracked\n").unwrap();
 
         assert_eq!(worktree_state(&path).unwrap().dirty, vec!["a.txt".to_string(), "new.txt".to_string()]);
-        let refused = remove_worktree(&dir, &path);
+        let refused = remove_worktree(&path);
         assert!(matches!(refused, Err(GitBranchError::Dirty(ref paths)) if paths.len() == 2), "{refused:?}");
         assert_eq!(fs::read_to_string(path.join("a.txt")).unwrap(), "edited\n");
         assert!(repo.find_branch("kibo/main-t", BranchType::Local).is_ok());
@@ -500,14 +503,14 @@ mod tests {
 
     #[test]
     fn commits_only_the_worktree_has_keep_its_branch() {
-        let (dir, repo, path, linked) = worktree("remove-commits");
+        let (_dir, repo, path, linked) = worktree("remove-commits");
         let parent = tip(&linked);
         let made = commit(&linked, "HEAD", Some(parent), &[("a.txt", "a\n"), ("b.txt", "b\n"), ("d.txt", "d\n")]);
         linked.checkout_head(Some(CheckoutBuilder::new().force())).unwrap();
         let state = worktree_state(&path).unwrap();
         assert_eq!((state.own_commits, state.keeps_branch), (1, true));
 
-        assert_eq!(remove_worktree(&dir, &path).unwrap(), Some("kibo/main-t".to_string()));
+        assert_eq!(remove_worktree(&path).unwrap(), Some("kibo/main-t".to_string()));
         assert!(!path.exists());
         let kept = repo.find_branch("kibo/main-t", BranchType::Local).unwrap();
         assert_eq!(kept.get().target(), Some(made));
@@ -516,19 +519,19 @@ mod tests {
     /// Pushed or merged, the commits are held elsewhere: the branch may go.
     #[test]
     fn commits_a_remote_also_has_are_not_the_worktree_s_own() {
-        let (dir, repo, path, linked) = worktree("remove-pushed");
+        let (_dir, repo, path, linked) = worktree("remove-pushed");
         let made = commit(&linked, "HEAD", Some(tip(&linked)), &[("a.txt", "a\n"), ("b.txt", "b\n")]);
         linked.checkout_head(Some(CheckoutBuilder::new().force())).unwrap();
         repo.reference("refs/remotes/origin/kibo/main-t", made, false, "").unwrap();
 
         assert_eq!(worktree_state(&path).unwrap().own_commits, 0);
-        assert_eq!(remove_worktree(&dir, &path).unwrap(), None);
+        assert_eq!(remove_worktree(&path).unwrap(), None);
         assert!(repo.find_branch("kibo/main-t", BranchType::Local).is_err());
     }
 
     #[test]
     fn a_branch_the_user_made_is_kept_even_with_nothing_on_it() {
-        let (dir, repo) = two_branches("remove-users");
+        let (_dir, repo) = two_branches("remove-users");
         let path = temp_dir("remove-users-home").join("theirs");
         let main = repo.find_commit(repo.refname_to_id("refs/heads/main").unwrap()).unwrap();
         let branch = repo.branch("theirs", &main, false).unwrap();
@@ -536,43 +539,47 @@ mod tests {
         options.reference(Some(branch.get()));
         repo.worktree("theirs", &path, Some(&options)).unwrap();
 
-        assert_eq!(remove_worktree(&dir, &path).unwrap(), Some("theirs".to_string()));
+        assert_eq!(remove_worktree(&path).unwrap(), Some("theirs".to_string()));
         assert!(!path.exists());
         assert!(repo.find_branch("theirs", BranchType::Local).is_ok());
     }
 
     #[test]
     fn commits_on_no_branch_are_refused() {
-        let (dir, _repo, path, linked) = worktree("remove-detached");
+        let (_dir, _repo, path, linked) = worktree("remove-detached");
         let loose = commit(&linked, "refs/heads/scratch", Some(tip(&linked)), &[("a.txt", "a\n"), ("b.txt", "b\n")]);
         linked.set_head_detached(loose).unwrap();
         linked.find_branch("scratch", BranchType::Local).unwrap().delete().unwrap();
 
         let state = worktree_state(&path).unwrap();
         assert_eq!((state.branch, state.own_commits), (None, 1));
-        assert!(matches!(remove_worktree(&dir, &path), Err(GitBranchError::Unreachable(1))));
+        assert!(matches!(remove_worktree(&path), Err(GitBranchError::Unreachable(1))));
         assert!(path.exists());
     }
 
     #[test]
     fn a_locked_worktree_is_left_alone() {
-        let (dir, repo, path, _linked) = worktree("remove-locked");
+        let (_dir, repo, path, _linked) = worktree("remove-locked");
         repo.find_worktree("main-t").unwrap().lock(Some("in use")).unwrap();
-        assert!(matches!(remove_worktree(&dir, &path), Err(GitBranchError::Locked(ref why)) if why == "in use"));
+        assert!(matches!(remove_worktree(&path), Err(GitBranchError::Locked(ref why)) if why == "in use"));
         assert!(path.exists());
     }
 
-    /// The path comes from the window: only a worktree of the open folder's
-    /// repository is removed, never the folder itself or another one.
+    /// The path comes from the window: only a folder its repository has
+    /// registered as a worktree is removed — not the main folder, not a plain
+    /// one, and not one whose `.git` file merely points into a repository.
     #[test]
-    fn only_a_worktree_of_the_open_repository_is_removed() {
+    fn only_a_registered_worktree_is_removed() {
         let (dir, _repo, path, _linked) = worktree("remove-foreign");
-        let (other, _other_repo, other_path, _) = worktree("remove-foreign-other");
+        let impostor = temp_dir("remove-foreign-impostor");
+        fs::copy(path.join(".git"), impostor.join(".git")).unwrap();
+        fs::write(impostor.join("mine.txt"), "not a worktree's\n").unwrap();
 
-        assert!(matches!(remove_worktree(&dir, &dir), Err(GitBranchError::NotAWorktree)));
-        assert!(matches!(remove_worktree(&dir, &other_path), Err(GitBranchError::NotAWorktree)));
-        assert!(matches!(worktree_state(&dir), Err(GitBranchError::NotAWorktree)));
-        assert!(dir.exists() && other_path.exists() && path.exists() && other.exists());
+        assert!(matches!(remove_worktree(&dir), Err(GitBranchError::NotAWorktree)));
+        assert!(matches!(remove_worktree(&temp_dir("remove-foreign-plain")), Err(GitBranchError::NotARepository)));
+        let refused = remove_worktree(&impostor);
+        assert!(matches!(refused, Err(GitBranchError::NotAWorktree) | Err(GitBranchError::Dirty(_))), "{refused:?}");
+        assert!(dir.exists() && path.exists() && impostor.join("mine.txt").exists());
     }
 
     #[test]

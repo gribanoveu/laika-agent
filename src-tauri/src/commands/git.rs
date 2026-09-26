@@ -144,8 +144,8 @@ pub async fn git_worktree_add(base: String, state: State<'_, Arc<AgentState>>) -
     Ok(path.display().to_string())
 }
 
-/// The open worktree as removing it would find it, and how many chats would
-/// go with it — what the confirmation says before anything is done.
+/// A worktree as removing it would find it, and how many chats would go with
+/// it — what the confirmation says before anything is done.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeCheck {
@@ -154,12 +154,31 @@ pub struct WorktreeCheck {
     chats: usize,
 }
 
+/// `path` as a worktree the window may remove: a folder the app has opened,
+/// and not the one open now — its processes, terminals and watchers run in
+/// it until another folder is opened.
+fn removable(path: &str, open: Option<&Path>, recent: &[String]) -> Result<PathBuf, String> {
+    let target = Path::new(path).canonicalize().map_err(|e| format!("{path}: {e}"))?;
+    let same = |folder: &Path| folder.canonicalize().is_ok_and(|folder| folder == target);
+    if open.is_some_and(same) {
+        return Err("this worktree is the open folder — switch to another one to remove it".into());
+    }
+    if !recent.iter().any(|folder| same(Path::new(folder))) {
+        return Err(format!("{path} is not a folder Kibo has opened"));
+    }
+    Ok(target)
+}
+
+fn removable_now(path: &str, state: &AgentState) -> Result<PathBuf, String> {
+    removable(path, state.workspace().ok().as_deref(), &crate::infra::recent_workspaces::load())
+}
+
 #[tauri::command]
-pub async fn git_worktree_check(state: State<'_, Arc<AgentState>>) -> Result<WorktreeCheck, String> {
-    let root = state.workspace()?;
+pub async fn git_worktree_check(path: String, state: State<'_, Arc<AgentState>>) -> Result<WorktreeCheck, String> {
+    let target = removable_now(&path, &state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let worktree = git_branches::worktree_state(&root).map_err(|e| e.to_string())?;
-        let chats = chat_store::list(&root.display().to_string()).map_err(|e| e.to_string())?.len();
+        let worktree = git_branches::worktree_state(&target).map_err(|e| e.to_string())?;
+        let chats = chat_store::list(&target.display().to_string()).map_err(|e| e.to_string())?.len();
         Ok(WorktreeCheck { state: worktree, chats })
     })
     .await
@@ -174,24 +193,22 @@ pub struct WorktreeRemoved {
     chats_removed: usize,
 }
 
-/// Removes the worktree at `path` and its chats. Run from its main folder,
-/// which the window opens first: the worktree's processes, terminals and
-/// watchers stop with the switch, not under a folder being deleted.
+/// Removes the worktree at `path` — one from the folder list, not the open
+/// folder — and its chats.
 #[tauri::command]
 pub async fn git_worktree_remove(path: String, state: State<'_, Arc<AgentState>>) -> Result<WorktreeRemoved, String> {
-    let main = state.workspace()?;
-    tauri::async_runtime::spawn_blocking(move || remove_with_chats(&main, &path))
+    let target = removable_now(&path, &state)?;
+    tauri::async_runtime::spawn_blocking(move || remove_with_chats(&target))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// The folder first: chats deleted for a worktree that then stayed would be
 /// lost for nothing. Keyed by the same canonical spelling `workspace_open`
-/// saved them under.
-fn remove_with_chats(main: &Path, path: &str) -> Result<WorktreeRemoved, String> {
-    let target = Path::new(path).canonicalize().map_err(|e| format!("{path}: {e}"))?;
+/// saved them under — `target` is already canonical.
+fn remove_with_chats(target: &Path) -> Result<WorktreeRemoved, String> {
     let saved_under = target.display().to_string();
-    let branch_kept = git_branches::remove_worktree(main, &target).map_err(|e| e.to_string())?;
+    let branch_kept = git_branches::remove_worktree(target).map_err(|e| e.to_string())?;
     let chats_removed = chat_store::delete_in(&saved_under)
         .map_err(|e| format!("the worktree is removed, but its chats are not: {e}"))?;
     Ok(WorktreeRemoved { branch_kept, chats_removed })
@@ -255,17 +272,32 @@ mod tests {
 
             // Dirty: refused, and the chats stay with it.
             std::fs::write(path.join("new.txt"), "x").unwrap();
-            assert!(remove_with_chats(&main, &path.display().to_string()).is_err());
+            assert!(remove_with_chats(&path.canonicalize().unwrap()).is_err());
             assert_eq!(chat_store::list(&shown(&path)).unwrap().len(), 1);
 
             std::fs::remove_file(path.join("new.txt")).unwrap();
             let saved_under = shown(&path);
-            let removed = remove_with_chats(&main, &path.display().to_string()).unwrap();
+            let removed = remove_with_chats(&path.canonicalize().unwrap()).unwrap();
             assert_eq!(removed, WorktreeRemoved { branch_kept: None, chats_removed: 1 });
             assert!(!path.exists());
             assert!(chat_store::list(&saved_under).unwrap().is_empty());
             assert_eq!(chat_store::list(&shown(&main)).unwrap().len(), 1);
         });
+    }
+
+    /// The path is the window's: only a folder from the list, and never the
+    /// one open, whatever spelling it arrives in.
+    #[test]
+    fn a_worktree_is_removable_only_from_the_list_and_not_while_open() {
+        let listed = temp_dir("cmd-removable-listed");
+        let recent = vec![listed.display().to_string()];
+        let spelled = listed.join(".").display().to_string();
+
+        assert_eq!(removable(&spelled, None, &recent).unwrap(), listed.canonicalize().unwrap());
+        assert!(removable(&spelled, Some(&listed), &recent).unwrap_err().contains("switch to another"));
+        let elsewhere = temp_dir("cmd-removable-elsewhere");
+        assert!(removable(&elsewhere.display().to_string(), None, &recent).unwrap_err().contains("not a folder Kibo has opened"));
+        assert!(removable("/no/such/folder", None, &recent).is_err());
     }
 
     /// `src/lib/chat.ts` listens on this name.
