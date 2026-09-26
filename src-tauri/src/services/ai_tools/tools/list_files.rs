@@ -14,6 +14,7 @@ use crate::domain::llm::LlmToolDefinition;
 use crate::domain::tools::{ListFilesArgs, ToolError, ToolFileEntry, ToolResult, ToolScope};
 use crate::infra::workspace_scanner;
 
+use super::read_file::MAX_READ_BYTES;
 use super::super::resolve::{basename, relative_to_root, resolve_existing};
 
 /// How many entries one call may return.
@@ -64,6 +65,7 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
                 .map(|path| ToolFileEntry {
                     path,
                     is_dir: entry.is_dir,
+                    size: None,
                 })
         })
         .collect();
@@ -83,6 +85,13 @@ pub fn list_files(scope: &ToolScope, args: &ListFilesArgs) -> Result<ToolResult,
     // past the cap rather than a filter over an already-truncated list.
     let truncated = entries.len() > MAX_ENTRIES;
     entries.truncate(MAX_ENTRIES);
+    // After the cap: at most one stat per entry shown.
+    for entry in entries.iter_mut().filter(|e| !e.is_dir) {
+        entry.size = std::fs::metadata(scope.root().join(&entry.path))
+            .map(|meta| meta.len())
+            .ok()
+            .filter(|&len| len > MAX_READ_BYTES as u64);
+    }
 
     Ok(ToolResult::FileList { entries, truncated, stopped_at })
 }
@@ -107,10 +116,9 @@ pub fn render_file_tree(entries: &[ToolFileEntry], truncated: bool) -> String {
         for part in dirs {
             node = node.children.entry((*part).to_string()).or_default();
         }
-        node.children
-            .entry((*last).to_string())
-            .or_default()
-            .is_file = !entry.is_dir;
+        let leaf = node.children.entry((*last).to_string()).or_default();
+        leaf.is_file = !entry.is_dir;
+        leaf.size = entry.size;
     }
 
     let mut out = String::from("./\n");
@@ -132,6 +140,7 @@ pub fn render_file_tree(entries: &[ToolFileEntry], truncated: bool) -> String {
 struct Node {
     children: std::collections::BTreeMap<String, Node>,
     is_file: bool,
+    size: Option<u64>,
 }
 
 fn render_children(node: &Node, prefix: &str, out: &mut String) {
@@ -145,6 +154,9 @@ fn render_children(node: &Node, prefix: &str, out: &mut String) {
         if is_dir {
             out.push('/');
         }
+        if let Some(bytes) = child.size {
+            out.push_str(&format!("  ({})", human_size(bytes)));
+        }
         out.push('\n');
         if is_dir {
             let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
@@ -153,11 +165,20 @@ fn render_children(node: &Node, prefix: &str, out: &mut String) {
     }
 }
 
+/// `340 KB`, `52.1 MB` — a size to decide by, not to account with.
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        0..1_000_000 => format!("{} KB", bytes / 1000),
+        1_000_000..1_000_000_000 => format!("{:.1} MB", bytes as f64 / 1e6),
+        _ => format!("{:.1} GB", bytes as f64 / 1e9),
+    }
+}
+
 /// What the model is told `listFiles` is for.
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "listFiles".to_string(),
-        description: "List the files and directories under a path, as a tree. Ignored files (.gitignore, and .git itself) are never listed. Use it to learn a project's shape before reading; use grep when you already know what to look for."
+        description: "List the files and directories under a path, as a tree. Ignored files (.gitignore, and .git itself) are never listed. Use it to learn a project's shape before reading; use grep when you already know what to look for. A file larger than one readFile returns (100 KB) shows its size — grep it, or read a range."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -220,6 +241,26 @@ mod tests {
 
     fn paths(entries: &[ToolFileEntry]) -> Vec<&str> {
         entries.iter().map(|e| e.path.as_str()).collect()
+    }
+
+    /// A file one read would cut shows its size, in the tree the model reads;
+    /// a file that fits, and a folder, show none.
+    #[test]
+    fn a_file_too_large_for_one_read_shows_its_size() {
+        let (scope, root) = fixture("list-sizes");
+        write(&root, "logs/app.log", &"x".repeat(150_000));
+        write(&root, "logs/fits.log", &"x".repeat(MAX_READ_BYTES));
+        write(&root, "src/a.rs", "fn a() {}\n");
+
+        let (entries, _) = run(&scope, &ListFilesArgs::default());
+        let size = |path: &str| entries.iter().find(|e| e.path == path).and_then(|e| e.size);
+        assert_eq!(size("logs/app.log"), Some(150_000));
+        assert_eq!((size("logs/fits.log"), size("src/a.rs"), size("logs")), (None, None, None));
+
+        let tree = render_file_tree(&entries, false);
+        assert!(tree.contains("app.log  (150 KB)\n"), "{tree}");
+        assert!(tree.contains("fits.log\n"), "{tree}");
+        assert_eq!((human_size(52_100_000), human_size(3_200_000_000)), ("52.1 MB".into(), "3.2 GB".into()));
     }
 
     #[test]
@@ -435,10 +476,10 @@ mod tests {
     #[test]
     fn the_tree_shows_nesting() {
         let entries = vec![
-            ToolFileEntry { path: "src".into(), is_dir: true },
-            ToolFileEntry { path: "src/main.rs".into(), is_dir: false },
-            ToolFileEntry { path: "src/lib.rs".into(), is_dir: false },
-            ToolFileEntry { path: "README.md".into(), is_dir: false },
+            ToolFileEntry { path: "src".into(), is_dir: true, size: None },
+            ToolFileEntry { path: "src/main.rs".into(), is_dir: false, size: None },
+            ToolFileEntry { path: "src/lib.rs".into(), is_dir: false, size: None },
+            ToolFileEntry { path: "README.md".into(), is_dir: false, size: None },
         ];
 
         assert_eq!(
@@ -455,7 +496,7 @@ mod tests {
     /// children to infer it from.
     #[test]
     fn an_empty_directory_still_appears_in_the_tree() {
-        let entries = vec![ToolFileEntry { path: "empty".into(), is_dir: true }];
+        let entries = vec![ToolFileEntry { path: "empty".into(), is_dir: true, size: None }];
         assert_eq!(render_file_tree(&entries, false), "./\n└── empty/\n");
     }
 
@@ -463,7 +504,7 @@ mod tests {
     /// in a flag it never sees.
     #[test]
     fn a_truncated_tree_says_how_to_narrow_it() {
-        let entries = vec![ToolFileEntry { path: "a.txt".into(), is_dir: false }];
+        let entries = vec![ToolFileEntry { path: "a.txt".into(), is_dir: false, size: None }];
         let rendered = render_file_tree(&entries, true);
         assert!(rendered.contains("the listing is longer"), "{rendered}");
         assert!(rendered.contains("pattern"), "{rendered}");

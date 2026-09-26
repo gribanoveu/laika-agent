@@ -1342,6 +1342,10 @@ pub struct ToolFileEntry {
     /// takes, so an entry round-trips without editing.
     pub path: String,
     pub is_dir: bool,
+    /// Bytes, for a file too large for one `readFile` — the one size that
+    /// changes what to do with it. `None` for the rest and for folders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 /// `writeFile` arguments. Creates the file or replaces it whole.

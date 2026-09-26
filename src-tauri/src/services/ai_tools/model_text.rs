@@ -466,7 +466,7 @@ mod tests {
         assert_eq!(for_model(&ToolResult::FileList { entries: vec![], truncated: false, stopped_at: None }), "No files found.");
         let unopened = for_model(&ToolResult::FileList { entries: vec![], truncated: false, stopped_at: Some(4) });
         assert!(unopened.starts_with("No files found within depth 4 — folders at that depth were not opened."), "{unopened}");
-        let entry = crate::domain::tools::ToolFileEntry { path: "a".into(), is_dir: true };
+        let entry = crate::domain::tools::ToolFileEntry { path: "a".into(), is_dir: true, size: None };
         let short = for_model(&ToolResult::FileList { entries: vec![entry], truncated: false, stopped_at: Some(1) });
         assert!(short.ends_with("\n[folders at depth 1 were not opened — raise depth to see inside]"), "{short}");
     }
