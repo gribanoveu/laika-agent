@@ -146,18 +146,18 @@ describe("compaction", () => {
     const messages = [{ role: "user" as const, content: "hi" }];
     invokeResult = { history: messages, folded: 3 };
 
-    const shorter = await chat.compactHistory(messages);
+    const shorter = await chat.compactHistory(messages, false, null, "compact-1");
 
     expect(calls).toEqual([
-      { command: "chat_compact", args: { messages, force: false, plan: null } },
+      { command: "chat_compact", args: { messages, force: false, plan: null, turnId: "compact-1" } },
     ]);
     expect(shorter?.folded).toBe(3);
   });
 
   test("and asking for one outright says so", async () => {
     invokeResult = null;
-    await chat.compactHistory([], true, "# Plan");
-    expect(calls[0].args).toEqual({ messages: [], force: true, plan: "# Plan" });
+    await chat.compactHistory([], true, "# Plan", "compact-2");
+    expect(calls[0].args).toEqual({ messages: [], force: true, plan: "# Plan", turnId: "compact-2" });
   });
 });
 

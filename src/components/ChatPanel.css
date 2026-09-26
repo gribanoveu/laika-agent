@@ -65,6 +65,56 @@
   margin: 2px 0;
 }
 
+/* Older history being folded into a summary: a card as wide as the thread,
+   the accent while it runs, amber if it gave up. */
+.compaction-card {
+  --state: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg-panel-soft);
+  color: var(--text-dim);
+}
+.compaction-card.done {
+  --state: var(--text-faint);
+}
+.compaction-card.failed {
+  --state: var(--amber);
+}
+.compaction-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--state) 14%, transparent);
+  color: var(--state);
+}
+.compaction-ico .tool-run-spin {
+  color: inherit;
+}
+.compaction-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.compaction-title {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.compaction-detail {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
 /* A background process that ended: a card as wide as the thread, like the
    calls around it — how it ended in the tile's and the badge's colour, amber
    for a failure — that opens the Terminal tab. */

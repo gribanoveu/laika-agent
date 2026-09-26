@@ -63,12 +63,13 @@ pub fn usage(session: &LlmSession, frame: RequestFrame, history: &[LlmMessage]) 
 ///
 /// `force` is the user asking for it outright: the threshold is skipped, but
 /// nothing else is — a conversation with nothing worth folding stays as it is
-/// whoever asked.
+/// whoever asked. `started` as in [`compact`].
 pub fn compact_if_needed(
     session: &LlmSession,
     frame: RequestFrame,
     history: &[LlmMessage],
     force: bool,
+    started: &dyn Fn(),
 ) -> Result<Option<Compacted>, LlmError> {
     let needed = force
         || compaction::should_compact(
@@ -79,7 +80,7 @@ pub fn compact_if_needed(
     if !needed {
         return Ok(None);
     }
-    compact(session, history, compaction::KEEP_LAST_MESSAGES)
+    compact(session, history, compaction::KEEP_LAST_MESSAGES, started)
 }
 
 /// One pass. `None` means the history is unchanged, for any reason: there was
@@ -89,14 +90,21 @@ pub fn compact_if_needed(
 /// pass runs when the conversation has already failed to fit; if it cannot
 /// help, the useful thing to report is the original failure, not a second one
 /// about summarizing.
+///
+/// `started` is called once there is something to fold, just before the
+/// summary is asked for — the one slow part, and the only point at which the
+/// window can honestly say a pass is under way. A pass that stops earlier
+/// never calls it.
 pub fn compact(
     session: &LlmSession,
     history: &[LlmMessage],
     keep_last: usize,
+    started: &dyn Fn(),
 ) -> Result<Option<Compacted>, LlmError> {
     let Some(plan) = compaction::plan_compaction(history, keep_last) else {
         return Ok(None);
     };
+    started();
 
     let request = ChatRequest {
         messages: vec![
@@ -300,7 +308,7 @@ mod tests {
         let provider = Summarizer::saying("they were fixing the parser");
         let history = conversation(40);
 
-        let compacted = compact(&session(provider), &history, KEEP_LAST_MESSAGES)
+        let compacted = compact(&session(provider), &history, KEEP_LAST_MESSAGES, &|| {})
             .unwrap()
             .expect("a shorter history");
 
@@ -319,7 +327,7 @@ mod tests {
     #[test]
     fn the_summarizer_is_asked_for_prose_and_nothing_else() {
         let provider = Summarizer::saying("a summary");
-        compact(&session(provider.clone()), &conversation(40), KEEP_LAST_MESSAGES).unwrap();
+        compact(&session(provider.clone()), &conversation(40), KEEP_LAST_MESSAGES, &|| {}).unwrap();
 
         let asked = provider.asked.lock().unwrap();
         assert_eq!(asked.len(), 1);
@@ -342,7 +350,7 @@ mod tests {
         });
 
         assert_eq!(
-            compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES).unwrap(),
+            compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES, &|| {}).unwrap(),
             None
         );
     }
@@ -355,7 +363,7 @@ mod tests {
         });
 
         assert_eq!(
-            compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES).unwrap(),
+            compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES, &|| {}).unwrap(),
             None
         );
     }
@@ -366,10 +374,33 @@ mod tests {
     fn a_short_conversation_is_not_worth_a_request() {
         let provider = Summarizer::saying("a summary");
         assert_eq!(
-            compact(&session(provider.clone()), &conversation(4), KEEP_LAST_MESSAGES).unwrap(),
+            compact(&session(provider.clone()), &conversation(4), KEEP_LAST_MESSAGES, &|| {}).unwrap(),
             None
         );
         assert!(provider.asked.lock().unwrap().is_empty(), "asked anyway");
+    }
+
+    /// The window says "compacting" on `started`: a pass that never asks for
+    /// a summary must not have said it, and one that does says it once, before
+    /// the request rather than after it.
+    #[test]
+    fn a_pass_says_it_started_only_when_it_asks_for_a_summary() {
+        let provider = Summarizer::saying("a summary");
+        let session = session(provider.clone());
+        let calls = std::cell::Cell::new(0);
+        let asked_before = std::cell::Cell::new(None);
+        let started = || {
+            calls.set(calls.get() + 1);
+            asked_before.set(Some(provider.asked.lock().unwrap().len()));
+        };
+
+        compact(&session, &conversation(4), KEEP_LAST_MESSAGES, &started).unwrap();
+        compact_if_needed(&session, bare(), &conversation(40), false, &started).unwrap();
+        assert_eq!(calls.get(), 0, "said it started with nothing to fold");
+
+        compact_if_needed(&session, bare(), &conversation(40), true, &started).unwrap();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(asked_before.get(), Some(0), "said it only after asking");
     }
 
     #[test]
@@ -379,7 +410,7 @@ mod tests {
             asked: Mutex::new(Vec::new()),
         });
 
-        assert!(compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES).is_err());
+        assert!(compact(&session(provider), &conversation(40), KEEP_LAST_MESSAGES, &|| {}).is_err());
     }
 
     /// The app talks to gateways it knows nothing about. Compacting against
@@ -392,7 +423,7 @@ mod tests {
             .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
             .collect();
 
-        assert_eq!(compact_if_needed(&session(provider.clone()), bare(), &long, false).unwrap(), None);
+        assert_eq!(compact_if_needed(&session(provider.clone()), bare(), &long, false, &|| {}).unwrap(), None);
         assert!(provider.asked.lock().unwrap().is_empty());
     }
 
@@ -403,7 +434,7 @@ mod tests {
             .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
             .collect();
 
-        let compacted = compact_if_needed(&session_with_window(provider, 10_000), bare(), &long, false)
+        let compacted = compact_if_needed(&session_with_window(provider, 10_000), bare(), &long, false, &|| {})
             .unwrap()
             .expect("a shorter history");
         assert_eq!(compacted.folded, 40 - KEEP_LAST_MESSAGES);
@@ -415,7 +446,7 @@ mod tests {
         let history = conversation(40);
 
         assert_eq!(
-            compact_if_needed(&session_with_window(provider.clone(), 1_000_000), bare(), &history, false)
+            compact_if_needed(&session_with_window(provider.clone(), 1_000_000), bare(), &history, false, &|| {})
                 .unwrap(),
             None
         );
@@ -522,11 +553,11 @@ mod tests {
         );
         let session = session_with_window(provider, limit);
         assert!(
-            compact_if_needed(&session, bare(), &history, false).unwrap().is_none(),
+            compact_if_needed(&session, bare(), &history, false, &|| {}).unwrap().is_none(),
             "without the server it fits — so the server is what tips it"
         );
         assert!(
-            compact_if_needed(&session, frame, &history, false).unwrap().is_some(),
+            compact_if_needed(&session, frame, &history, false, &|| {}).unwrap().is_some(),
             "the fixed cost of the request was not counted"
         );
     }
@@ -538,10 +569,10 @@ mod tests {
         let provider = Summarizer::saying("a summary");
         let session = session(provider.clone());
 
-        assert!(compact_if_needed(&session, bare(), &conversation(40), true)
+        assert!(compact_if_needed(&session, bare(), &conversation(40), true, &|| {})
             .unwrap()
             .is_some());
-        assert_eq!(compact_if_needed(&session, bare(), &conversation(4), true).unwrap(), None);
+        assert_eq!(compact_if_needed(&session, bare(), &conversation(4), true, &|| {}).unwrap(), None);
     }
 
     /// The pair rule of `plan_compaction`, seen from the outside: what comes
@@ -571,7 +602,7 @@ mod tests {
             });
         }
 
-        let compacted = compact(&session(provider), &history, KEEP_LAST_MESSAGES)
+        let compacted = compact(&session(provider), &history, KEEP_LAST_MESSAGES, &|| {})
             .unwrap()
             .expect("a shorter history");
 

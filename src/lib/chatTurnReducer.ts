@@ -31,6 +31,8 @@ export type Block =
   | { kind: "steer"; id: string; text: string }
   /** Something the app did to the conversation, said out loud. */
   | { kind: "notice"; id: string; text: string }
+  /** A pass folding older history into a summary: under way, done, or given up on. */
+  | { kind: "compaction"; id: string; status: "running" | "done" | "failed"; folded?: number }
   /** A background process ended — what the model was told at its round, drawn as a card. */
   | { kind: "processEnded"; id: string; process: ProcessInfo }
   | {
@@ -99,7 +101,39 @@ function stopClock(state: TurnState, now: number): TurnState {
 
 /** The turn ended without an outcome — it failed on the way. */
 export function endTurn(state: TurnState, now = Date.now()): TurnState {
-  return { ...stopClock(state, now), status: "done" };
+  return { ...compactionEnded(stopClock(state, now), null), status: "done" };
+}
+
+/** A summary of the older history has been asked for: a card, under way. */
+export function compactionStarted(state: TurnState): TurnState {
+  return {
+    ...state,
+    blocks: [...state.blocks, { kind: "compaction", id: `compaction:${state.blocks.length}`, status: "running" }],
+  };
+}
+
+/**
+ * How the pass under way ended: `folded` messages summarized, or `null` —
+ * it gave up (no summary came back, the request failed, the turn ended).
+ *
+ * With no card under way, a pass that folded something still gets one — its
+ * start may never have been seen — and one that did not is nothing to show.
+ */
+export function compactionEnded(state: TurnState, end: { folded: number } | null): TurnState {
+  const at = state.blocks.map((b) => b.kind === "compaction" && b.status === "running").lastIndexOf(true);
+  if (at < 0) {
+    if (!end) return state;
+    return {
+      ...state,
+      blocks: [...state.blocks, { kind: "compaction", id: `compaction:${state.blocks.length}`, status: "done", folded: end.folded }],
+    };
+  }
+  const blocks = state.blocks.map((block, i) =>
+    i === at && block.kind === "compaction"
+      ? { ...block, status: end ? ("done" as const) : ("failed" as const), folded: end?.folded }
+      : block,
+  );
+  return { ...state, blocks };
 }
 
 export function appendUserMessage(state: TurnState, text: string, now = Date.now()): TurnState {
@@ -204,7 +238,7 @@ export function acceptOutcome(state: TurnState, outcome: Outcome, now = Date.now
     };
   }
   return {
-    ...state,
+    ...compactionEnded(state, null),
     status: outcome.status === "cancelled" ? "cancelled" : "done",
     checkpoint: null,
     retrying: null,
@@ -243,16 +277,14 @@ function applyEvent(state: TurnState, event: TurnEvent): TurnState {
       // lost on the way here is permanent once the transcript is saved.
       return setText(state, "message", event.round, event.payload.text);
 
-    case "historyCompacted": {
+    case "historyCompacting":
+      return compactionStarted(state);
+
+    case "historyCompacted":
       // The transcript keeps every message; it is the model's copy that got
       // shorter. Saying so is the whole point — history that disappears on
       // its own looks like the agent forgetting for no reason.
-      const folded = event.payload.folded;
-      return appendNotice(
-        state,
-        `Older history compacted — ${folded} message${folded === 1 ? "" : "s"} folded into a summary`,
-      );
-    }
+      return compactionEnded(state, { folded: event.payload.folded });
 
     case "hookFeedback":
       return appendNotice(state, hookNotice(event.payload));

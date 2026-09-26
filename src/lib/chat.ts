@@ -80,6 +80,7 @@ export type TurnEvent = { turnId: string; seq: number; round: number; targetId?:
   | { type: "reasoning"; payload: { delta: string } }
   | { type: "retrying"; payload: { attempt: number; maxAttempts: number; delaySeconds: number } }
   | { type: "steeringApplied"; payload: { id: string; text: string } }
+  | { type: "historyCompacting" }
   | { type: "historyCompacted"; payload: { folded: number } }
   | { type: "hookFeedback"; payload: { event: string; message: string; blocked: boolean } }
   | { type: "processesEnded"; payload: { processes: ProcessInfo[] } }
@@ -190,18 +191,21 @@ export async function startChat(
 /**
  * Shortens the conversation when it is worth shortening, and returns the
  * shorter one. `null` means "leave yours alone" — the decision is the
- * backend's, including how much to fold.
+ * backend's, including how much to fold. Once a summary is being made, a
+ * `historyCompacting` event says so under `turnId` (`onTurnEvent`).
  */
 export async function compactHistory(
   messages: LlmMessage[],
   force = false,
   plan: string | null = null,
+  turnId: string,
 ): Promise<{ history: LlmMessage[]; folded: number } | null> {
   if (!inTauri()) return null;
   return invoke<{ history: LlmMessage[]; folded: number } | null>("chat_compact", {
     messages,
     force,
     plan,
+    turnId,
   });
 }
 

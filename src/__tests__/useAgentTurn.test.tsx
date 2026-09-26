@@ -20,8 +20,16 @@ mock.module("@tauri-apps/api/core", () => ({
   },
 }));
 
+// Every listener, so a test can say what the backend said on the channel.
+type Listener = (event: { payload: unknown }) => void;
+const listeners = new Set<Listener>();
+const emit = (payload: unknown) => [...listeners].forEach((listener) => listener({ payload }));
+
 mock.module("@tauri-apps/api/event", () => ({
-  listen: () => Promise.resolve(() => {}),
+  listen: (_name: string, listener: Listener) => {
+    listeners.add(listener);
+    return Promise.resolve(() => listeners.delete(listener));
+  },
 }));
 
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
@@ -70,7 +78,12 @@ describe("making room before a turn", () => {
       { role: "user", content: "[summary] earlier" },
       { role: "user", content: "and now?" },
     ]);
-    expect(result.current.turn.blocks.some((b) => b.kind === "notice")).toBe(true);
+    expect(result.current.turn.blocks).toContainEqual({
+      kind: "compaction",
+      id: "compaction:1",
+      status: "done",
+      folded: 20,
+    });
   });
 
   test("and a history that needs nothing is sent as it is", async () => {
@@ -84,7 +97,62 @@ describe("making room before a turn", () => {
 
     const started = calls.find((call) => call.command === "chat_start");
     expect(started?.args.messages).toEqual([{ role: "user", content: "hello" }]);
-    expect(result.current.turn.blocks.some((b) => b.kind === "notice")).toBe(false);
+    expect(result.current.turn.blocks.some((b) => b.kind === "compaction")).toBe(false);
+  });
+
+  /// The summary takes seconds; the backend says when it starts, and the card
+  /// is on screen until the call returns.
+  test("a pass under way is on screen until it ends", async () => {
+    let finish: (value: unknown) => void = () => {};
+    results.chat_compact = (args: Record<string, unknown>) => {
+      emit({ turnId: args.turnId, seq: 1, round: 0, type: "historyCompacting" });
+      return new Promise((resolve) => (finish = resolve));
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    let pass: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      pass = result.current.compact(true);
+    });
+    await waitFor(() =>
+      expect(result.current.turn.blocks).toEqual([{ kind: "compaction", id: "compaction:0", status: "running" }]),
+    );
+
+    await act(async () => {
+      finish({ history: [{ role: "user", content: "summary" }], folded: 7 });
+      await pass;
+    });
+    expect(result.current.turn.blocks).toEqual([
+      { kind: "compaction", id: "compaction:0", status: "done", folded: 7 },
+    ]);
+  });
+
+  test("a pass that failed says it gave up", async () => {
+    results.chat_compact = (args: Record<string, unknown>) => {
+      emit({ turnId: args.turnId, seq: 1, round: 0, type: "historyCompacting" });
+      return new Error("provider said no");
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      expect(await result.current.compact(true)).toBe(false);
+    });
+    expect(result.current.turn.blocks).toEqual([{ kind: "compaction", id: "compaction:0", status: "failed" }]);
+    expect(result.current.error).toContain("provider said no");
+  });
+
+  /// Another pass's start, or one arriving after its own end, is not this one.
+  test("a start said under another id is not this pass", async () => {
+    results.chat_compact = () => {
+      emit({ turnId: "compact-elsewhere", seq: 1, round: 0, type: "historyCompacting" });
+      return null;
+    };
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.compact(true);
+    });
+    expect(result.current.turn.blocks).toEqual([]);
   });
 
   /// Asked for outright, with nothing worth folding: the answer is no, and
@@ -100,7 +168,7 @@ describe("making room before a turn", () => {
 
     expect(folded).toBe(false);
     expect(calls.filter((call) => call.command === "chat_compact")).toEqual([
-      { command: "chat_compact", args: { messages: [], force: true, plan: null } },
+      { command: "chat_compact", args: { messages: [], force: true, plan: null, turnId: expect.stringMatching(/^compact-/) } },
     ]);
   });
 });

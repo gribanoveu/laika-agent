@@ -29,7 +29,8 @@ use crate::domain::settings::RememberScope;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
 use crate::domain::tools::{ApprovalPolicy, CodeSearchFn, Task, ToolPreview, ToolScope};
 use crate::domain::turn::{
-    ChatStreamOutcome, PendingApproval, PendingToolCall, SteeringNote, ToolCallDecision,
+    ChatEventPayload, ChatStreamOutcome, ChatTurnEvent, PendingApproval, PendingToolCall, SteeringNote,
+    ToolCallDecision,
 };
 use crate::services::ai_tools::preview;
 use crate::services::llm_chat::{self, SteeringQueue, Turn, TurnError};
@@ -303,20 +304,34 @@ pub struct CompactedHistory {
 /// — but nothing about *when* or *how much* is decided there: this returns
 /// `None` whenever the answer is "leave it alone", so the rules stay on this
 /// side and cannot drift into a second copy written in TypeScript.
+///
+/// The start of a pass is said on `chat:turn-event` under `turn_id`, as a
+/// turn's own pass says it: the summary takes seconds, and only this side
+/// knows whether one is being made. The end is what this returns.
 #[tauri::command]
 pub async fn chat_compact(
     messages: Vec<LlmMessage>,
     force: bool,
     plan: Option<String>,
+    turn_id: String,
     app: AppHandle,
     state: State<'_, Arc<AgentState>>,
 ) -> Result<Option<CompactedHistory>, String> {
     let frame = next_request_frame(&app, &state, plan.as_deref());
+    let sink = chat_event_sink(&app, turn_id);
     // A summary is an ordinary request to the provider, and a request on the
     // IPC loop freezes every other command for its duration.
     tauri::async_runtime::spawn_blocking(move || {
         let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
-        context_compaction::compact_if_needed(&session, frame, &messages, force)
+        let started = || {
+            sink(ChatTurnEvent {
+                seq: 1,
+                round: 0,
+                target_id: None,
+                event: ChatEventPayload::HistoryCompacting,
+            })
+        };
+        context_compaction::compact_if_needed(&session, frame, &messages, force, &started)
             .map(|compacted| {
                 compacted.map(|compacted| CompactedHistory {
                     history: compacted.history,

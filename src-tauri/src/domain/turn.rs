@@ -229,6 +229,11 @@ pub enum ChatEventPayload {
     /// stands for — the transcript keeps showing all of them, since what the
     /// reader sees and what the model reads are different lists.
     HistoryCompacted { folded: usize },
+    /// A summary of the older conversation has been asked for — the slow part
+    /// of a pass, seconds long. Sent only once there is something to fold, so
+    /// it is always followed by [`Self::HistoryCompacted`] or by the pass
+    /// giving up; the window shows the pass as under way in between.
+    HistoryCompacting,
     /// A note the user typed mid-turn has been added to the conversation.
     /// Carries the id so the front end can retire that queued note by
     /// identity rather than by matching its text.

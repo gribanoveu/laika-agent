@@ -10,6 +10,7 @@ import {
   Folder,
   FileDiff,
   FolderTree,
+  FoldVertical,
   GitBranch,
   ListTodo,
   MessageSquare,
@@ -95,6 +96,34 @@ function ProcessEndedCard({ process, onOpen }: { process: ProcessInfo; onOpen?: 
       <span className="process-ended-state">{processStatus(state)}</span>
       {onOpen && <ArrowUpRight className="process-ended-open" size={13} aria-hidden />}
     </button>
+  );
+}
+
+/**
+ * A pass folding older history into a summary. It takes seconds — a request of
+ * its own — so it is shown while it runs rather than only once it is done.
+ */
+function CompactionCard({ block }: { block: Extract<Block, { kind: "compaction" }> }) {
+  const n = block.folded ?? 0;
+  const [title, detail] =
+    block.status === "running"
+      ? ["Compacting history…", "Summarizing older messages so the conversation fits the context window"]
+      : block.status === "done"
+        ? [
+            "History compacted",
+            `${n} message${n === 1 ? "" : "s"} folded into a summary — the model sees the summary, this transcript keeps them all`,
+          ]
+        : ["History not compacted", "No summary was made — the conversation was left as it was"];
+  return (
+    <div className={`compaction-card ${block.status}`} role="status">
+      <span className="compaction-ico" aria-hidden>
+        {block.status === "running" ? <Loader2 className="tool-run-spin" size={14} /> : <FoldVertical size={14} />}
+      </span>
+      <span className="compaction-body">
+        <span className="compaction-title">{title}</span>
+        <span className="compaction-detail">{detail}</span>
+      </span>
+    </div>
   );
 }
 
@@ -296,7 +325,7 @@ function group(blocks: Block[]): Group[] {
     // stands alone rather than appearing under "Agent" as something said. A
     // process that ended is news of the same kind.
     const role =
-      block.kind === "notice" || block.kind === "processEnded"
+      block.kind === "notice" || block.kind === "processEnded" || block.kind === "compaction"
         ? "notice"
         : block.kind === "user" || block.kind === "steer"
           ? "user"
@@ -761,6 +790,8 @@ function renderBlock(
       );
     case "processEnded":
       return <ProcessEndedCard key={block.id} process={block.process} onOpen={onOpenProcess} />;
+    case "compaction":
+      return <CompactionCard key={block.id} block={block} />;
     case "message":
       return (
         <div className="msg" key={block.id}>

@@ -4,6 +4,8 @@ import {
   acceptOutcome,
   appendUserMessage,
   clearApproval,
+  compactionEnded,
+  compactionStarted,
   emptyTurn,
   endTurn,
   restoredTurn,
@@ -362,19 +364,41 @@ describe("reopening a saved chat", () => {
 });
 
 describe("compaction", () => {
-  /// The model quietly forgetting what it was told, with nothing in the
-  /// window to explain it, is the outcome this exists to prevent.
-  test("a fold is said out loud in the transcript", () => {
-    const state = run([ev({ type: "historyCompacted", seq: 1, payload: { folded: 12 } })]);
+  /// The summary takes seconds: the card is there while it is made, and the
+  /// same card says how it ended rather than a second one appearing.
+  test("a pass is a card, under way and then done", () => {
+    const started = run([ev({ type: "historyCompacting", seq: 1 })]);
+    expect(started.blocks).toEqual([{ kind: "compaction", id: "compaction:0", status: "running" }]);
 
-    expect(state.blocks).toHaveLength(1);
-    expect(state.blocks[0]).toMatchObject({ kind: "notice" });
-    expect((state.blocks[0] as { text: string }).text).toContain("12 messages");
+    const done = run([ev({ type: "historyCompacted", seq: 2, payload: { folded: 12 } })], started);
+    expect(done.blocks).toEqual([{ kind: "compaction", id: "compaction:0", status: "done", folded: 12 }]);
   });
 
-  test("and one message is one message", () => {
-    const state = run([ev({ type: "historyCompacted", seq: 1, payload: { folded: 1 } })]);
-    expect((state.blocks[0] as { text: string }).text).toContain("1 message folded");
+  /// The model quietly forgetting what it was told, with nothing in the
+  /// window to explain it, is the outcome this exists to prevent.
+  test("a fold whose start was not seen is still said", () => {
+    const state = run([ev({ type: "historyCompacted", seq: 1, payload: { folded: 3 } })]);
+    expect(state.blocks).toEqual([{ kind: "compaction", id: "compaction:0", status: "done", folded: 3 }]);
+  });
+
+  /// A pass that gave up leaves no card spinning, however the turn ended.
+  test("a pass under way when the turn ends gave up", () => {
+    const running = appendUserMessage(emptyTurn(), "go");
+    const compacting = run([ev({ type: "historyCompacting", seq: 1 })], running);
+    const failed = { kind: "compaction", id: "compaction:1", status: "failed" };
+
+    expect(endTurn(compacting).blocks[1]).toEqual(failed);
+    expect(
+      acceptOutcome(compacting, { status: "done", value: { text: "", truncated: false, todos: [], history: [] } })
+        .blocks[1],
+    ).toEqual(failed);
+  });
+
+  test("ending with nothing folded and no card shows nothing", () => {
+    expect(compactionEnded(emptyTurn(), null).blocks).toEqual([]);
+    expect(compactionEnded(compactionStarted(emptyTurn()), null).blocks).toEqual([
+      { kind: "compaction", id: "compaction:0", status: "failed" },
+    ]);
   });
 });
 

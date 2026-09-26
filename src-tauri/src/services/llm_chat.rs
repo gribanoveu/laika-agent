@@ -857,7 +857,10 @@ fn ask_the_model(
 
         // Harder than a proactive pass would: the window is not nearly full,
         // it is already over.
-        match context_compaction::compact(turn.session, history, RETRY_KEEP_LAST_MESSAGES) {
+        let started = || {
+            events.emit(round, Some(format!("round:{round}")), ChatEventPayload::HistoryCompacting)
+        };
+        match context_compaction::compact(turn.session, history, RETRY_KEEP_LAST_MESSAGES, &started) {
             Ok(Some(shorter)) => {
                 *history = shorter.history;
                 // The summary may have folded the last list away.
@@ -1493,6 +1496,7 @@ mod tests {
                 ChatEventPayload::SteeringApplied { id, .. } => format!("steering:{id}"),
                 ChatEventPayload::CommandOutput { id, .. } => format!("commandOutput:{id}"),
                 ChatEventPayload::HistoryCompacted { folded } => format!("compacted:{folded}"),
+                ChatEventPayload::HistoryCompacting => "compacting".to_string(),
                 ChatEventPayload::HookFeedback { event, blocked, .. } => format!("hook:{event}:{blocked}"),
                 ChatEventPayload::ProcessesEnded { processes } => format!("ended:{}", processes.len()),
             })
@@ -2214,7 +2218,8 @@ mod tests {
     }
 
     /// History disappearing on its own is the thing to avoid: the model stops
-    /// remembering what it was told, and nothing in the window says why.
+    /// remembering what it was told, and nothing in the window says why. The
+    /// summary takes seconds, so the start is said too, before it.
     #[test]
     fn the_transcript_is_told_that_history_was_folded_away() {
         let h = harness(
@@ -2227,9 +2232,9 @@ mod tests {
 
         let compacted: Vec<String> = payloads(&h.events())
             .into_iter()
-            .filter(|p| p.starts_with("compacted:"))
+            .filter(|p| p.starts_with("compact"))
             .collect();
-        assert_eq!(compacted, ["compacted:34"]);
+        assert_eq!(compacted, ["compacting", "compacted:34"]);
     }
 
     /// A second refusal after the history has already been summarized is not

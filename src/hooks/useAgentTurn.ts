@@ -23,6 +23,8 @@ import {
   appendNotice,
   appendUserMessage,
   clearApproval,
+  compactionEnded,
+  compactionStarted,
   endTurn,
   emptyTurn,
   restoredTurn,
@@ -84,6 +86,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   // lands.
   const [draft, setDraft] = useState<{ text: string; seq: number } | null>(null);
   const subscribed = useRef<(() => void) | null>(null);
+  const compacting = useRef(false);
 
   useEffect(() => () => subscribed.current?.(), []);
 
@@ -155,27 +158,40 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
    * or how much is decided here.
    */
   const makeRoom = useCallback(async (force: boolean) => {
+    // One pass at a time: a second would summarize the history the first is
+    // about to replace.
+    if (compacting.current) return false;
+    compacting.current = true;
+    // Its own id on the turn channel: the backend says there when a summary
+    // is being made, which only it knows. Its end is what the call returns —
+    // so a start arriving after that is stale, not a second pass.
+    const id = `compact-${++turnId.current}`;
+    let ended = false;
+    const off = await onTurnEvent(id, (event) => {
+      if (event.type === "historyCompacting" && !ended) setTurn(compactionStarted);
+    });
+    const end = (result: { folded: number } | null) => {
+      ended = true;
+      off();
+      setTurn((state) => compactionEnded(state, result));
+    };
     try {
-      const shorter = await compactHistory(history.current, force, planRef.current);
+      const shorter = await compactHistory(history.current, force, planRef.current, id);
+      end(shorter && { folded: shorter.folded });
       if (!shorter) return false;
       history.current = shorter.history;
       unsaved.current = true;
       refreshContext();
-      setTurn((state) =>
-        appendNotice(
-          state,
-          `Older history compacted — ${shorter.folded} message${
-            shorter.folded === 1 ? "" : "s"
-          } folded into a summary`,
-        ),
-      );
       return true;
     } catch (e) {
       // Not fatal on the way to a turn: the request may well still fit, and if
-      // it does not, the turn's own pass reports what the provider said. Only
-      // an explicit request is worth interrupting for.
+      // it does not, the turn's own pass reports what the provider said. The
+      // card says the pass gave up; only an explicit request is worth an error.
+      end(null);
       if (force) setError(String(e));
       return false;
+    } finally {
+      compacting.current = false;
     }
   }, [refreshContext]);
 

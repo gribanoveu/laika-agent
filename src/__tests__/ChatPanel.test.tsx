@@ -482,6 +482,26 @@ describe("a notice", () => {
   });
 });
 
+describe("a compaction", () => {
+  const card = (block: Extract<Block, { kind: "compaction" }>) => {
+    panel(state([block]));
+    return screen.getByRole("status").textContent;
+  };
+
+  test("is a card while the summary is made", () => {
+    expect(card({ kind: "compaction", id: "c0", status: "running" })).toContain("Compacting history");
+    expect(screen.queryByText("Agent")).toBeNull();
+  });
+
+  test("says what was folded", () => {
+    expect(card({ kind: "compaction", id: "c0", status: "done", folded: 1 })).toContain("1 message folded");
+  });
+
+  test("says when it gave up", () => {
+    expect(card({ kind: "compaction", id: "c0", status: "failed" })).toContain("not compacted");
+  });
+});
+
 describe("copying a message", () => {
   const blocks = [
     { kind: "user", id: "u0", text: "why **bold**?" },
