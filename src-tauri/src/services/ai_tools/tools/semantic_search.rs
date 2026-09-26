@@ -53,7 +53,7 @@ pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "semanticSearch".to_string(),
         description: format!(
-            "Find code by what it does or what it is called — the first tool to reach for when you do not already know the file. \
+            "Find code by what it does or what it is called, when you do not already know the file. \
 Declarations named in the query come first; the rest is ranked by meaning and by shared words together. \
 Each match gives the path, the line range readFile takes, the enclosing declaration's name, and the start of its text. \
 Write the query as a sentence about the behaviour, and include any function, type or file names you know or can justify from the user's words. \
@@ -63,10 +63,6 @@ When a question is not in the code's language, or you are unsure how the code pu
 they are searched in the same call, which finds more than any one of them and costs less than a search each. \
 Searching documentation written in another language, write the query in that language. \
 Put the identifiers you expect the code to use in fts (sendNotification, RetryPolicy), not the words of the question. \
-It can help to phrase the query the way the code you expect would read. \
-Split a question with several parts into several searches. \
-When you do not know where something lives, search for the subsystem first, then narrow down with a name it taught you. \
-Read the most promising one or two matches before searching again; a second search should use a name the first one taught you. \
 Documentation is left out unless you set includeDocs; glob and exclude narrow the search to paths, as in grep. \
 If meta.hint is present, follow it. Use grep instead when you need every occurrence of an exact string. \
 Returns at most {MAX_TOP_K} matches."
