@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use super::compaction::SUMMARY_PREFIX;
 use super::llm::{LlmMessage, LlmRole};
 use super::tools::Task;
 
@@ -129,11 +130,26 @@ pub fn parse(text: &str) -> Result<ChatRecord, ChatError> {
 ///
 /// Asking the model for one costs a request per chat and can fail; the first
 /// line of the first question is what the user would have typed anyway.
-pub fn derive_title(messages: &[LlmMessage]) -> String {
-    let first = messages
-        .iter()
-        .find(|message| message.role == LlmRole::User)
-        .and_then(|message| message.content.as_deref())
+///
+/// Read from the transcript, which keeps every message. The model's copy is
+/// only the fallback, past its summary: once a chat is compacted its first user
+/// message is the summary, and every compacted chat had the summary's name.
+pub fn derive_title(messages: &[LlmMessage], blocks: &Value) -> String {
+    let bubble = blocks
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|block| block.get("kind").and_then(Value::as_str) == Some("user"))
+        .and_then(|block| block.get("text"))
+        .and_then(Value::as_str);
+    let first = bubble
+        .or_else(|| {
+            messages
+                .iter()
+                .filter(|message| message.role == LlmRole::User)
+                .filter_map(|message| message.content.as_deref())
+                .find(|text| !text.starts_with(SUMMARY_PREFIX))
+        })
         .unwrap_or("");
     let line = first.lines().map(str::trim).find(|line| !line.is_empty());
 
@@ -281,15 +297,32 @@ mod tests {
             LlmMessage::assistant("because…"),
         ];
         assert_eq!(
-            derive_title(&messages),
+            derive_title(&messages, &Value::Null),
             "why does the parser drop the last token?"
         );
+    }
+
+    fn bubble(text: &str) -> Value {
+        serde_json::json!([{ "kind": "notice", "id": "n", "text": "not this" }, { "kind": "user", "id": "user:1", "text": text }])
+    }
+
+    /// Compacted, the model's first user message is the summary. Every chat
+    /// compacted was once named after it, and no two could be told apart.
+    #[test]
+    fn a_compacted_chat_keeps_the_name_of_its_first_question() {
+        let messages = vec![
+            LlmMessage::user(format!("{SUMMARY_PREFIX}\n\nearlier, the user asked about tokens")),
+            LlmMessage::user("and now the lexer?"),
+        ];
+        assert_eq!(derive_title(&messages, &bubble("why does it drop the token?")), "why does it drop the token?");
+        // With no transcript to read, the first message that is not the summary.
+        assert_eq!(derive_title(&messages, &Value::Null), "and now the lexer?");
     }
 
     #[test]
     fn a_long_title_is_cut_on_a_word() {
         let long = "please look at the tokenizer and explain why the parser drops the final token";
-        let title = derive_title(&[LlmMessage::user(long)]);
+        let title = derive_title(&[], &bubble(long));
 
         assert!(title.ends_with('…'), "{title}");
         assert!(title.chars().count() <= TITLE_CHARS + 1, "{title}");
@@ -299,8 +332,8 @@ mod tests {
 
     #[test]
     fn a_chat_with_nothing_said_still_has_a_name() {
-        assert_eq!(derive_title(&[]), "New chat");
-        assert_eq!(derive_title(&[LlmMessage::user("   ")]), "New chat");
+        assert_eq!(derive_title(&[], &Value::Null), "New chat");
+        assert_eq!(derive_title(&[LlmMessage::user("   ")], &Value::Null), "New chat");
     }
 
     /// The id is the store's key, and it arrives from the window.

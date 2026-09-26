@@ -23,6 +23,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::domain::chat_export;
+use crate::domain::compaction::SUMMARY_PREFIX;
 use crate::domain::chat_record::{
     self, ChatError, ChatRecord, ChatSummary, CHAT_SCHEMA_VERSION,
 };
@@ -93,6 +94,7 @@ fn now() -> i64 {
 /// marked: which of them to show is the sidebar's filter.
 pub fn list(workspace: &str) -> Result<Vec<ChatSummary>, ChatError> {
     let conn = open()?;
+    rename_summary_titles(&conn, workspace)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, title, updated_at, branched_from, archived FROM chats
@@ -112,6 +114,30 @@ pub fn list(workspace: &str) -> Result<Vec<ChatSummary>, ChatError> {
         })
         .map_err(store)?;
     rows.collect::<Result<_, _>>().map_err(store)
+}
+
+/// Chats an older build named after their compaction summary get their name
+/// back from their own transcript. Only those rows are read, and none match
+/// once they have been renamed. A body that does not parse keeps the name it
+/// has.
+fn rename_summary_titles(conn: &Connection, workspace: &str) -> Result<(), ChatError> {
+    let mut stmt = conn
+        .prepare("SELECT id, body FROM chats WHERE workspace = ?1 AND instr(title, ?2) = 1")
+        .map_err(store)?;
+    let stale = stmt
+        .query_map(params![workspace, SUMMARY_PREFIX], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(store)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(store)?;
+    for (id, body) in stale {
+        let Ok(record) = chat_record::parse(&body) else { continue };
+        let title = chat_record::derive_title(&record.messages, &record.blocks);
+        conn.execute("UPDATE chats SET title = ?1 WHERE id = ?2", params![title, id])
+            .map_err(store)?;
+    }
+    Ok(())
 }
 
 pub fn load(id: &str) -> Result<ChatRecord, ChatError> {
@@ -162,7 +188,7 @@ pub fn save(
         schema_version: CHAT_SCHEMA_VERSION,
         id: id.to_string(),
         workspace: workspace.to_string(),
-        title: chat_record::derive_title(messages),
+        title: chat_record::derive_title(messages, blocks),
         created_at: created_at.unwrap_or_else(now),
         updated_at: now(),
         messages: messages.to_vec(),
@@ -259,6 +285,46 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn compacted() -> Vec<LlmMessage> {
+        vec![
+            LlmMessage::user(format!("{SUMMARY_PREFIX}\n\nthe user asked about tokens")),
+            LlmMessage::user("and the lexer?"),
+        ]
+    }
+
+    /// Compacted, the model's history opens with the summary. The chat is
+    /// still named after what the user first asked, as the transcript has it.
+    #[test]
+    fn a_compacted_chat_keeps_its_name() {
+        with_app_dir("chat-store-compacted-title", || {
+            let saved = save("one", "/repo", &compacted(), &blocks("why is a token dropped?"), &[], None, None)
+                .unwrap();
+            assert_eq!(saved.title, "why is a token dropped?");
+        });
+    }
+
+    /// Chats an older build named after the summary get their name back the
+    /// next time the folder's chats are listed; other folders are not touched.
+    #[test]
+    fn a_chat_named_after_its_summary_is_named_again() {
+        with_app_dir("chat-store-summary-title", || {
+            for (id, workspace) in [("one", "/repo"), ("two", "/other")] {
+                save(id, workspace, &compacted(), &blocks("why is a token dropped?"), &[], None, None).unwrap();
+                open()
+                    .unwrap()
+                    .execute("UPDATE chats SET title = ?1 WHERE id = ?2", params![SUMMARY_PREFIX, id])
+                    .unwrap();
+            }
+            let titled = |id: &str| -> String {
+                open().unwrap().query_row("SELECT title FROM chats WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+            };
+
+            assert_eq!(list("/repo").unwrap()[0].title, "why is a token dropped?");
+            assert_eq!(titled("one"), "why is a token dropped?");
+            assert_eq!(titled("two"), SUMMARY_PREFIX);
+        });
     }
 
     #[test]
