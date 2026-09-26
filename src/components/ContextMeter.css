@@ -79,12 +79,19 @@
   overflow: hidden;
   background: var(--bg-active);
 }
-.ctx-bar-fixed,
-.ctx-dot--fixed {
+.ctx-part--instructions {
   background: var(--purple);
 }
-.ctx-bar-chat,
-.ctx-dot--chat {
+.ctx-part--tools {
+  background: var(--text-faint);
+}
+.ctx-part--skills {
+  background: var(--green);
+}
+.ctx-part--mcp {
+  background: var(--amber);
+}
+.ctx-part--conversation {
   background: var(--accent);
 }
 .ctx-total {

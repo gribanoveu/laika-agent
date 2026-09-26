@@ -100,7 +100,7 @@ describe("making room before a turn", () => {
 
     expect(folded).toBe(false);
     expect(calls.filter((call) => call.command === "chat_compact")).toEqual([
-      { command: "chat_compact", args: { messages: [], force: true } },
+      { command: "chat_compact", args: { messages: [], force: true, plan: null } },
     ]);
   });
 });
@@ -111,7 +111,9 @@ describe("the context estimate", () => {
   test("is asked for on the first render, with an empty history", async () => {
     results.chat_context_usage = {
       instructions: 1_000,
+      skills: 0,
       tools: 3_000,
+      mcp: 0,
       conversation: 0,
       total: 4_000,
       limit: null,
@@ -120,7 +122,7 @@ describe("the context estimate", () => {
     const { result } = renderHook(() => useAgentTurn());
 
     await waitFor(() => expect(result.current.context?.total).toBe(4_000));
-    expect(calls).toContainEqual({ command: "chat_context_usage", args: { messages: [] } });
+    expect(calls).toContainEqual({ command: "chat_context_usage", args: { messages: [], plan: null } });
   });
 
   /// It is an estimate over the history, so it has to be asked again once the
@@ -139,7 +141,7 @@ describe("the context estimate", () => {
 
     expect(calls).toContainEqual({
       command: "chat_context_usage",
-      args: { messages: [{ role: "user", content: "summary" }] },
+      args: { messages: [{ role: "user", content: "summary" }], plan: null },
     });
   });
 });

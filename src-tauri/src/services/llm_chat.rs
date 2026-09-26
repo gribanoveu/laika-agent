@@ -881,7 +881,7 @@ fn ask_the_model(
 /// of the gate the model can see; [`preflight_tool_call`] is the half it
 /// cannot, and both are needed — a model that used `writeFile` earlier in a
 /// conversation calls it again from memory when the mode narrows.
-fn tool_definitions_for(mode: ConversationMode, mcp: &McpTools) -> Vec<LlmToolDefinition> {
+pub(crate) fn tool_definitions_for(mode: ConversationMode, mcp: &McpTools) -> Vec<LlmToolDefinition> {
     tool_definitions()
         .into_iter()
         .chain(mcp.definitions())

@@ -21,6 +21,8 @@
 //!   messages carried their tool calls inside them.
 
 use super::llm::{LlmMessage, LlmRole, LlmToolDefinition};
+use super::tools::ToolName;
+use std::collections::HashMap;
 
 /// Compaction starts once the estimate crosses this much of the context
 /// window. Early enough that the rest of the turn — a tool-calling loop can
@@ -115,21 +117,27 @@ fn estimate_message_tokens(message: &LlmMessage) -> usize {
     MESSAGE_OVERHEAD_TOKENS + chars.div_ceil(CHARS_PER_TOKEN)
 }
 
-/// What the next request will cost, broken into the parts that behave
-/// differently.
+/// What the next request will cost, split the way the window shows it.
 ///
-/// Three parts, because the reader's question is not "how many tokens" but
-/// "what can I do about it". Compacting shortens `conversation` and nothing
-/// else; the other two are paid whatever the conversation looks like, which is
-/// why a nearly-empty chat is not an empty window.
+/// Split by what the reader can do about each part. Compacting shortens
+/// `conversation` and nothing else; `instructions` and `tools` are paid
+/// whatever the conversation looks like, which is why a nearly-empty chat is
+/// not an empty window. `skills` and `mcp` are apart because each is the
+/// user's to switch off, and each is both a fixed part — a list, the schemas —
+/// and what it brought into the conversation: a loaded skill, a tool's result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextUsage {
-    /// The system prompt: instructions, the mode, this turn's facts.
+    /// The system prompt but the skills list: instructions, the mode, the
+    /// project's rules, the plan, this turn's facts.
     pub instructions: usize,
-    /// The tool schemas, sent beside the messages on every request.
+    /// The skills list in the prompt, and every skill loaded since.
+    pub skills: usize,
+    /// The built-in tools' schemas, as many as the mode offers.
     pub tools: usize,
-    /// Everything the two sides have said.
+    /// The MCP servers' tool schemas, and what their tools returned.
+    pub mcp: usize,
+    /// Everything else the two sides have said.
     pub conversation: usize,
     pub total: usize,
     /// `None` when the window is not configured — the meter then has a number
@@ -140,14 +148,52 @@ pub struct ContextUsage {
     pub compacts_at: Option<usize>,
 }
 
+/// What goes in front of the conversation on every request, by part — the
+/// same split as [`ContextUsage`]'s fixed half.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RequestFrame {
+    pub instructions: usize,
+    pub skills: usize,
+    pub tools: usize,
+    pub mcp: usize,
+}
+
+impl RequestFrame {
+    pub fn total(&self) -> usize {
+        self.instructions + self.skills + self.tools + self.mcp
+    }
+}
+
 impl ContextUsage {
-    pub fn new(instructions: usize, tools: usize, conversation: usize, limit: Option<u32>) -> Self {
+    pub fn new(frame: RequestFrame, history: &[LlmMessage], limit: Option<u32>) -> Self {
         let limit = limit.filter(|limit| *limit > 0);
+        let calls: HashMap<&str, &str> = history
+            .iter()
+            .flat_map(|m| &m.tool_calls)
+            .map(|call| (call.id.as_str(), call.name.as_str()))
+            .collect();
+        let (mut skills, mut mcp, mut conversation) = (frame.skills, frame.mcp, 0);
+        for message in history {
+            let tokens = estimate_message_tokens(message);
+            let tool = message
+                .tool_call_id
+                .as_deref()
+                .filter(|_| message.role == LlmRole::Tool)
+                .and_then(|id| calls.get(id))
+                .and_then(|name| ToolName::from_wire_name(name));
+            match tool {
+                Some(ToolName::Skill) => skills += tokens,
+                Some(ToolName::Mcp) => mcp += tokens,
+                _ => conversation += tokens,
+            }
+        }
         Self {
-            instructions,
-            tools,
+            instructions: frame.instructions,
+            skills,
+            tools: frame.tools,
+            mcp,
             conversation,
-            total: instructions + tools + conversation,
+            total: frame.instructions + frame.tools + skills + mcp + conversation,
             limit,
             compacts_at: limit
                 .map(|limit| (u64::from(limit) * TRIGGER_PERCENT / 100) as usize),
@@ -379,6 +425,35 @@ mod tests {
 
     fn assistant(text: &str) -> LlmMessage {
         LlmMessage::assistant(text)
+    }
+
+    fn call_to(id: &str, tool: &str) -> LlmMessage {
+        LlmMessage { tool_calls: vec![LlmToolCall { id: id.into(), name: tool.into(), arguments: "{}".into() }], ..LlmMessage::assistant("") }
+    }
+
+    /// A loaded skill and an MCP tool's result are charged to their own rows,
+    /// beside the list and the schemas that brought them; everything else,
+    /// the calls included, is conversation. A mismatched id is conversation
+    /// too — never lost.
+    #[test]
+    fn a_loaded_skill_and_an_mcp_result_are_counted_on_their_own_rows() {
+        let frame = RequestFrame { instructions: 100, skills: 10, tools: 50, mcp: 20 };
+        let skill = LlmMessage::tool_result("s", "x".repeat(400));
+        let found = LlmMessage::tool_result("m", "y".repeat(800));
+        let read = LlmMessage::tool_result("r", "z".repeat(1200));
+        let stray = LlmMessage::tool_result("gone", "w".repeat(40));
+        let calls = [call_to("s", "skill"), call_to("m", "mcp__tracker__find"), call_to("r", "readFile")];
+        let mut history: Vec<LlmMessage> = vec![user("go")];
+        history.extend(calls.iter().cloned());
+        history.extend([skill.clone(), found.clone(), read.clone(), stray.clone()]);
+
+        let usage = ContextUsage::new(frame, &history, None);
+
+        assert_eq!(usage.skills, 10 + estimate_tokens(&[skill]));
+        assert_eq!(usage.mcp, 20 + estimate_tokens(&[found]));
+        assert_eq!(usage.conversation, estimate_tokens(&[user("go")]) + estimate_tokens(&calls) + estimate_tokens(&[read, stray]));
+        assert_eq!((usage.instructions, usage.tools), (100, 50));
+        assert_eq!(usage.total, frame.total() + estimate_tokens(&history));
     }
 
     fn calling(id: &str) -> LlmMessage {

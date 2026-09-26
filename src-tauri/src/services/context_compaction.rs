@@ -6,11 +6,13 @@
 //! how much to keep and this either comes back with a shorter history or with
 //! nothing at all.
 
-use crate::domain::compaction::{self, SUMMARY_INSTRUCTIONS};
+use crate::domain::compaction::{self, ContextUsage, RequestFrame, SUMMARY_INSTRUCTIONS};
 use crate::domain::llm::{ChatRequest, LlmError, LlmMessage};
+use crate::domain::mcp::McpTools;
 use crate::domain::prompt;
+use crate::domain::tools::ToolName;
 use crate::infra::llm_debug_log;
-use crate::services::ai_tools::tools::tool_definitions;
+use crate::services::llm_chat::tool_definitions_for;
 use crate::services::llm_session::LlmSession;
 
 /// A conversation, shorter than it was.
@@ -22,27 +24,27 @@ pub struct Compacted {
     pub folded: usize,
 }
 
-/// What every request pays before a single message of the conversation is
-/// added to it.
+/// What every request of a turn pays before a single message of the
+/// conversation is added to it — built from the same prompt and tool list the
+/// turn sends, so the meter and the threshold count what is actually sent.
 ///
-/// Two things, and neither is a message, which is why the estimate could not
-/// see them: the system prompt, sent in front of the history on every round,
-/// and the tool schemas, sent beside it. Together they are the largest fixed
-/// item in the request and they do not shrink when the conversation does — a
-/// window that looks 60% free can be nearly full.
-///
-/// The prompt's varying half is deliberately left out. It is a date, a path,
-/// a shell and a checklist: a few hundred characters against tens of
-/// thousands, and counting it exactly would mean handing this function a
-/// workspace and a todo list it otherwise has no use for.
-pub fn fixed_request_tokens() -> usize {
-    let usage = compaction::ContextUsage::new(
-        compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
-        compaction::estimate_tool_schema_tokens(&tool_definitions()),
-        0,
-        None,
-    );
-    usage.total
+/// None of it is a message, which is why an estimate over the history alone
+/// could not see it: the system prompt — the project's rules and the skills
+/// list in it — and the tool schemas, MCP servers' included. One large server
+/// can outweigh everything else here, and a window that looks 60% free can be
+/// nearly full.
+pub fn request_frame(ctx: &prompt::TurnContext, mcp: &McpTools) -> RequestFrame {
+    let skills = prompt::skills_block(ctx.skills).map_or(0, |list| compaction::estimate_tokens(&[LlmMessage::system(list)]));
+    let system = compaction::estimate_tokens(&prompt::system_messages(ctx));
+    let (mcp_tools, built_in): (Vec<_>, Vec<_>) = tool_definitions_for(ctx.mode, mcp)
+        .into_iter()
+        .partition(|definition| ToolName::from_wire_name(&definition.name) == Some(ToolName::Mcp));
+    RequestFrame {
+        instructions: system.saturating_sub(skills),
+        skills,
+        tools: compaction::estimate_tool_schema_tokens(&built_in),
+        mcp: compaction::estimate_tool_schema_tokens(&mcp_tools),
+    }
 }
 
 /// What the next request will cost, as the window should show it.
@@ -51,13 +53,8 @@ pub fn fixed_request_tokens() -> usize {
 /// a second time in TypeScript. It is an estimate and the meter says so by
 /// being a meter — but it is the estimate that actually decides, so a reader
 /// watching it fill is watching the thing that will fold their conversation.
-pub fn usage(session: &LlmSession, history: &[LlmMessage]) -> compaction::ContextUsage {
-    compaction::ContextUsage::new(
-        compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
-        compaction::estimate_tool_schema_tokens(&tool_definitions()),
-        compaction::estimate_tokens(history),
-        session.context_limit,
-    )
+pub fn usage(session: &LlmSession, frame: RequestFrame, history: &[LlmMessage]) -> ContextUsage {
+    ContextUsage::new(frame, history, session.context_limit)
 }
 
 /// A pass before the conversation fails rather than after, when the session
@@ -69,12 +66,13 @@ pub fn usage(session: &LlmSession, history: &[LlmMessage]) -> compaction::Contex
 /// whoever asked.
 pub fn compact_if_needed(
     session: &LlmSession,
+    frame: RequestFrame,
     history: &[LlmMessage],
     force: bool,
 ) -> Result<Option<Compacted>, LlmError> {
     let needed = force
         || compaction::should_compact(
-            fixed_request_tokens() + compaction::estimate_tokens(history),
+            ContextUsage::new(frame, history, None).total,
             session.context_limit,
             history,
         );
@@ -140,7 +138,90 @@ mod tests {
     use crate::domain::llm::{
         ChatResponse, ChatStreamResult, LlmModelInfo, LlmProvider, LlmToolCall,
     };
+    use crate::domain::conversation_mode::ConversationMode;
+    use crate::domain::mcp::{ConnectedServer, McpCallResult, McpClient, McpError, McpTool};
+    use crate::domain::project_rules::RuleFile;
+    use crate::domain::skills::{Skill, SkillMeta};
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+
+    fn frame_with(mode: ConversationMode, skills: &[Skill], rules: &[RuleFile], mcp: &McpTools) -> RequestFrame {
+        request_frame(
+            &prompt::TurnContext {
+                mode,
+                workspace: Path::new("/tmp/p"),
+                shell: "/bin/sh",
+                today: "26 September 2026",
+                unattended: false,
+                skills,
+                rules,
+                plan: None,
+                worktree_of: None,
+            },
+            mcp,
+        )
+    }
+
+    /// An Agent turn with no skills, rules or servers.
+    fn bare() -> RequestFrame {
+        frame_with(ConversationMode::Agent, &[], &[], &McpTools::default())
+    }
+
+    struct Idle;
+    impl McpClient for Idle {
+        fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
+            Ok(vec![])
+        }
+        fn call_tool(&self, _: &str, _: serde_json::Value, _: &dyn Fn() -> bool) -> Result<McpCallResult, McpError> {
+            Ok(McpCallResult { text: String::new(), is_error: false })
+        }
+    }
+
+    /// One server whose one tool has a long description.
+    fn server() -> McpTools {
+        McpTools::new(vec![ConnectedServer {
+            name: "tracker".into(),
+            weight: 1,
+            client: Arc::new(Idle),
+            tools: vec![McpTool {
+                name: "find".into(),
+                description: "Finds issues. ".repeat(200),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+        }])
+    }
+
+    /// Each part of the frame is on its own row, and each is what the turn
+    /// sends: the rules in the instructions, the skills list, a server's
+    /// schemas under MCP — and in Plan mode only the tools Plan offers, no
+    /// server's among them.
+    #[test]
+    fn the_frame_counts_what_the_turn_sends_on_its_own_rows() {
+        let base = bare();
+        assert_eq!(base.skills, 0);
+        assert_eq!(base.mcp, 0);
+
+        let rules = [RuleFile::new("AGENTS.md", &"Run the tests. ".repeat(400))];
+        let with_rules = frame_with(ConversationMode::Agent, &[], &rules, &McpTools::default());
+        assert!(with_rules.instructions > base.instructions + 1000, "{with_rules:?}");
+        assert_eq!(with_rules.tools, base.tools);
+
+        let skills = [Skill {
+            meta: SkillMeta { name: "deploy".into(), description: "Ship a release. ".repeat(20) },
+            dir: PathBuf::from("/tmp/deploy"),
+        }];
+        let with_skills = frame_with(ConversationMode::Agent, &skills, &[], &McpTools::default());
+        assert!(with_skills.skills > 50, "{with_skills:?}");
+        assert_eq!(with_skills.instructions, base.instructions, "the list is not counted twice");
+
+        let with_server = frame_with(ConversationMode::Agent, &[], &[], &server());
+        assert!(with_server.mcp > 600, "{with_server:?}");
+        assert_eq!(with_server.tools, base.tools);
+
+        let plan = frame_with(ConversationMode::Plan, &[], &[], &server());
+        assert_eq!(plan.mcp, 0, "Plan offers no server's tools");
+        assert!(plan.tools < base.tools, "Plan offers fewer built-in tools");
+    }
 
     struct Summarizer {
         answer: Result<Option<String>, LlmError>,
@@ -311,7 +392,7 @@ mod tests {
             .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
             .collect();
 
-        assert_eq!(compact_if_needed(&session(provider.clone()), &long, false).unwrap(), None);
+        assert_eq!(compact_if_needed(&session(provider.clone()), bare(), &long, false).unwrap(), None);
         assert!(provider.asked.lock().unwrap().is_empty());
     }
 
@@ -322,7 +403,7 @@ mod tests {
             .map(|i| LlmMessage::user(format!("{i} {}", "x".repeat(4_000))))
             .collect();
 
-        let compacted = compact_if_needed(&session_with_window(provider, 10_000), &long, false)
+        let compacted = compact_if_needed(&session_with_window(provider, 10_000), bare(), &long, false)
             .unwrap()
             .expect("a shorter history");
         assert_eq!(compacted.folded, 40 - KEEP_LAST_MESSAGES);
@@ -334,7 +415,7 @@ mod tests {
         let history = conversation(40);
 
         assert_eq!(
-            compact_if_needed(&session_with_window(provider.clone(), 1_000_000), &history, false)
+            compact_if_needed(&session_with_window(provider.clone(), 1_000_000), bare(), &history, false)
                 .unwrap(),
             None
         );
@@ -347,7 +428,7 @@ mod tests {
     #[test]
     fn a_conversation_that_has_not_started_already_costs_something() {
         let provider = Summarizer::saying("a summary");
-        let usage = usage(&session_with_window(provider, 200_000), &[]);
+        let usage = usage(&session_with_window(provider, 200_000), bare(), &[]);
 
         assert_eq!(usage.conversation, 0);
         assert!(usage.instructions > 0, "the prompt is free");
@@ -363,8 +444,8 @@ mod tests {
         let provider = Summarizer::saying("a summary");
         let session = session_with_window(provider, 200_000);
 
-        let empty = usage(&session, &[]);
-        let talking = usage(&session, &conversation(40));
+        let empty = usage(&session, bare(), &[]);
+        let talking = usage(&session, bare(), &conversation(40));
 
         assert!(talking.conversation > empty.conversation);
         assert_eq!(talking.instructions, empty.instructions);
@@ -380,7 +461,7 @@ mod tests {
         let provider = Summarizer::saying("a summary");
         let history = conversation(40);
         let session = session_with_window(provider, 200_000);
-        let at = usage(&session, &history).compacts_at.expect("a known window");
+        let at = usage(&session, bare(), &history).compacts_at.expect("a known window");
 
         assert!(!compaction::should_compact(at - 1, Some(200_000), &history));
         assert!(compaction::should_compact(at, Some(200_000), &history));
@@ -391,7 +472,7 @@ mod tests {
     #[test]
     fn without_a_window_there_is_a_total_and_no_scale() {
         let provider = Summarizer::saying("a summary");
-        let usage = usage(&session(provider), &conversation(40));
+        let usage = usage(&session(provider), bare(), &conversation(40));
 
         assert!(usage.total > 0);
         assert_eq!(usage.limit, None);
@@ -405,7 +486,7 @@ mod tests {
     #[test]
     fn a_window_of_zero_is_no_window_here_too() {
         let provider = Summarizer::saying("a summary");
-        let usage = usage(&session_with_window(provider, 0), &conversation(40));
+        let usage = usage(&session_with_window(provider, 0), bare(), &conversation(40));
 
         assert_eq!(usage.limit, None);
         assert_eq!(usage.compacts_at, None);
@@ -425,31 +506,27 @@ mod tests {
         let provider = Summarizer::saying("a summary");
         let history = conversation(40);
         let conversation_only = compaction::estimate_tokens(&history);
-        let fixed = fixed_request_tokens();
-        // Two separate omissions, each of which would leave the other
-        // looking like a working estimate.
-        assert!(
-            fixed > compaction::estimate_text_tokens(prompt::INSTRUCTIONS),
-            "the tool schemas were not counted"
-        );
-        assert!(
-            fixed > compaction::estimate_tool_schema_tokens(&tool_definitions()),
-            "the system prompt was not counted"
-        );
+        let frame = frame_with(ConversationMode::Agent, &[], &[], &server());
+        // Each omission would leave the others looking like a working estimate.
+        assert!(frame.instructions > 0, "the system prompt was not counted");
+        assert!(frame.tools > 0, "the tool schemas were not counted");
+        assert!(frame.mcp > 0, "the servers' schemas were not counted");
 
-        // Roomy for the conversation on its own, full once the request's own
-        // weight is on the scale.
-        let limit = (conversation_only as u64 * 100 / compaction::TRIGGER_PERCENT) as u32 + 1
-            + fixed as u32;
+        // The threshold halfway through the server's schemas: roomy for the
+        // conversation with the bare frame, full once the server is on it.
+        let at = conversation_only + bare().total() + frame.mcp / 2;
+        let limit = (at as u64 * 100 / compaction::TRIGGER_PERCENT) as u32;
         assert!(
             !compaction::should_compact(conversation_only, Some(limit), &history),
             "the window has to be roomy for the conversation alone, or this proves nothing"
         );
-
+        let session = session_with_window(provider, limit);
         assert!(
-            compact_if_needed(&session_with_window(provider, limit), &history, false)
-                .unwrap()
-                .is_some(),
+            compact_if_needed(&session, bare(), &history, false).unwrap().is_none(),
+            "without the server it fits — so the server is what tips it"
+        );
+        assert!(
+            compact_if_needed(&session, frame, &history, false).unwrap().is_some(),
             "the fixed cost of the request was not counted"
         );
     }
@@ -461,10 +538,10 @@ mod tests {
         let provider = Summarizer::saying("a summary");
         let session = session(provider.clone());
 
-        assert!(compact_if_needed(&session, &conversation(40), true)
+        assert!(compact_if_needed(&session, bare(), &conversation(40), true)
             .unwrap()
             .is_some());
-        assert_eq!(compact_if_needed(&session, &conversation(4), true).unwrap(), None);
+        assert_eq!(compact_if_needed(&session, bare(), &conversation(4), true).unwrap(), None);
     }
 
     /// The pair rule of `plan_compaction`, seen from the outside: what comes

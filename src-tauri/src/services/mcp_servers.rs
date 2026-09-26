@@ -104,23 +104,23 @@ impl McpServers {
                 }
             }
         }
-        let servers = pool
-            .slots
-            .iter()
-            .filter_map(|(name, slot)| match &slot.state {
-                SlotState::Running { server, tools } => {
-                    server.restarted.store(false, Ordering::SeqCst);
-                    Some(ConnectedServer {
-                        name: name.clone(),
-                        weight: slot.config.weight(),
-                        client: Arc::clone(server) as Arc<dyn McpClient>,
-                        tools: tools.clone(),
-                    })
-                }
-                _ => None,
-            })
-            .collect();
-        McpTools::new(servers)
+        for slot in pool.slots.values() {
+            if let SlotState::Running { server, .. } = &slot.state {
+                server.restarted.store(false, Ordering::SeqCst);
+            }
+        }
+        connected(&pool)
+    }
+
+    /// The tools of the servers already running for `cwd` — what the next
+    /// turn will offer, as far as can be known without starting anything.
+    /// For the context meter: a server is not started to be measured.
+    pub fn running(&self, cwd: &Path) -> McpTools {
+        let pool = lock(&self.pool);
+        if pool.cwd.as_deref() != Some(cwd) {
+            return McpTools::default();
+        }
+        connected(&pool)
     }
 
     /// Starts one server now, on its own, and says what came of it — the
@@ -221,6 +221,23 @@ impl McpServers {
     pub fn stop_all(&self) {
         lock(&self.pool).slots.clear();
     }
+}
+
+fn connected(pool: &Pool) -> McpTools {
+    let servers = pool
+        .slots
+        .iter()
+        .filter_map(|(name, slot)| match &slot.state {
+            SlotState::Running { server, tools } => Some(ConnectedServer {
+                name: name.clone(),
+                weight: slot.config.weight(),
+                client: Arc::clone(server) as Arc<dyn McpClient>,
+                tools: tools.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    McpTools::new(servers)
 }
 
 /// The entries that would start: switched on, and with nothing wrong that
@@ -434,6 +451,22 @@ mod tests {
         assert_eq!(servers.state("a", &config.mcp_servers["a"]), McpServerState::NotStarted);
         servers.for_turn(&config, &cwd(), NO);
         assert_eq!(starts.load(Ordering::SeqCst), 2, "tried again");
+    }
+
+    /// The meter asks what is running and starts nothing: before the first
+    /// turn there is nothing, after it the turn's tools, and in another
+    /// folder nothing again.
+    #[test]
+    fn running_reports_the_started_servers_and_starts_none() {
+        let (servers, starts) = servers();
+        let config = config(&[("a", "ok")]);
+        assert!(servers.running(&cwd()).get("mcp__a__echo").is_none());
+        assert_eq!(starts.load(Ordering::SeqCst), 0, "started to be measured");
+
+        servers.for_turn(&config, &cwd(), NO);
+        assert!(servers.running(&cwd()).get("mcp__a__echo").is_some());
+        assert!(servers.running(Path::new("/elsewhere")).get("mcp__a__echo").is_none());
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
     }
 
     /// The tab's own start: opening a server's row shows its tools, and

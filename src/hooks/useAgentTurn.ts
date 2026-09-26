@@ -133,7 +133,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
   }, [turn.status, turn.blocks, chatId, onSaved, keepPlan]);
 
   const refreshContext = useCallback(() => {
-    contextUsage(history.current)
+    contextUsage(history.current, planRef.current)
       .then(setContext)
       // A meter that cannot be drawn is not worth an error banner over the
       // conversation it is measuring.
@@ -156,7 +156,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
    */
   const makeRoom = useCallback(async (force: boolean) => {
     try {
-      const shorter = await compactHistory(history.current, force);
+      const shorter = await compactHistory(history.current, force, planRef.current);
       if (!shorter) return false;
       history.current = shorter.history;
       unsaved.current = true;

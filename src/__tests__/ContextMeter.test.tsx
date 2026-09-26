@@ -8,9 +8,11 @@ import type { ChatUsage, ContextUsage } from "../lib/chat";
 
 const context = (over: Partial<ContextUsage> = {}): ContextUsage => ({
   instructions: 1_000,
+  skills: 2_000,
   tools: 3_000,
+  mcp: 6_000,
   conversation: 4_000,
-  total: 8_000,
+  total: 16_000,
   limit: null,
   compactsAt: null,
   ...over,
@@ -37,9 +39,9 @@ describe("the context meter", () => {
   test("shows how much of the window is gone, once the window is known", () => {
     meter({ context: { limit: 200_000, compactsAt: 160_000 } });
 
-    expect(screen.getByRole("button", { name: "Context usage: 4%" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Context usage: 8%" })).toBeTruthy();
     openMeter();
-    expect(screen.getByText("8k of 200k tokens")).toBeTruthy();
+    expect(screen.getByText("16k of 200k tokens")).toBeTruthy();
   });
 
   test("opens upwards, and asks for a compaction from its panel", () => {
@@ -61,14 +63,18 @@ describe("the context meter", () => {
     expect((screen.getByText("Compact now") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  /// Folding the conversation moves one of the numbers. Showing only the
-  /// total hides which one a click would help with.
-  test("says what the tokens are spent on", () => {
+  /// Folding the conversation moves one of the numbers, and skills and MCP
+  /// servers are the user's to switch off. Showing only the total hides which
+  /// one a click would help with.
+  test("says what the tokens are spent on, part by part", () => {
     meter({ context: { limit: 200_000, compactsAt: 160_000 } });
 
     openMeter();
     const text = screen.getByRole("dialog", { name: "Context" }).textContent ?? "";
-    expect(text).toContain("Instructions and tools4k");
+    expect(text).toContain("Instructions and rules1k");
+    expect(text).toContain("Built-in tools3k");
+    expect(text).toContain("Skills2k");
+    expect(text).toContain("MCP servers6k");
     expect(text).toContain("Conversation4k");
     expect(text).toContain("at 160k");
   });
@@ -79,7 +85,15 @@ describe("the context meter", () => {
     meter({ usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800, cachedTokens: 9_000 } });
 
     openMeter();
-    expect(screen.getByText("The last request actually cost 10k, 9k of it from the cache.")).toBeTruthy();
+    expect(screen.getByText("The last request actually cost 10k, 9k of it (95%) from the cache.")).toBeTruthy();
+  });
+
+  /// Zero is also what a provider that reports no cache sends: not a miss.
+  test("says nothing was reported as cached when the provider gave no cached count", () => {
+    meter({ usage: { promptTokens: 9_500, completionTokens: 300, totalTokens: 9_800, cachedTokens: 0 } });
+
+    openMeter();
+    expect(screen.getByText("The last request actually cost 10k, none of it reported as cached.")).toBeTruthy();
   });
 
   test("closes on Escape", () => {

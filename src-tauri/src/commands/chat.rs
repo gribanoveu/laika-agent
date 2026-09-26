@@ -22,7 +22,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::domain::command_exec::Shell;
-use crate::domain::compaction::ContextUsage;
+use crate::domain::compaction::{ContextUsage, RequestFrame};
+use crate::domain::prompt::TurnContext;
 use crate::domain::conversation_mode::ConversationMode;
 use crate::domain::settings::RememberScope;
 use crate::domain::llm::{LlmMessage, LlmToolCall};
@@ -306,12 +307,16 @@ pub struct CompactedHistory {
 pub async fn chat_compact(
     messages: Vec<LlmMessage>,
     force: bool,
+    plan: Option<String>,
+    app: AppHandle,
+    state: State<'_, Arc<AgentState>>,
 ) -> Result<Option<CompactedHistory>, String> {
+    let frame = next_request_frame(&app, &state, plan.as_deref());
     // A summary is an ordinary request to the provider, and a request on the
     // IPC loop freezes every other command for its duration.
     tauri::async_runtime::spawn_blocking(move || {
         let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
-        context_compaction::compact_if_needed(&session, &messages, force)
+        context_compaction::compact_if_needed(&session, frame, &messages, force)
             .map(|compacted| {
                 compacted.map(|compacted| CompactedHistory {
                     history: compacted.history,
@@ -328,13 +333,52 @@ pub async fn chat_compact(
 ///
 /// Asked rather than computed there: the numbers on the meter have to be the
 /// ones that decide, or a reader watches a gauge that is not connected to the
-/// thing it appears to measure. Cheap — arithmetic over the history plus one
-/// serialization of the tool schemas, no provider call — so it is a plain
-/// command rather than another thread.
+/// thing it appears to measure. Cheap — arithmetic over the history, one
+/// serialization of the tool schemas and a read of the rules and skills, no
+/// provider call — so it is a plain command rather than another thread.
 #[tauri::command]
-pub fn chat_context_usage(messages: Vec<LlmMessage>) -> Result<ContextUsage, String> {
+pub fn chat_context_usage(
+    messages: Vec<LlmMessage>,
+    plan: Option<String>,
+    app: AppHandle,
+    state: State<'_, Arc<AgentState>>,
+) -> Result<ContextUsage, String> {
     let session = llm_session::resolve(None).map_err(|e| e.to_string())?;
-    Ok(context_compaction::usage(&session, &messages))
+    Ok(context_compaction::usage(&session, next_request_frame(&app, &state, plan.as_deref()), &messages))
+}
+
+/// What the next turn will send in front of the conversation: the prompt
+/// parts and tools `run_off_the_event_loop` gathers, read the same way — but
+/// MCP servers only as they run now, since none is started to be measured,
+/// and the shell by name, since probing it runs it. Without an open folder,
+/// the prompt a turn there would have.
+fn next_request_frame<R: Runtime>(app: &AppHandle<R>, state: &AgentState, plan: Option<&str>) -> RequestFrame {
+    let workspace = state.workspace().ok();
+    let root = workspace.as_deref();
+    let mode = state.mode();
+    let skills = crate::services::skills::enabled_catalog(root).unwrap_or_default();
+    let rules = root.map(crate::services::project_rules::load).unwrap_or_default();
+    let mcp = match (root, app.try_state::<Arc<McpServers>>()) {
+        (Some(root), Some(servers)) if mode == ConversationMode::Agent => servers.running(root),
+        _ => McpTools::default(),
+    };
+    let worktree_of = root.and_then(crate::infra::git_head::worktree_of);
+    let shell = Shell::default();
+    let today = chrono::Local::now().format("%e %B %Y").to_string();
+    context_compaction::request_frame(
+        &TurnContext {
+            mode,
+            workspace: root.unwrap_or(std::path::Path::new("")),
+            shell: &shell.program,
+            today: &today,
+            unattended: state.approval().is_ok_and(|approval| approval.skip_all),
+            skills: &skills,
+            rules: &rules,
+            plan,
+            worktree_of: worktree_of.as_deref(),
+        },
+        &mcp,
+    )
 }
 
 /// Asks the running turn to stop. Returns at once: the turn notices at its

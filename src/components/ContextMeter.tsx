@@ -7,11 +7,28 @@ import "./ContextMeter.css";
 // older part of the conversation into a summary.
 //
 // The parts are shown apart because they behave differently: folding moves
-// the conversation and leaves instructions and tools exactly where they were.
+// the conversation and leaves the rest exactly where it was, and skills and
+// MCP servers are the user's to switch off — each row is something to do.
 // This is the backend's estimate; the provider's own count for the last
 // request goes next to it rather than implying the two agree.
 
 const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+
+// Zero is also what a provider that reports nothing sends, so it is not
+// called a miss.
+const cacheNote = ({ promptTokens, cachedTokens = 0 }: ChatUsage) =>
+  cachedTokens && promptTokens
+    ? `, ${compact(cachedTokens)} of it (${Math.round((cachedTokens / promptTokens) * 100)}%) from the cache`
+    : ", none of it reported as cached";
+
+// In the order of the bar: the fixed parts first, the conversation last.
+const PARTS = [
+  { key: "instructions", label: "Instructions and rules" },
+  { key: "tools", label: "Built-in tools" },
+  { key: "skills", label: "Skills" },
+  { key: "mcp", label: "MCP servers" },
+  { key: "conversation", label: "Conversation" },
+] as const;
 
 const R = 7;
 const CIRCUMFERENCE = 2 * Math.PI * R;
@@ -49,7 +66,6 @@ export function ContextMeter({ context, usage, running, onCompact, up = false }:
   const share = context.limit ? Math.min(1, context.total / context.limit) : null;
   const percent = share === null ? null : Math.round(share * 100);
   const tone = share === null || share < 0.7 ? "ok" : share < 0.9 ? "warn" : "full";
-  const fixed = context.instructions + context.tools;
 
   return (
     <div className="ctx" ref={wrap}>
@@ -85,11 +101,13 @@ export function ContextMeter({ context, usage, running, onCompact, up = false }:
           {context.limit ? (
             <>
               <div className="ctx-bar" aria-hidden="true">
-                <span className="ctx-bar-fixed" style={{ width: `${(fixed / context.limit) * 100}%` }} />
-                <span
-                  className="ctx-bar-chat"
-                  style={{ width: `${(context.conversation / context.limit) * 100}%` }}
-                />
+                {PARTS.map(({ key }) => (
+                  <span
+                    key={key}
+                    className={`ctx-part--${key}`}
+                    style={{ width: `${(context[key] / (context.limit ?? 1)) * 100}%` }}
+                  />
+                ))}
               </div>
               <p className="ctx-total">
                 {compact(context.total)} of {compact(context.limit)} tokens
@@ -103,20 +121,15 @@ export function ContextMeter({ context, usage, running, onCompact, up = false }:
           )}
 
           <dl className="ctx-rows">
-            <div>
-              <dt>
-                <i className="ctx-dot ctx-dot--fixed" />
-                Instructions and tools
-              </dt>
-              <dd>{compact(fixed)}</dd>
-            </div>
-            <div>
-              <dt>
-                <i className="ctx-dot ctx-dot--chat" />
-                Conversation
-              </dt>
-              <dd>{compact(context.conversation)}</dd>
-            </div>
+            {PARTS.map(({ key, label }) => (
+              <div key={key}>
+                <dt>
+                  <i className={`ctx-dot ctx-part--${key}`} />
+                  {label}
+                </dt>
+                <dd>{compact(context[key])}</dd>
+              </div>
+            ))}
           </dl>
 
           {context.compactsAt && (
@@ -125,7 +138,7 @@ export function ContextMeter({ context, usage, running, onCompact, up = false }:
           {usage && (
             <p className="ctx-note">
               The last request actually cost {compact(usage.promptTokens)}
-              {usage.cachedTokens ? `, ${compact(usage.cachedTokens)} of it from the cache` : ""}.
+              {cacheNote(usage)}.
             </p>
           )}
 

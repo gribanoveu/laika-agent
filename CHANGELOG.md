@@ -1,0 +1,2 @@
+2026-09-26 See in the context window panel what project rules, skills and MCP servers take, each on its own row
+2026-09-26 See what share of the last request came from the provider's prompt cache in the context window panel
