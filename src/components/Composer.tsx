@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { SendHorizontal, Square, ShieldCheck, Bot } from "lucide-react";
+import { SendHorizontal, Square, ShieldCheck, Bot, Brain } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import { ContextMeter } from "./ContextMeter";
 import type { ChatUsage, ContextUsage, ConversationMode } from "../lib/chat";
 import { choiceKey, type ModelChoice } from "../hooks/useLlmSettings";
+import { effortOptions } from "../lib/providerForm";
 import "./Composer.css";
 
 // Two permission states, not the prototype's three, because two is what
@@ -43,9 +44,11 @@ type Props = {
   draft?: { text: string; seq: number } | null;
   /** Text added after what is typed — a selection from the terminal. */
   quote?: { text: string; seq: number } | null;
-  /** Every configured `provider/model`, and the one turns go to now. */
-  models: { choices: ModelChoice[]; current: ModelChoice | null };
+  /** Every configured `provider/model`, the one turns go to now, and its thinking level. */
+  models: { choices: ModelChoice[]; current: ModelChoice | null; effort?: string | null };
   onModel: (choice: ModelChoice) => void;
+  /** `null` is the model's default — nothing sent. */
+  onEffort: (effort: string | null) => void;
   /** Asks the providers what they serve; called when the model menu opens. */
   onLoadModels: () => void;
   /** What the next request will cost, as the backend's own estimate — the one
@@ -68,6 +71,7 @@ export function Composer({
   quote = null,
   models,
   onModel,
+  onEffort,
   onLoadModels,
   context,
   usage,
@@ -96,6 +100,9 @@ export function Composer({
     area.current?.focus();
     requestAnimationFrame(grow);
   }, [quote]);
+
+  const effort = models.effort ?? "";
+  const efforts = effortOptions(effort);
 
   const send = () => {
     if (!text.trim()) return;
@@ -173,6 +180,23 @@ export function Composer({
               if (choice) onModel(choice);
             }}
           />
+          {/* The active provider's setting, as in Settings → Models — so it follows
+              the model it was set for, and a switch back finds it still set. */}
+          {models.current && (
+            <Dropdown
+              title="Thinking level"
+              heading="Thinking"
+              label={
+                <span className="mode-label">
+                  <Brain size={13} />
+                  {efforts.find((e) => e.value === effort)?.label}
+                </span>
+              }
+              value={effort}
+              options={efforts}
+              onPick={(v) => onEffort(v || null)}
+            />
+          )}
           {/* Shown from the first render, before anything has been said: an
               empty conversation already costs the prompt and the schemas. */}
           {context && (

@@ -33,3 +33,21 @@ export function pemFromBytes(bytes: Uint8Array): string {
   const base64 = btoa(binary).replace(/.{64}/g, "$&\n").trim();
   return `-----BEGIN CERTIFICATE-----\n${base64}\n-----END CERTIFICATE-----`;
 }
+
+/**
+ * The thinking levels every reasoning API takes — OpenAI's `reasoning_effort`
+ * and Anthropic's adaptive `effort` both know these three. "" is the model's
+ * own default: nothing is sent. Anything else (`max`, `minimal`, a token
+ * budget) is still typed by hand in Settings.
+ */
+export const EFFORTS: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+/** The levels to offer, with `current` added when it is one typed by hand — so it still shows as chosen. */
+export function effortOptions(current: string): { value: string; label: string }[] {
+  return EFFORTS.some((e) => e.value === current) ? EFFORTS : [...EFFORTS, { value: current, label: current }];
+}

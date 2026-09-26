@@ -99,6 +99,16 @@ export function useLlmSettings() {
     [settings, guard],
   );
 
+  /** Sets the active provider's thinking level; `null` sends none, leaving the model's default. */
+  const pickEffort = useCallback(
+    (effort: string | null) => {
+      const provider = settings?.providers.find((p) => p.id === settings.activeProviderId);
+      if (!provider) return;
+      return guard(() => saveProvider({ ...provider, reasoningEffort: effort }));
+    },
+    [settings, guard],
+  );
+
   return {
     settings,
     error,
@@ -110,6 +120,7 @@ export function useLlmSettings() {
     models: modelChoices(settings, served),
     loadModels,
     pickModel,
+    pickEffort,
     probe,
     served,
   };
@@ -141,5 +152,5 @@ export function modelChoices(settings: LlmSettings | null, served: Record<string
   const current = active
     ? (choices.find((c) => c.providerId === active.id && c.model === (active.model ?? null)) ?? null)
     : null;
-  return { choices, current };
+  return { choices, current, effort: active?.reasoningEffort ?? null };
 }

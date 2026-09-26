@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Circle, CircleDot, FileUp, Plus, RefreshCw, Search, X } from "lucide-react";
 import type { LlmSettings, ProviderConfig, ProviderKind } from "../lib/chat";
-import { certificateCount, filterModels, pemFromBytes } from "../lib/providerForm";
+import { certificateCount, EFFORTS, filterModels, pemFromBytes } from "../lib/providerForm";
 import "./ProviderSettings.css";
 
 // The provider form. Segmented controls rather than the app's dropdown,
@@ -303,16 +303,31 @@ export function ProviderSettings({
           )}
           <div className="modal-field">
             <label>Reasoning effort</label>
-            <input
-              type="text"
-              value={draft.reasoningEffort}
-              placeholder={
-                draft.kind === "anthropic"
-                  ? "model default — low … max, or a token budget for older models"
-                  : "model default — low, medium or high"
-              }
-              onChange={(e) => edit({ reasoningEffort: e.target.value })}
-            />
+            <div className="segmented" role="radiogroup" aria-label="Reasoning effort">
+              {EFFORTS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.reasoningEffort.trim() === value}
+                  className={`segment${draft.reasoningEffort.trim() === value ? " active" : ""}`}
+                  onClick={() => edit({ reasoningEffort: value })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="provider-effort-custom">
+              <span>Custom</span>
+              <input
+                type="text"
+                value={draft.reasoningEffort}
+                placeholder={
+                  draft.kind === "anthropic" ? "max, or a token budget for older models" : "minimal, xhigh…"
+                }
+                onChange={(e) => edit({ reasoningEffort: e.target.value })}
+              />
+            </div>
           </div>
           <div className="modal-field">
             <label>Context window</label>

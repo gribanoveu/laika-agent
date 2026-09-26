@@ -364,3 +364,12 @@
   gap: 4px;
   color: var(--green);
 }
+/* The effort's levels, and under them the box for one typed by hand — its
+   caption and box drop into the field's own two columns, a row like any other. */
+.provider-effort-custom {
+  display: contents;
+}
+.provider-effort-custom > span {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}

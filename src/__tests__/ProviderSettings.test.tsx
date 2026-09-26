@@ -151,6 +151,22 @@ describe("editing a provider", () => {
     expect(saved[0]?.provider.reasoningEffort).toBeNull();
   });
 
+  test("a thinking level is one click, and the box shows what it sends", async () => {
+    const { saved } = form({
+      providers: [{ id: "gpt", baseUrl: "u", hasApiKey: true }],
+      activeProviderId: "gpt",
+    });
+    const group = screen.getByRole("radiogroup", { name: "Reasoning effort" });
+    expect(group.querySelector('[aria-checked="true"]')?.textContent).toBe("Default");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Medium" }));
+    expect(field("Reasoning effort").value).toBe("medium");
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved[0]?.provider.reasoningEffort).toBe("medium");
+  });
+
   test("the context window is 260k unless one was set, and takes digits only", () => {
     form();
     expect(field("Context window").value).toBe("260000");

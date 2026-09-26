@@ -466,6 +466,7 @@ export default function App() {
             quote={quote}
             models={llm.models}
             onModel={(choice) => llm.pickModel(choice.providerId, choice.model)}
+            onEffort={llm.pickEffort}
             onLoadModels={llm.loadModels}
             context={agent.context}
             usage={agent.turn.usage}

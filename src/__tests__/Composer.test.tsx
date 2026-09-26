@@ -44,6 +44,7 @@ function composer(
       onUnattended={onUnattended}
       models={{ choices: [], current: null }}
       onModel={() => {}}
+      onEffort={() => {}}
       onLoadModels={() => {}}
       context={null}
       usage={null}
@@ -183,6 +184,7 @@ describe("text handed to the box", () => {
       quote={quote}
       models={{ choices: [], current: null }}
       onModel={() => {}}
+      onEffort={() => {}}
       onLoadModels={() => {}}
       context={null}
       usage={null}
@@ -248,6 +250,7 @@ describe("the model chip", () => {
         onUnattended={() => {}}
         models={models}
         onModel={(c) => picked.push(`${c.providerId}|${c.model}`)}
+        onEffort={() => {}}
         onLoadModels={() => loads++}
         context={{ instructions: 1_000, tools: 3_000, conversation: 4_000, total: 8_000, limit: 200_000, compactsAt: null }}
         usage={null}
@@ -262,6 +265,40 @@ describe("the model chip", () => {
     expect(picked).toEqual(["OpenRouter|openai/gpt-5"]);
   });
 
+  test("the thinking chip shows the active provider's level and reports the pick", () => {
+    const models = modelChoices(
+      { ...settings, providers: settings.providers.map((p) => ({ ...p, reasoningEffort: "max" })) },
+      {},
+    );
+    const picked: (string | null)[] = [];
+    render(
+      <Composer
+        onSend={() => {}}
+        onStop={() => {}}
+        running={false}
+        conversation="agent"
+        onConversation={() => {}}
+        unattended={false}
+        onUnattended={() => {}}
+        models={models}
+        onModel={() => {}}
+        onEffort={(e) => picked.push(e)}
+        onLoadModels={() => {}}
+        context={null}
+        usage={null}
+        onCompact={() => {}}
+      />,
+    );
+
+    // A level typed by hand in Settings is still the one shown as chosen.
+    expect(screen.getByTitle("Thinking level").textContent).toContain("max");
+    fireEvent.click(screen.getByTitle("Thinking level"));
+    fireEvent.click(screen.getByRole("option", { name: /High/ }));
+    fireEvent.click(screen.getByTitle("Thinking level"));
+    fireEvent.click(screen.getByRole("option", { name: /Default/ }));
+    expect(picked).toEqual(["high", null]);
+  });
+
   test("the context ring sits in the bar, beside the send button", () => {
     render(
       <Composer
@@ -274,7 +311,9 @@ describe("the model chip", () => {
         onUnattended={() => {}}
         models={{ choices: [], current: null }}
         onModel={() => {}}
-        onLoadModels={() => {}}
+        onEffort={() => {}}
+        onEffort={() => {}}
+      onLoadModels={() => {}}
         context={{ instructions: 1_000, tools: 3_000, conversation: 4_000, total: 8_000, limit: 200_000, compactsAt: null }}
         usage={null}
         onCompact={() => {}}
