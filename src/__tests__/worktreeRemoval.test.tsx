@@ -42,16 +42,10 @@ const { FolderTab } = await import("../components/FolderTab");
 const WORKTREE = "/home/.kibo/worktrees/kibo/main-0925-2214";
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
-const removal = ({ agree = true, opens = true } = {}) => {
+const removal = () => {
   const log: string[] = [];
   const hook = renderHook(() =>
     useWorktreeRemoval({
-      workspace: WORKTREE,
-      guard: (go, onCancel) => (agree ? go() : onCancel?.()),
-      open: async (path) => {
-        log.push(`open ${path}`);
-        return opens;
-      },
       notify: (message) => log.push(`notify ${message}`),
       refreshRecent: () => log.push("refresh"),
     }),
@@ -59,29 +53,26 @@ const removal = ({ agree = true, opens = true } = {}) => {
   return { hook, log };
 };
 
-describe("removing the open worktree", () => {
-  test("goes back to the main folder first, then removes the worktree — not the folder now open", async () => {
+describe("removing a worktree from the list", () => {
+  test("reads it, shows it, and removes that one only once confirmed", async () => {
     const { hook, log } = removal();
-    await act(() => hook.result.current.ask());
+    await act(() => hook.result.current.ask(WORKTREE));
     expect(hook.result.current.asked).toEqual({ path: WORKTREE, check: clean });
+    expect(calls).toEqual([{ command: "git_worktree_check", args: { path: WORKTREE } }]);
 
-    act(() => hook.result.current.confirm());
-    await settle();
+    await act(() => hook.result.current.confirm());
     expect(hook.result.current.asked).toBeNull();
-    expect(calls.map((call) => call.command)).toEqual(["git_worktree_check", "git_worktree_remove"]);
-    expect(calls[1].args).toEqual({ path: WORKTREE });
-    expect(log).toEqual(["open /work/kibo", "notify Worktree removed with its 2 chats", "refresh"]);
+    expect(calls[1]).toEqual({ command: "git_worktree_remove", args: { path: WORKTREE } });
+    expect(log).toEqual(["notify Worktree removed with its 2 chats", "refresh"]);
   });
 
-  test("removes nothing when leaving the worktree is not agreed to, or its main folder does not open", async () => {
-    for (const setup of [{ agree: false }, { opens: false }]) {
-      calls.length = 0;
-      const { hook } = removal(setup);
-      await act(() => hook.result.current.ask());
-      act(() => hook.result.current.confirm());
-      await settle();
-      expect(calls.map((call) => call.command)).toEqual(["git_worktree_check"]);
-    }
+  test("closed without confirming, nothing is removed", async () => {
+    const { hook, log } = removal();
+    await act(() => hook.result.current.ask(WORKTREE));
+    act(() => hook.result.current.close());
+    await act(() => hook.result.current.confirm());
+    expect(calls.map((call) => call.command)).toEqual(["git_worktree_check"]);
+    expect(log).toEqual([]);
   });
 
   test("the toast says what went with it and what stayed", () => {
@@ -109,7 +100,7 @@ describe("the dialog", () => {
   test("says what goes and asks", () => {
     const confirmed = dialog({});
     const text = screen.getByRole("dialog").textContent ?? "";
-    expect(text).toContain("The folder main-0925-2214 is deleted, and Kibo goes back to kibo.");
+    expect(text).toContain("The folder main-0925-2214, a worktree of kibo, is deleted.");
     expect(text).toContain("Its 2 chats are deleted with it.");
     expect(text).toContain("Branch kibo/main-0925-2214 is deleted");
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -138,31 +129,38 @@ describe("the dialog", () => {
 });
 
 describe("the folder menu", () => {
-  const menu = (worktreeOf: string | null) => {
-    let asked = 0;
+  const menu = (open: string) => {
+    const asked: string[] = [];
     render(
       <FolderTab
-        path={WORKTREE}
-        worktreeOf={worktreeOf}
-        recent={[]}
+        path={open}
+        recent={[
+          { path: "/work/kibo", worktreeOf: null },
+          { path: WORKTREE, worktreeOf: "/work/kibo" },
+        ]}
         onOpenFolder={() => {}}
         onPickFolder={() => {}}
-        onRemoveWorktree={() => asked++}
+        onRemoveWorktree={(path) => asked.push(path)}
         onOpenChanges={() => {}}
       />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
-    return () => asked;
+    return asked;
   };
 
-  test("offers removal only in a worktree", () => {
+  test("offers removal on a worktree's row, and not on an ordinary folder's", () => {
     const asked = menu("/work/kibo");
-    fireEvent.click(screen.getByRole("option", { name: "Remove this worktree…" }));
-    expect(asked()).toBe(1);
+    const buttons = screen.getAllByRole("button", { name: /remove/i }).filter((b) => b.className === "dropdown-action");
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["Remove this worktree…"]);
+    fireEvent.click(buttons[0]);
+    expect(asked).toEqual([WORKTREE]);
   });
 
-  test("an ordinary folder has no such item", () => {
-    menu(null);
-    expect(screen.queryByRole("option", { name: "Remove this worktree…" })).toBeNull();
+  test("the open worktree's button is there but unavailable, and says to switch first", () => {
+    const asked = menu(WORKTREE);
+    const button = screen.getByRole("button", { name: /switch to another folder to remove it/ });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button);
+    expect(asked).toEqual([]);
   });
 });

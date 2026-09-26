@@ -725,9 +725,9 @@ export async function gitWorktreeAdd(base: string): Promise<string> {
   return invoke<string>("git_worktree_add", { base });
 }
 
-/** Mirrors `commands::git::WorktreeCheck`: the open worktree as removing it would find it. */
+/** Mirrors `commands::git::WorktreeCheck`: a worktree as removing it would find it. */
 export type WorktreeCheck = {
-  /** The main folder, which the window goes back to. */
+  /** The main folder it was made from. */
   main: string;
   branch: string | null;
   /** Uncommitted changes and untracked files: removal is refused while there are any. */
@@ -740,12 +740,13 @@ export type WorktreeCheck = {
 /** Mirrors `commands::git::WorktreeRemoved`. */
 export type WorktreeRemoved = { branchKept: string | null; chatsRemoved: number };
 
-export async function gitWorktreeCheck(): Promise<WorktreeCheck> {
+/** `path` is a worktree from the folder list, not the open folder. */
+export async function gitWorktreeCheck(path: string): Promise<WorktreeCheck> {
   requireBackend();
-  return invoke<WorktreeCheck>("git_worktree_check");
+  return invoke<WorktreeCheck>("git_worktree_check", { path });
 }
 
-/** Removes the worktree at `path` and its chats; run with its main folder open. */
+/** Removes the worktree at `path` — from the folder list, not the open folder — and its chats. */
 export async function gitWorktreeRemove(path: string): Promise<WorktreeRemoved> {
   requireBackend();
   return invoke<WorktreeRemoved>("git_worktree_remove", { path });

@@ -63,7 +63,7 @@ export function WorktreeRemoveDialog({ asked, onConfirm, onClose }: Props) {
       {asked && check && !refused && (
         <ul className="worktree-remove-facts">
           <li>
-            The folder <b>{folderName(asked.path)}</b> is deleted, and Kibo goes back to <b>{folderName(check.main)}</b>.
+            The folder <b>{folderName(asked.path)}</b>, a worktree of <b>{folderName(check.main)}</b>, is deleted.
           </li>
           <li>
             {check.chats === 0

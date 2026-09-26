@@ -40,3 +40,42 @@ test("closes on Escape", () => {
   fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("listbox")).toBeNull();
 });
+
+// A row's own button does something to the option rather than picking it; an
+// unavailable one stays where it is, with a tooltip saying why.
+test("a row's action runs without picking, and an unavailable one does nothing", () => {
+  const picked: string[] = [];
+  const ran: string[] = [];
+  const action = (value: string, unavailable = false) => ({
+    icon: "x",
+    title: `remove ${value}`,
+    unavailable,
+    onRun: () => ran.push(value),
+  });
+  render(
+    <Dropdown
+      label="folder"
+      options={[
+        { value: "a", action: action("a") },
+        { value: "b", action: action("b", true) },
+        { value: "c" },
+      ]}
+      value="b"
+      onPick={(v) => picked.push(v)}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /folder/ }));
+  expect(screen.getAllByRole("option")).toHaveLength(3);
+
+  const unavailable = screen.getByRole("button", { name: "remove b" });
+  expect(unavailable.getAttribute("aria-disabled")).toBe("true");
+  expect(unavailable.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(unavailable);
+  expect(ran).toEqual([]);
+  expect(screen.getByRole("listbox")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "remove a" }));
+  expect(ran).toEqual(["a"]);
+  expect(picked).toEqual([]);
+  expect(screen.queryByRole("listbox")).toBeNull();
+});

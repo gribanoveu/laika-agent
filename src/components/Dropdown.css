@@ -114,6 +114,42 @@
   padding-left: 9px;
   border-left: 1px solid var(--border);
 }
+/* An option with a button of its own at the right edge. */
+.dropdown-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dropdown-row > .dropdown-item {
+  flex: 1;
+  min-width: 0;
+}
+.dropdown-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.dropdown-action:hover {
+  background: var(--bg-hover);
+  color: var(--red);
+}
+.dropdown-action[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+.dropdown-action[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--text-faint);
+}
 .dropdown-check {
   flex: none;
   color: var(--accent);

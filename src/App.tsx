@@ -264,13 +264,7 @@ export default function App() {
     send: agent.send,
   });
   const unstarted = agent.turn.blocks.length === 0 && agent.turn.status !== "running";
-  const worktreeRemoval = useWorktreeRemoval({
-    workspace: workspace.path,
-    guard: folderSwitch.guard,
-    open: workspace.open,
-    notify: toast.show,
-    refreshRecent: workspace.refreshRecent,
-  });
+  const worktreeRemoval = useWorktreeRemoval({ notify: toast.show, refreshRecent: workspace.refreshRecent });
   // The composer cleared the box when the message went; one that is not sent
   // after all is put back rather than typed again.
   const giveBack = (text: string) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 }));
@@ -545,7 +539,7 @@ export default function App() {
       />
       <WorktreeRemoveDialog
         asked={worktreeRemoval.asked}
-        onConfirm={worktreeRemoval.confirm}
+        onConfirm={() => void worktreeRemoval.confirm()}
         onClose={worktreeRemoval.close}
       />
       <BranchConflictDialog

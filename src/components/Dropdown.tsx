@@ -10,6 +10,9 @@ type Option = {
   hint?: string;
   /** Drawn under the option before it, as something that belongs to it. */
   nested?: boolean;
+  /** A button at the row's right edge, doing something to the option rather
+      than picking it. Unavailable, it stays in place and its `title` says why. */
+  action?: { icon: ReactNode; title: string; unavailable?: boolean; onRun: () => void };
 };
 
 type Props = {
@@ -72,25 +75,51 @@ export function Dropdown({ label, title, options, value, onPick, emptyLabel, bel
           {options.length === 0 && (
             <div className="dropdown-empty">{emptyLabel ?? "Nothing here yet"}</div>
           )}
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="option"
-              aria-selected={opt.value === value}
-              className={`dropdown-item${opt.value === value ? " active" : ""}${opt.nested ? " nested" : ""}`}
-              onClick={() => {
-                onPick(opt.value);
-                setOpen(false);
-              }}
-            >
-              <span className="dropdown-item-text">
-                <span className="dropdown-item-label">{opt.label ?? opt.value}</span>
-                {opt.hint && <span className="hint">{opt.hint}</span>}
-              </span>
-              {opt.value === value && <Check className="dropdown-check" size={13} />}
-            </button>
-          ))}
+          {options.map((opt) => {
+            const item = (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={opt.value === value}
+                className={`dropdown-item${opt.value === value ? " active" : ""}${opt.nested ? " nested" : ""}`}
+                onClick={() => {
+                  onPick(opt.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="dropdown-item-text">
+                  <span className="dropdown-item-label">{opt.label ?? opt.value}</span>
+                  {opt.hint && <span className="hint">{opt.hint}</span>}
+                </span>
+                {opt.value === value && <Check className="dropdown-check" size={13} />}
+              </button>
+            );
+            const action = opt.action;
+            if (!action) return item;
+            // Beside the option, not inside it: a button in a button is not valid HTML.
+            return (
+              <div key={opt.value} className="dropdown-row">
+                {item}
+                <button
+                  type="button"
+                  className="dropdown-action"
+                  title={action.title}
+                  aria-label={action.title}
+                  // Not `disabled`: a disabled button shows no tooltip, and the
+                  // tooltip is what says why it cannot be used.
+                  aria-disabled={action.unavailable || undefined}
+                  onClick={() => {
+                    if (action.unavailable) return;
+                    action.onRun();
+                    setOpen(false);
+                  }}
+                >
+                  {action.icon}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

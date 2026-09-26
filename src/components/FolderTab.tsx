@@ -1,13 +1,12 @@
-import { Check, Folder, FolderPlus, GitBranch, GitFork } from "lucide-react";
+import { Check, Folder, FolderPlus, GitBranch, GitFork, Trash2 } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 import { IndexBadge } from "./IndexBadge";
 import type { BranchRef, ChangeTotals, RecentFolder } from "../lib/chat";
 import type { IndexState } from "../lib/indexStatus";
 import "./FolderTab.css";
 
-/** Not paths: no folder is called these. */
+/** Not a path: no folder is called this. */
 const PICK = "\u0000pick";
-const REMOVE = "\u0000remove";
 
 const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
@@ -22,8 +21,8 @@ export function folderOptions(recent: RecentFolder[]) {
   const listed = new Set(recent.map((one) => trimmed(one.path)));
   const row = (one: RecentFolder, nested = false) =>
     one.worktreeOf
-      ? { value: one.path, label: folderName(one.path), hint: `worktree of ${folderName(one.worktreeOf)}`, nested }
-      : { value: one.path, label: folderName(one.path), hint: one.path };
+      ? { value: one.path, label: folderName(one.path), hint: `worktree of ${folderName(one.worktreeOf)}`, nested, worktree: true }
+      : { value: one.path, label: folderName(one.path), hint: one.path, worktree: false };
   return recent.flatMap((one) => {
     if (one.worktreeOf) return listed.has(trimmed(one.worktreeOf)) ? [] : [row(one)];
     const own = recent.filter((other) => other.worktreeOf && trimmed(other.worktreeOf) === trimmed(one.path));
@@ -38,8 +37,8 @@ type Props = {
   recent: RecentFolder[];
   onOpenFolder: (path: string) => void;
   onPickFolder: () => void;
-  /** Offered while the open folder is a worktree. */
-  onRemoveWorktree?: () => void;
+  /** Offered on each worktree in the folder menu, except the open one. */
+  onRemoveWorktree?: (path: string) => void;
   /** The main working tree, when the folder is a git worktree of it. */
   worktreeOf?: string | null;
   /** The git branch checked out in the folder; `null` outside a repository. */
@@ -106,15 +105,27 @@ export function FolderTab({
         }
         value={path ?? ""}
         options={[
-          ...folderOptions(recent),
+          ...folderOptions(recent).map(({ worktree, ...row }) =>
+            worktree && onRemoveWorktree
+              ? {
+                  ...row,
+                  action: {
+                    icon: <Trash2 size={13} />,
+                    // The open one runs processes and terminals, watched
+                    // and indexed; they stop only when another folder opens.
+                    title:
+                      row.value === path
+                        ? "This worktree is open — switch to another folder to remove it"
+                        : "Remove this worktree…",
+                    unavailable: row.value === path,
+                    onRun: () => onRemoveWorktree(row.value),
+                  },
+                }
+              : row,
+          ),
           { value: PICK, label: "Open folder…" },
-          ...(path && worktreeOf && onRemoveWorktree ? [{ value: REMOVE, label: "Remove this worktree…" }] : []),
         ]}
-        onPick={(value) => {
-          if (value === PICK) onPickFolder();
-          else if (value === REMOVE) onRemoveWorktree?.();
-          else if (value !== path) onOpenFolder(value);
-        }}
+        onPick={(value) => (value === PICK ? onPickFolder() : value !== path && onOpenFolder(value))}
       />
       {path && branch && branchPicker && (
         <>
