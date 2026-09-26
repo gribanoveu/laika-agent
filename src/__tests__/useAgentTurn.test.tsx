@@ -121,6 +121,28 @@ describe("making room before a turn", () => {
     });
   });
 
+  /// Typed while a turn runs, a command steers it: the model gets the prompt,
+  /// and the transcript — told back by the backend — the command.
+  test("a command typed mid-turn steers with its prompt, shown as typed", async () => {
+    results.chat_start = () => new Promise(() => {});
+    results.chat_steer = "note-1";
+    const { result } = renderHook(() => useAgentTurn());
+    act(() => {
+      void result.current.send("go");
+    });
+    await waitFor(() => expect(result.current.turn.status).toBe("running"));
+
+    await act(async () => {
+      await result.current.send("/review a.rs", "Review a.rs line by line");
+      await result.current.send("and b.rs");
+    });
+
+    expect(calls.filter((call) => call.command === "chat_steer").map((call) => call.args)).toEqual([
+      { text: "Review a.rs line by line", shown: "/review a.rs" },
+      { text: "and b.rs", shown: null },
+    ]);
+  });
+
   /// The summary takes seconds; the backend says when it starts, and the card
   /// is on screen until the call returns.
   test("a pass under way is on screen until it ends", async () => {

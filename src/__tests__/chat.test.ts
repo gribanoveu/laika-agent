@@ -104,7 +104,7 @@ describe("command wrappers", () => {
       "approval_set_unattended",
       "workspace_open",
     ]);
-    expect(calls[1]?.args).toEqual({ text: "use the helper" });
+    expect(calls[1]?.args).toEqual({ text: "use the helper", shown: null });
     expect(calls[5]?.args).toEqual({ path: "/tmp/project" });
   });
 });

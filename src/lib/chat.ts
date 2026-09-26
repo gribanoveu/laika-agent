@@ -226,10 +226,13 @@ export async function cancelChat(): Promise<void> {
   return invoke<void>("chat_cancel");
 }
 
-/** Queues a mid-turn note and returns its id, which is what withdraws it. */
-export async function steer(text: string): Promise<string> {
+/**
+ * Queues a mid-turn note and returns its id, which is what withdraws it.
+ * `shown` is what the transcript shows in place of `text` — a `/` command.
+ */
+export async function steer(text: string, shown?: string): Promise<string> {
   requireBackend();
-  return invoke<string>("chat_steer", { text });
+  return invoke<string>("chat_steer", { text, shown: shown ?? null });
 }
 
 /** `false` means a round already took it — what is said to the model cannot be unsaid. */

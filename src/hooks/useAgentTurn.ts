@@ -207,7 +207,7 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
       if (!trimmed) return;
 
       if (turn.status === "running") {
-        await steerCommand(content);
+        await steerCommand(content, content === trimmed ? undefined : trimmed);
         return;
       }
 

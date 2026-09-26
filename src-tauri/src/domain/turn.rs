@@ -172,7 +172,12 @@ pub struct SteeringNote {
     /// The note's own id. Cancelling needs it: two identical clarifications
     /// are indistinguishable by text.
     pub id: String,
+    /// What the model is told.
     pub text: String,
+    /// What the transcript shows instead, when that differs: `/review a.rs`
+    /// for the page of prompt the command stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<String>,
 }
 
 impl SteeringNote {
@@ -180,6 +185,7 @@ impl SteeringNote {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             text: text.into(),
+            shown: None,
         }
     }
 
@@ -236,7 +242,8 @@ pub enum ChatEventPayload {
     HistoryCompacting,
     /// A note the user typed mid-turn has been added to the conversation.
     /// Carries the id so the front end can retire that queued note by
-    /// identity rather than by matching its text.
+    /// identity rather than by matching its text. `text` is the note as the
+    /// transcript shows it — its `shown`, when it has one.
     SteeringApplied { id: String, text: String },
     /// A fresh round is starting.
     ///

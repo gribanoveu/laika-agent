@@ -812,7 +812,7 @@ fn apply_steering(
             Some(format!("steer:{}", note.id)),
             ChatEventPayload::SteeringApplied {
                 id: note.id,
-                text: note.text,
+                text: note.shown.unwrap_or(note.text),
             },
         );
     }
@@ -3451,6 +3451,35 @@ mod tests {
 
         let sent = user_messages(&h.provider.requests()[0]);
         assert_eq!(sent, ["a new question"]);
+    }
+
+    /// A `/` command typed mid-turn: the model gets its prompt, and the
+    /// transcript the command as typed.
+    #[test]
+    fn a_note_shown_as_a_command_tells_the_model_its_prompt() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let sink: ChatEventSink = Arc::new(move |event| seen.lock().unwrap().push(event));
+        let events = Events::new(&sink, 0);
+        let mut history = Vec::new();
+        let note = SteeringNote { shown: Some("/review a.rs".to_string()), ..SteeringNote::user("Review a.rs line by line") };
+
+        apply_steering(&events, 1, &mut history, vec![note, SteeringNote::user("and b.rs")]);
+
+        assert_eq!(
+            history.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(),
+            [format!("{STEERING_PREFIX}Review a.rs line by line"), format!("{STEERING_PREFIX}and b.rs")]
+        );
+        let shown: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match &e.event {
+                ChatEventPayload::SteeringApplied { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shown, ["/review a.rs", "and b.rs"]);
     }
 
     #[test]

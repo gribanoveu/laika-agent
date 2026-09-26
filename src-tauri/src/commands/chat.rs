@@ -404,10 +404,11 @@ pub fn chat_cancel(state: State<'_, Arc<AgentState>>) {
 }
 
 /// Queues something the user typed while the turn was running. The id comes
-/// back so the same note can be withdrawn before a round takes it.
+/// back so the same note can be withdrawn before a round takes it. `shown`
+/// is what the transcript shows in place of `text` — a `/` command.
 #[tauri::command]
-pub fn chat_steer(text: String, state: State<'_, Arc<AgentState>>) -> String {
-    let note = SteeringNote::user(text);
+pub fn chat_steer(text: String, shown: Option<String>, state: State<'_, Arc<AgentState>>) -> String {
+    let note = SteeringNote { shown, ..SteeringNote::user(text) };
     let id = note.id.clone();
     state.steering.push(note);
     id
