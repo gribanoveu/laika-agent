@@ -1,4 +1,5 @@
 2026-09-26 Write your own / commands as Markdown files in .kibo/commands of the project or of ~/.kibo; $ARGUMENTS takes what is typed after the name
+2026-09-26 Press ⌘L to jump to the message box; a new chat, from ⌘N or the button, puts the cursor there too
 2026-09-26 A compacted chat keeps the name of its first message instead of being renamed after its summary; chats already renamed get their name back
 2026-09-26 See history compaction in the chat as a card: under way while the summary is made, then how many messages it folded or that it gave up
 2026-09-26 Type / in the message box for commands: /compact folds older history, /fork continues in a copy of the chat

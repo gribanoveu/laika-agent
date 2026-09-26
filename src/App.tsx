@@ -103,6 +103,9 @@ export default function App() {
   // A terminal selection on its way to the composer, from the other subtree.
   const [quote, setQuote] = useState<{ text: string; seq: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Bumped to put the cursor in the message box, which lives in another subtree.
+  const [composerFocus, setComposerFocus] = useState(0);
+  const focusComposer = () => setComposerFocus((n) => n + 1);
   const [logOpen, setLogOpen] = useState(false);
   // The MCP and hooks files open as a whole (JSON) or one entry at a time
   // (a form): `entry` is the server's name or the hook's row, null for a new one.
@@ -210,6 +213,7 @@ export default function App() {
       ]),
     ),
     newChat: () => newChat(),
+    focusInput: focusComposer,
     sidebar: toggleSidebar,
     settings: () => setSettingsOpen(true),
     // Not ⌘W: once the last tab is gone, the next press would close the window.
@@ -224,7 +228,10 @@ export default function App() {
 
   // The conversation just left is already on disk and stays in the sidebar;
   // this only stops pointing at it.
-  const newChat = () => agent.reset();
+  const newChat = () => {
+    agent.reset();
+    focusComposer();
+  };
 
   // The window the meter is drawn against, and the provider a turn talks to.
   const compactNow = async () => {
@@ -477,6 +484,7 @@ export default function App() {
               />
             }
             onSend={send}
+            focus={composerFocus}
             onStop={agent.cancel}
             running={agent.turn.status === "running"}
             conversation={conversation.value}

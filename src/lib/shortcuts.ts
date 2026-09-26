@@ -36,6 +36,7 @@ export const SHORTCUTS = {
   shortcuts: { label: "Keyboard shortcuts", group: "General", combos: [{ code: "Slash", mod: true }] },
   close: { label: "Close a dialog, menu or file viewer", group: "General", combos: [{ code: "Escape" }] },
   ...PANE_SHORTCUTS,
+  focusInput: { label: "Go to the message box", group: "Chat", combos: [{ code: "KeyL", mod: true }] },
   send: { label: "Send the message", group: "Chat", combos: [{ code: "Enter" }] },
   newLine: { label: "New line in the message", group: "Chat", combos: [{ code: "Enter", shift: true }] },
   commandNext: { label: "Next command in the / menu", group: "Chat", combos: [{ code: "ArrowDown" }] },

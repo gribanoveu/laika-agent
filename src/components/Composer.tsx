@@ -63,6 +63,8 @@ type Props = {
   commands?: SlashCommand[];
   /** Called as the `/` menu opens — for commands read from files, which change outside the app. */
   onCommandsOpen?: () => void;
+  /** Each change puts the cursor in the box. */
+  focus?: number;
 };
 
 export function Composer({
@@ -85,6 +87,7 @@ export function Composer({
   onCompact,
   commands = [],
   onCommandsOpen,
+  focus = 0,
 }: Props) {
   const [text, setText] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
@@ -120,6 +123,10 @@ export function Composer({
     area.current?.focus();
     requestAnimationFrame(grow);
   }, [draft]);
+
+  useEffect(() => {
+    if (focus) area.current?.focus();
+  }, [focus]);
 
   useEffect(() => {
     if (!quote) return;

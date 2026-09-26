@@ -472,3 +472,39 @@ describe("slash commands", () => {
     expect(box.value).toBe("/fork");
   });
 });
+
+describe("the box's focus", () => {
+  const withFocus = (focus: number) => (
+    <Composer
+      onSend={() => {}}
+      onStop={() => {}}
+      running={false}
+      conversation="agent"
+      onConversation={() => {}}
+      unattended={false}
+      onUnattended={() => {}}
+      models={{ choices: [], current: null }}
+      onModel={() => {}}
+      onEffort={() => {}}
+      onLoadModels={() => {}}
+      context={null}
+      usage={null}
+      onCompact={() => {}}
+      focus={focus}
+    />
+  );
+
+  /// ⌘L and a new chat put the cursor in the box, from wherever it was.
+  test("is taken each time it is asked for, and not before", () => {
+    const { rerender } = render(withFocus(0));
+    const box = screen.getByRole("textbox");
+    expect(document.activeElement).not.toBe(box);
+
+    rerender(withFocus(1));
+    expect(document.activeElement).toBe(box);
+
+    box.blur();
+    rerender(withFocus(2));
+    expect(document.activeElement).toBe(box);
+  });
+});
