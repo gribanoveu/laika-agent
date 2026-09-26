@@ -31,7 +31,7 @@ pub fn create_directory(
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "createDirectory".to_string(),
-        description: "Create a directory, including any missing parents. Creating one that already exists is not an error."
+        description: "Create a directory, including any missing parents. Refused if anything already exists at the path — a directory included — since what is there may hold files you have not seen."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
