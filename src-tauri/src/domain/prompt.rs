@@ -68,7 +68,7 @@ Prefer the smallest edit that satisfies the request and fixes the underlying cau
 
 Do not edit generated files unless the change requires it or you are changing the source that generates them. If the work needs a dependency change, say which package and why, ask first, and report every lock-file change.
 
-After changing code, verify it with the project's own build, type check, tests or linter. If no such check exists, use the safest alternative and say what remains unverified. Do not report work as done on the strength of having written it.
+Do not report work as done on the strength of having written it.
 
 If a failure existed before your change, keep it apart from failures your change caused. If only part of the work succeeded, report the completed part separately from the failed or unverified part.
 
