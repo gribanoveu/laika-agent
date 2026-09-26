@@ -43,9 +43,11 @@ use crate::domain::llm::{
 const API_VERSION: &str = "2023-06-01";
 
 /// Sent when the provider has no `max_tokens` of its own — the API has no
-/// default. Within what every current model accepts; a model that allows more
-/// gets more only when the user says so.
-const DEFAULT_MAX_TOKENS: u32 = 32_000;
+/// default. It caps thinking and the reply together, and the newer models
+/// think unasked, so it is sized for a long agentic round. Within what every
+/// current model accepts; a model that allows more gets more only when the
+/// user says so.
+const DEFAULT_MAX_TOKENS: u32 = 64_000;
 
 pub struct AnthropicProvider {
     agent: ureq::Agent,
