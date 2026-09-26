@@ -450,3 +450,13 @@ describe("background processes", () => {
     ]);
   });
 });
+
+describe("a user message", () => {
+  test("keeps what the model was sent only when it is not what is shown", () => {
+    const command = appendUserMessage(emptyTurn(), "/init", 0, "Study this repository");
+    expect(command.blocks[0]).toEqual({ kind: "user", id: "user:0", text: "/init", sent: "Study this repository" });
+
+    const typed = appendUserMessage(emptyTurn(), "hello", 0, "hello");
+    expect(typed.blocks[0]).toEqual({ kind: "user", id: "user:0", text: "hello" });
+  });
+});

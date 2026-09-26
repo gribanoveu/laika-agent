@@ -74,3 +74,22 @@ describe("branching", () => {
     expect(branchAt(blocks, history, "nope")).toBeNull();
   });
 });
+
+describe("a command's message", () => {
+  /// The bubble shows `/init`; the history holds the prompt it sent. The
+  /// branch matches on the prompt and hands back the command, to run again.
+  test("is matched by what it sent and handed back as typed", () => {
+    const withCommand: Block[] = [
+      user("u0", "first"),
+      { kind: "user", id: "u1", text: "/init the IPC layer", sent: "Study this repository… the IPC layer" },
+    ];
+    const history = [said("user", "first"), said("assistant", "one"), said("user", "Study this repository… the IPC layer")];
+
+    expect([...branchPoints(withCommand, history).keys()].sort()).toEqual(["u0", "u1"]);
+    expect(branchAt(withCommand, history, "u1")).toEqual({
+      blocks: withCommand.slice(0, 1),
+      history: history.slice(0, 2),
+      text: "/init the IPC layer",
+    });
+  });
+});

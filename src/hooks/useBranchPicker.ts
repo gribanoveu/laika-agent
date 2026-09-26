@@ -11,8 +11,8 @@ type Deps = {
   guard: (go: () => void, onCancel?: () => void) => void;
   open: (path: string) => Promise<boolean>;
   notify: (message: string) => void;
-  /** Sends a message in the folder open now — the agent's. */
-  send: (text: string) => void;
+  /** Sends a message in the folder open now — the agent's; `sent` as `useAgentTurn`'s. */
+  send: (text: string, sent?: string) => void;
 };
 
 /**
@@ -35,12 +35,12 @@ export function useBranchPicker({ current, guard, open, notify, send }: Deps) {
   const [base, setBase] = useState<string | null>(null);
   const [conflict, setConflict] = useState<BranchConflict | null>(null);
   // A first message waiting for its worktree to be the open folder.
-  const [waiting, setWaiting] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<{ text: string; sent?: string } | null>(null);
 
   useEffect(() => {
     if (waiting === null) return;
     setWaiting(null);
-    send(waiting);
+    send(waiting.text, waiting.sent);
     // Once per message: `send` is a new function every render.
   }, [waiting]);
 
@@ -57,7 +57,7 @@ export function useBranchPicker({ current, guard, open, notify, send }: Deps) {
    * opens would be left on disk for nothing.
    */
   const startWorktree = useCallback(
-    (from: string, message?: string) =>
+    (from: string, message?: string, sent?: string) =>
       new Promise<boolean>((resolve) => {
         setConflict(null);
         guard(
@@ -68,7 +68,7 @@ export function useBranchPicker({ current, guard, open, notify, send }: Deps) {
                 if (opened) {
                   setWorktree(false);
                   setBase(null);
-                  if (message !== undefined) setWaiting(message);
+                  if (message !== undefined) setWaiting({ text: message, sent });
                 }
                 resolve(opened);
               } catch (e) {

@@ -49,7 +49,7 @@ import { useBranchPicker } from "./hooks/useBranchPicker";
 import { BranchConflictDialog } from "./components/BranchConflictDialog";
 import { useWorktreeRemoval } from "./hooks/useWorktreeRemoval";
 import { WorktreeRemoveDialog } from "./components/WorktreeRemoveDialog";
-import { expandTemplate, fileCommands, type SlashCommand } from "./lib/slashCommands";
+import { expandTemplate, fileCommands, typedCommand, type SlashCommand } from "./lib/slashCommands";
 import initPrompt from "./prompts/init.md?raw";
 import { useCommandFiles } from "./hooks/useCommandFiles";
 import "./App.css";
@@ -270,11 +270,11 @@ export default function App() {
         : conversation.value !== "agent"
           ? "Switch to Agent mode — it writes files"
           : undefined,
-      run: (args) => void send(expandTemplate(initPrompt, args)),
+      run: (args) => void send(typedCommand("init", args), expandTemplate(initPrompt, args)),
     },
   ];
   // `send` is declared further down; the arrow reaches it when a command runs.
-  const commands = [...builtIn, ...fileCommands(commandFiles.files, builtIn, (text) => void send(text))];
+  const commands = [...builtIn, ...fileCommands(commandFiles.files, builtIn, (text, sent) => void send(text, sent))];
 
   const pickConversation = async (mode: ConversationMode) => {
     const failed = await conversation.pick(mode);
@@ -318,15 +318,16 @@ export default function App() {
   // Asking before the first message rather than refusing it — and then sending
   // it: the composer has already cleared the box, so anything not sent here is
   // typed twice.
-  const send = async (text: string) => {
+  // `sent` is what the model gets in place of `text` — a `/` command's prompt.
+  const send = async (text: string, sent?: string) => {
     if (!workspace.path && !(await workspace.pick())) return;
     // With Worktree ticked the first message is where the worktree is made:
     // sent here, it would be worked on in the folder the user meant to keep out of.
     if (unstarted && branchPicker.worktree && branchPicker.base) {
-      if (!(await branchPicker.startWorktree(branchPicker.base, text))) giveBack(text);
+      if (!(await branchPicker.startWorktree(branchPicker.base, text, sent))) giveBack(text);
       return;
     }
-    agent.send(text);
+    agent.send(text, sent);
   };
 
   const openChat = history.chats.find((one) => one.id === agent.chatId);

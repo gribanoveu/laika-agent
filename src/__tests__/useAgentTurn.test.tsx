@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { Block } from "../lib/chatTurnReducer";
 
 // When a conversation is written down, and with what. The interesting part is
 // not the call itself but its timing: a turn that ended is history, a turn
@@ -98,6 +99,26 @@ describe("making room before a turn", () => {
     const started = calls.find((call) => call.command === "chat_start");
     expect(started?.args.messages).toEqual([{ role: "user", content: "hello" }]);
     expect(result.current.turn.blocks.some((b) => b.kind === "compaction")).toBe(false);
+  });
+
+  /// A `/` command: the transcript and the chat's name have what was typed,
+  /// the model has the prompt it stands for.
+  test("a command's prompt goes to the model, and the command to the transcript", async () => {
+    results.chat_start = done("on it");
+    const { result } = renderHook(() => useAgentTurn());
+
+    await act(async () => {
+      await result.current.send("/init the IPC layer", "Study this repository. Focus: the IPC layer");
+    });
+
+    const started = calls.find((call) => call.command === "chat_start");
+    expect(started?.args.messages).toEqual([{ role: "user", content: "Study this repository. Focus: the IPC layer" }]);
+    await waitFor(() => expect(saved()).toHaveLength(1));
+    expect((saved()[0].args.blocks as Block[])[0]).toMatchObject({
+      kind: "user",
+      text: "/init the IPC layer",
+      sent: "Study this repository. Focus: the IPC layer",
+    });
   });
 
   /// The summary takes seconds; the backend says when it starts, and the card

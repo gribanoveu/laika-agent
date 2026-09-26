@@ -195,22 +195,27 @@ export function useAgentTurn({ onSaved }: { onSaved?: () => void } = {}) {
     }
   }, [refreshContext]);
 
-  /** Sends what the user typed. While a turn is running the same text steers it. */
+  /**
+   * Sends what the user typed. While a turn is running the same text steers it.
+   * `sent`, when given, is what the model gets instead — a `/` command's prompt,
+   * with `text` (`/init`) what the transcript shows.
+   */
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, sent?: string) => {
       const trimmed = text.trim();
+      const content = sent?.trim() || trimmed;
       if (!trimmed) return;
 
       if (turn.status === "running") {
-        await steerCommand(trimmed);
+        await steerCommand(content);
         return;
       }
 
       setError(null);
       unsaved.current = true;
       turnStart.current = turn.blocks.length;
-      setTurn((state) => appendUserMessage(state, trimmed));
-      history.current = [...history.current, { role: "user", content: trimmed }];
+      setTurn((state) => appendUserMessage(state, trimmed, Date.now(), content));
+      history.current = [...history.current, { role: "user", content }];
       // Before the turn, so the room is made once and kept — a turn that
       // compacts its own copy pays for the summary again on the next message.
       await makeRoom(false);

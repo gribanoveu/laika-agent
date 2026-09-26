@@ -21,7 +21,11 @@ export type Block =
   | {
       kind: "user";
       id: string;
+      /** What the user typed, and what the transcript shows. */
       text: string;
+      /** What the model was sent instead, when that differs — a `/` command's
+          prompt. The transcript shows `/init`, not the page it stands for. */
+      sent?: string;
       /** How long the agent worked on this message, in ms — its own time,
           not the time spent waiting on an approval. Saved with the chat. */
       workedMs?: number;
@@ -136,7 +140,8 @@ export function compactionEnded(state: TurnState, end: { folded: number } | null
   return { ...state, blocks };
 }
 
-export function appendUserMessage(state: TurnState, text: string, now = Date.now()): TurnState {
+/** `sent` is what the model gets when it is not `text` — see the user block. */
+export function appendUserMessage(state: TurnState, text: string, now = Date.now(), sent?: string): TurnState {
   return {
     ...state,
     status: "running",
@@ -147,7 +152,10 @@ export function appendUserMessage(state: TurnState, text: string, now = Date.now
     // replay, and the answer would never appear.
     lastSeq: 0,
     buffered: [],
-    blocks: [...state.blocks, { kind: "user", id: `user:${state.blocks.length}`, text }],
+    blocks: [
+      ...state.blocks,
+      { kind: "user", id: `user:${state.blocks.length}`, text, ...(sent !== undefined && sent !== text && { sent }) },
+    ],
   };
 }
 

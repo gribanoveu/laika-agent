@@ -72,13 +72,18 @@ describe("a command file", () => {
     source: "project",
   });
 
-  test("sends its prompt, and never takes a built-in's name", () => {
-    const sent: string[] = [];
-    const listed = fileCommands([file("review"), file("compact")], commands, (text) => sent.push(text));
+  /// The transcript shows the command typed; the model gets the prompt.
+  test("sends its prompt as the command typed, and never takes a built-in's name", () => {
+    const sent: [string, string][] = [];
+    const listed = fileCommands([file("review"), file("compact")], commands, (text, prompt) => sent.push([text, prompt]));
 
     expect(listed.map((c) => [c.name, c.hint, c.argumentHint])).toEqual([["review", "about review", "<file>"]]);
     listed[0].run("src/a.ts");
-    expect(sent).toEqual(["Do src/a.ts"]);
+    listed[0].run("");
+    expect(sent).toEqual([
+      ["/review src/a.ts", "Do src/a.ts"],
+      ["/review", "Do "],
+    ]);
   });
 });
 

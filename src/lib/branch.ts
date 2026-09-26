@@ -23,7 +23,9 @@ export function branchPoints(blocks: Block[], history: LlmMessage[]): Map<string
   for (let b = bubbles.length - 1, m = asked.length - 1; b >= 0; b--, m--) {
     const bubble = bubbles[b];
     if (bubble.kind !== "user") break;
-    while (m >= 0 && history[asked[m]].content !== bubble.text) m--;
+    // A command's bubble shows `/init`; the history has the prompt it sent.
+    const said = bubble.sent ?? bubble.text;
+    while (m >= 0 && history[asked[m]].content !== said) m--;
     if (m < 0) break;
     points.set(bubble.id, asked[m]);
   }

@@ -62,15 +62,20 @@ export function expandTemplate(template: string, args: string): string {
   return args ? `${template}\n\n${args}` : template;
 }
 
+/** A command as the transcript shows it: what was typed, not the prompt it sent. */
+export function typedCommand(name: string, args: string): string {
+  return args ? `/${name} ${args}` : `/${name}`;
+}
+
 /**
- * The user's command files as menu entries, each sending its prompt. A file
- * named like a built-in is left out — `/compact` stays the app's — and so is
- * one whose name the list already has.
+ * The user's command files as menu entries, each sending its prompt — shown
+ * in the transcript as the command typed. A file named like a built-in is
+ * left out: `/compact` stays the app's.
  */
 export function fileCommands(
   files: readonly CommandFile[],
   builtIn: readonly SlashCommand[],
-  send: (text: string) => void,
+  send: (text: string, sent: string) => void,
 ): SlashCommand[] {
   return files
     .filter((file) => !builtIn.some((c) => c.name === file.name))
@@ -78,6 +83,6 @@ export function fileCommands(
       name: file.name,
       hint: file.description,
       argumentHint: file.argumentHint ?? undefined,
-      run: (args: string) => send(expandTemplate(file.template, args)),
+      run: (args: string) => send(typedCommand(file.name, args), expandTemplate(file.template, args)),
     }));
 }

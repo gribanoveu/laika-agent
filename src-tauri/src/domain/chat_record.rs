@@ -319,6 +319,15 @@ mod tests {
         assert_eq!(derive_title(&messages, &Value::Null), "and now the lexer?");
     }
 
+    /// A chat begun with `/init` is named after the command, not the page of
+    /// prompt it sent — the model's copy has the prompt, the bubble the command.
+    #[test]
+    fn a_chat_begun_with_a_command_is_named_after_the_command() {
+        let blocks = serde_json::json!([{ "kind": "user", "id": "user:0", "text": "/init the IPC layer", "sent": "Your task is to study this repository" }]);
+        let messages = [LlmMessage::user("Your task is to study this repository")];
+        assert_eq!(derive_title(&messages, &blocks), "/init the IPC layer");
+    }
+
     #[test]
     fn a_long_title_is_cut_on_a_word() {
         let long = "please look at the tokenizer and explain why the parser drops the final token";
