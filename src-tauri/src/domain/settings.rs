@@ -31,6 +31,11 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub kind: ProviderKind,
     pub base_url: String,
+    /// Where the model list is asked for. `None` is `{base_url}/models`; set
+    /// for an endpoint that lists them elsewhere — DeepSeek's Anthropic one
+    /// answers `/messages` but lists its models only at the host's `/models`.
+    #[serde(default)]
+    pub models_url: Option<String>,
     /// The model to send. `None` means "whichever the provider lists first",
     /// resolved once and then written back here — see
     /// `services::llm_session::effective_model`.

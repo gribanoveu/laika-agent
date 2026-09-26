@@ -18,6 +18,7 @@ const BLANK = {
   id: "",
   kind: "openAiCompatible" as ProviderKind,
   baseUrl: "",
+  modelsUrl: "",
   model: "",
   contextLimit: String(DEFAULT_CONTEXT_LIMIT),
   reasoningEffort: "",
@@ -56,6 +57,7 @@ const fromConfig = (config: ProviderConfig): Draft => ({
   id: config.id,
   kind: config.kind ?? "openAiCompatible",
   baseUrl: config.baseUrl,
+  modelsUrl: config.modelsUrl ?? "",
   model: config.model ?? "",
   contextLimit: String(config.contextLimit || DEFAULT_CONTEXT_LIMIT),
   reasoningEffort: config.reasoningEffort ?? "",
@@ -114,6 +116,8 @@ export function ProviderSettings({
     id: draft.id.trim(),
     kind: draft.kind,
     baseUrl: draft.baseUrl.trim(),
+    // Blank is the default path, built from the base URL.
+    modelsUrl: draft.modelsUrl.trim() || null,
     model: draft.model.trim() || null,
     // Blank, zero or a typo is "not set", which the backend reads as the
     // default window rather than as a window of nothing.
@@ -235,6 +239,17 @@ export function ProviderSettings({
               value={draft.baseUrl}
               placeholder={KINDS.find(([kind]) => kind === draft.kind)?.[2]}
               onChange={(e) => edit({ baseUrl: e.target.value })}
+            />
+          </div>
+          <div className="modal-field">
+            <label>Models URL</label>
+            <input
+              type="text"
+              value={draft.modelsUrl}
+              // The path it takes when left blank, spelled out: that is what
+              // someone correcting it starts from.
+              placeholder={draft.baseUrl.trim() ? `${draft.baseUrl.trim().replace(/\/+$/, "")}/models` : "base URL + /models"}
+              onChange={(e) => edit({ modelsUrl: e.target.value })}
             />
           </div>
           <div className="modal-field">

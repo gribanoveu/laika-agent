@@ -18,6 +18,9 @@ pub fn provider_for(
     let api_key = api_key.ok_or_else(|| {
         LlmError::Message(format!("no API key is stored for provider \"{}\"", config.id))
     })?;
+    // A blank one, hand-written into the file, is the default rather than a
+    // request to "".
+    let models_url = config.models_url.clone().filter(|u| !u.trim().is_empty());
     let agent = http_agent::build_agent(config.trusted_cert_pem.as_deref())
         .map_err(|e| LlmError::Tls(e.0))?;
     Ok(match config.kind {
@@ -30,6 +33,7 @@ pub fn provider_for(
             config.top_p,
             config.max_tokens,
             config.reasoning_effort.clone(),
+            models_url.clone(),
         )),
         ProviderKind::Anthropic => Box::new(anthropic::AnthropicProvider::new(
             agent,
@@ -40,6 +44,7 @@ pub fn provider_for(
             config.top_p,
             config.max_tokens,
             config.reasoning_effort.clone(),
+            models_url.clone(),
         )),
     })
 }
@@ -74,6 +79,33 @@ mod tests {
             panic!("expected an error")
         };
         assert!(matches!(err, LlmError::Tls(_)), "{err}");
+    }
+
+    /// Where the model list is asked for, as the request line shows it:
+    /// `{base_url}/models` unless the provider names another — or names a
+    /// blank one, which is the default too.
+    #[test]
+    fn the_model_list_is_asked_where_the_provider_says() {
+        use crate::infra::llm_providers::openai_compatible::tests::serve_capturing;
+        let asked = |kind, models_url: Option<&str>| {
+            let (url, server) = serve_capturing(r#"{"data":[]}"#.to_string());
+            let config = ProviderConfig {
+                id: "p".into(),
+                kind,
+                base_url: format!("{url}/anthropic/"),
+                models_url: models_url.map(|u| u.replace("{url}", &url)),
+                ..Default::default()
+            };
+            provider_for(&config, Some(SecretString::from("k"))).expect("builds").list_models().expect("lists");
+            let sent = server.join().expect("served");
+            sent.lines().next().unwrap_or_default().to_string()
+        };
+
+        assert_eq!(asked(ProviderKind::OpenAiCompatible, None), "GET /anthropic/models HTTP/1.1");
+        assert_eq!(asked(ProviderKind::OpenAiCompatible, Some("  ")), "GET /anthropic/models HTTP/1.1");
+        assert_eq!(asked(ProviderKind::OpenAiCompatible, Some("{url}/models")), "GET /models HTTP/1.1");
+        assert_eq!(asked(ProviderKind::Anthropic, None), "GET /anthropic/models?limit=1000 HTTP/1.1");
+        assert_eq!(asked(ProviderKind::Anthropic, Some("{url}/models")), "GET /models?limit=1000 HTTP/1.1");
     }
 
     #[test]

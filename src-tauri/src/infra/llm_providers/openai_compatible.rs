@@ -54,6 +54,7 @@ pub struct OpenAiCompatibleProvider {
     top_p: Option<f32>,
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
+    models_url: Option<String>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -67,6 +68,7 @@ impl OpenAiCompatibleProvider {
         top_p: Option<f32>,
         max_tokens: Option<u32>,
         reasoning_effort: Option<String>,
+        models_url: Option<String>,
     ) -> Self {
         Self {
             agent,
@@ -77,6 +79,7 @@ impl OpenAiCompatibleProvider {
             top_p,
             max_tokens,
             reasoning_effort,
+            models_url,
         }
     }
 
@@ -91,6 +94,10 @@ impl OpenAiCompatibleProvider {
 
     fn url(&self, suffix: &str) -> String {
         format!("{}/{suffix}", self.base_url.trim_end_matches('/'))
+    }
+
+    fn models_url(&self) -> String {
+        self.models_url.clone().unwrap_or_else(|| self.url("models"))
     }
 
     fn body<'a>(&self, request: &'a ChatRequest, stream: bool) -> WireRequest<'a> {
@@ -237,7 +244,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
     fn list_models(&self) -> Result<Vec<LlmModelInfo>, LlmError> {
         let mut get = self
             .agent
-            .get(self.url("models"))
+            .get(self.models_url())
             .header("Authorization", self.authorization().as_str());
         for (name, value) in self.extra_headers() {
             get = get.header(name, value);
@@ -1073,6 +1080,7 @@ pub(super) mod tests {
             base_url,
             SecretString::from("sk-test"),
             HashMap::new(),
+            None,
             None,
             None,
             None,

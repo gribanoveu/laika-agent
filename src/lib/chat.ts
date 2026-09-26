@@ -331,6 +331,8 @@ export type ProviderConfig = {
   id: string;
   kind?: ProviderKind;
   baseUrl: string;
+  /** Where the model list is asked for. Unset is `{baseUrl}/models`. */
+  modelsUrl?: string | null;
   model?: string | null;
   trustedCertPem?: string | null;
   requestHeaders?: Record<string, string>;

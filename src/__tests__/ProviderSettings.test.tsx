@@ -169,6 +169,24 @@ describe("editing a provider", () => {
     expect(saved).toHaveLength(1);
   });
 
+  test("the models URL shows the path it would take, and blank sends none", async () => {
+    const { saved } = form({
+      providers: [{ id: "deepseek", kind: "anthropic", baseUrl: "https://api.deepseek.com/anthropic/", hasApiKey: true }],
+      activeProviderId: "deepseek",
+    });
+    expect(field("Models URL").placeholder).toBe("https://api.deepseek.com/anthropic/models");
+
+    fireEvent.change(field("Models URL"), { target: { value: " https://api.deepseek.com/models " } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    fireEvent.change(field("Models URL"), { target: { value: "  " } });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save"));
+    });
+    expect(saved.map((s) => s.provider.modelsUrl)).toEqual(["https://api.deepseek.com/models", null]);
+  });
+
   test("a thinking level is one click, and the box shows what it sends", async () => {
     const { saved } = form({
       providers: [{ id: "gpt", baseUrl: "u", hasApiKey: true }],

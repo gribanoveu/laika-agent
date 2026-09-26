@@ -58,6 +58,7 @@ pub struct AnthropicProvider {
     top_p: Option<f32>,
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
+    models_url: Option<String>,
 }
 
 impl AnthropicProvider {
@@ -71,12 +72,17 @@ impl AnthropicProvider {
         top_p: Option<f32>,
         max_tokens: Option<u32>,
         reasoning_effort: Option<String>,
+        models_url: Option<String>,
     ) -> Self {
-        Self { agent, base_url, api_key, request_headers, temperature, top_p, max_tokens, reasoning_effort }
+        Self { agent, base_url, api_key, request_headers, temperature, top_p, max_tokens, reasoning_effort, models_url }
     }
 
     fn url(&self, suffix: &str) -> String {
         format!("{}/{suffix}", self.base_url.trim_end_matches('/'))
+    }
+
+    fn models_url(&self) -> String {
+        self.models_url.clone().unwrap_or_else(|| self.url("models"))
     }
 
     /// Wiped on drop, for the same reason as the OpenAI provider's
@@ -218,7 +224,7 @@ impl LlmProvider for AnthropicProvider {
 
     fn list_models(&self) -> Result<Vec<LlmModelInfo>, LlmError> {
         // Paged, twenty by default — more than there are models is one page.
-        let mut get = self.agent.get(self.url("models?limit=1000")).header("x-api-key", self.api_key().as_str());
+        let mut get = self.agent.get(self.models_url()).query("limit", "1000").header("x-api-key", self.api_key().as_str());
         for (name, value) in self.headers() {
             get = get.header(name, value);
         }
@@ -597,6 +603,7 @@ mod tests {
             base_url,
             SecretString::from("sk-ant"),
             HashMap::new(),
+            None,
             None,
             None,
             None,
