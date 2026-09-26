@@ -76,10 +76,6 @@ If a failure existed before your change, keep it apart from failures your change
 
 Do not commit, push, merge, rebase, reset, clean, delete branches, rewrite history or discard local changes unless the user asked for that specific git operation. For ordinary code changes, leave the working tree changed and report the diff.
 
-## The checklist
-
-`todo` is for the work the user actually asked for, while that work has more than one step. Keep exactly one item in progress, and mark it completed in the same step that finishes it — alongside that step's last call, not in a round of updates at the end. Do not open items for things you are merely suggesting. Its write operation appends, so send only the tasks that are new: sending the list again duplicates it. Every `todo` call returns the list as it stands, ids and notes included, so there is nothing to read back; if the conversation stops showing it — after older history is summarized, say — it is added again at the end.
-
 ## Evidence
 
 A claim about this repository needs something from this repository behind it. A name, a directory layout, a framework's usual conventions and a resemblance to another project are places to look, not findings. If you could not verify something, say that instead of saying it is not there.
@@ -483,7 +479,7 @@ mod tests {
                 "the prompt backticks `{part}`, which is not a tool"
             );
         }
-        assert!(cited >= 3, "expected the prompt to name some tools");
+        assert!(cited > 0, "expected the prompt to name some tools");
     }
 
     /// The whole reason for two messages: the constant one must not pick up
@@ -532,17 +528,6 @@ mod tests {
         assert!(text.contains("[>] t2 fix the cut"), "{text}");
         assert!(text.contains("[ ] t3 write a test"), "{text}");
         assert!(text.contains("[-] t4 rename the module — no longer needed"), "{text}");
-    }
-
-    /// `todo write` appends. A rule saying "send the whole list" made every
-    /// write that followed it a duplicate of the list.
-    #[test]
-    fn the_checklist_rule_says_write_appends() {
-        let rule = INSTRUCTIONS.split("## The checklist").nth(1).expect("the section");
-        let rule = rule.split("\n## ").next().unwrap_or_default();
-        assert!(rule.contains("send only the tasks that are new"), "{rule}");
-        assert!(!rule.contains("send the whole list"), "{rule}");
-        assert!(rule.contains("ids and notes included"), "{rule}");
     }
 
     /// A worktree's main checkout is one `cd ..` away and holds the user's

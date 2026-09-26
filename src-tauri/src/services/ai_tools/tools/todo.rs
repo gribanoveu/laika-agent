@@ -121,7 +121,7 @@ fn advance(mut tasks: Vec<Task>) -> Vec<Task> {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "todo".to_string(),
-        description: "Keep the checklist for a request that takes several steps (three or more). One tool, two operations chosen with `op`. `write` appends new task titles to the end of the list; once every task on it is completed or cancelled, the next `write` starts a new list instead. The runtime assigns ids and activates the first task when nothing is active. `update` changes one task to `completed` or `cancelled`; those are the only statuses you may set, and the runtime activates the next task by itself. An `update` with only a `note` records progress on the task and leaves its status as it is. Omit `id` to mean the task you are on, which is what almost every update means and cannot name the wrong one. There is no read operation because none is needed: every call returns the current list, ids and notes included, and if the conversation stops showing it, it is added again at the end. Do not use it for a one- or two-step request."
+        description: "Keep the checklist for work the user asked for that takes several steps (three or more) — not for steps you are only suggesting. One tool, two operations chosen with `op`. `write` appends new task titles to the end of the list; once every task on it is completed or cancelled, the next `write` starts a new list instead. The runtime assigns ids and activates the first task when nothing is active. `update` changes one task to `completed` or `cancelled`; those are the only statuses you may set, and the runtime activates the next task by itself. An `update` with only a `note` records progress on the task and leaves its status as it is. Omit `id` to mean the task you are on, which is what almost every update means and cannot name the wrong one. Mark a task completed alongside the last call of the step that finishes it, not in a round of updates at the end. There is no read operation because none is needed: every call returns the current list, ids and notes included, and if the conversation stops showing it, it is added again at the end. Do not use it for a one- or two-step request."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -182,6 +182,16 @@ pub(super) fn definition() -> LlmToolDefinition {
 mod tests {
     use super::*;
     use crate::domain::tools::{ToolCall, TodoUpdateStatus};
+
+    /// `write` appends. A rule saying "send the whole list" made every write
+    /// that followed it a duplicate of the list.
+    #[test]
+    fn the_description_says_write_appends() {
+        let text = definition().description;
+        assert!(text.contains("`write` appends new task titles"), "{text}");
+        assert!(!text.contains("send the whole list"), "{text}");
+        assert!(text.contains("ids and notes included"), "{text}");
+    }
 
     fn tasks(result: Result<ToolResult, ToolError>) -> Vec<Task> {
         match result.expect("the call succeeds") {
