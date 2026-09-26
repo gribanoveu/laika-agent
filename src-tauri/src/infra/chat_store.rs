@@ -230,6 +230,11 @@ pub fn delete(id: &str) -> Result<(), ChatError> {
     }
 }
 
+/// Every chat about `workspace` — a folder that is gone with them. How many.
+pub fn delete_in(workspace: &str) -> Result<usize, ChatError> {
+    open()?.execute("DELETE FROM chats WHERE workspace = ?1", params![workspace]).map_err(store)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +259,22 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_folder_s_chats_go_with_it_and_no_one_else_s() {
+        with_app_dir("chat-store-delete-in", || {
+            save_one("one", "/wt/main-1", "a");
+            save_one("two", "/wt/main-1", "b");
+            save_one("three", "/wt/main-10", "c");
+            save_one("four", "/repo", "d");
+
+            assert_eq!(delete_in("/wt/main-1").unwrap(), 2);
+            assert!(list("/wt/main-1").unwrap().is_empty());
+            assert_eq!(list("/wt/main-10").unwrap().len(), 1);
+            assert_eq!(list("/repo").unwrap().len(), 1);
+            assert_eq!(delete_in("/wt/main-1").unwrap(), 0);
+        });
     }
 
     #[test]

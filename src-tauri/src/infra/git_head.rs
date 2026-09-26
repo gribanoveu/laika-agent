@@ -1,7 +1,7 @@
 //! The branch checked out in a working tree — what the chat header shows
 //! under the chat's title.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
@@ -25,6 +25,17 @@ pub fn current_branch(root: &Path) -> Option<String> {
         }
     };
     branch
+}
+
+/// The main working tree of the repository `root` is a linked worktree of;
+/// `None` for the main one itself, and outside a repository.
+pub fn worktree_of(root: &Path) -> Option<PathBuf> {
+    let repo = Repository::discover(root).ok()?;
+    if !repo.is_worktree() {
+        return None;
+    }
+    // The shared `.git` sits in the main working tree.
+    repo.commondir().parent().map(Path::to_path_buf)
 }
 
 #[cfg(test)]
@@ -60,5 +71,21 @@ mod tests {
         assert_eq!(current_branch(&dir), Some(id.to_string()[..7].to_string()));
 
         assert_eq!(current_branch(&temp_dir("git-head-plain")), None);
+    }
+
+    #[test]
+    fn a_linked_worktree_names_its_main_one_and_the_main_one_nothing() {
+        let dir = temp_dir("git-head-worktree");
+        let repo = Repository::init(&dir).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        commit(&repo);
+        let linked = crate::infra::git_branches::add_worktree(&dir, "main", "t", &temp_dir("git-head-worktree-home")).unwrap();
+        std::fs::create_dir(linked.join("sub")).unwrap();
+
+        let main = dir.canonicalize().unwrap();
+        assert_eq!(worktree_of(&linked).map(|p| p.canonicalize().unwrap()), Some(main.clone()));
+        assert_eq!(worktree_of(&linked.join("sub")).map(|p| p.canonicalize().unwrap()), Some(main));
+        assert_eq!(worktree_of(&dir), None);
+        assert_eq!(worktree_of(&temp_dir("git-head-worktree-plain")), None);
     }
 }

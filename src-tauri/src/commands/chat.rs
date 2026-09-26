@@ -141,10 +141,29 @@ pub async fn workspace_open(
     Ok(shown)
 }
 
+/// A folder opened lately, and whose worktree it is if it is one — so the
+/// folder menu can show it under the repository it belongs to.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFolder {
+    path: String,
+    worktree_of: Option<String>,
+}
+
 /// Folders opened lately that still exist, the last one first.
 #[tauri::command]
-pub fn workspace_recent() -> Vec<String> {
-    crate::infra::recent_workspaces::load()
+pub fn workspace_recent() -> Vec<RecentFolder> {
+    recent_folders(crate::infra::recent_workspaces::load())
+}
+
+fn recent_folders(paths: Vec<String>) -> Vec<RecentFolder> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let worktree_of = crate::infra::git_head::worktree_of(std::path::Path::new(&path));
+            RecentFolder { worktree_of: worktree_of.map(|main| main.display().to_string()), path }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -163,6 +182,14 @@ pub fn workspace_current(state: State<'_, Arc<AgentState>>) -> Option<String> {
 pub fn workspace_branch(state: State<'_, Arc<AgentState>>) -> Option<String> {
     let root = state.workspace.lock().ok()?.clone()?;
     crate::infra::git_head::current_branch(&root)
+}
+
+/// The main working tree when the open folder is a worktree of it; `None`
+/// for an ordinary folder or repository.
+#[tauri::command]
+pub fn workspace_worktree_of(state: State<'_, Arc<AgentState>>) -> Option<String> {
+    let root = state.workspace.lock().ok()?.clone()?;
+    crate::infra::git_head::worktree_of(&root).map(|path| path.display().to_string())
 }
 
 /// The open folder's index as it stands — what a window that was not
@@ -515,6 +542,7 @@ where
             .map(|config| Hooks::new(config, Arc::new(crate::infra::hooks::run)))
             .map_err(|e| format!("{e} — fix or remove {}", crate::infra::hooks::path().map(|p| p.display().to_string()).unwrap_or_default()))?;
         let mcp = mcp_for_turn(mcp_servers.as_deref(), mode, &workspace, &cancelled);
+        let worktree_of = crate::infra::git_head::worktree_of(&workspace);
 
         let turn = Turn {
             events: &events,
@@ -532,6 +560,7 @@ where
             rules: &rules,
             log_call: &log_call,
             plan: plan.as_deref(),
+            worktree_of: worktree_of.as_deref(),
             mcp: &mcp,
             hooks: &hooks,
             processes,
@@ -553,6 +582,24 @@ mod tests {
     /// checks about behaviour rather than about Tauri.
     fn state() -> Arc<AgentState> {
         Arc::new(AgentState::default())
+    }
+
+    #[test]
+    fn a_recent_worktree_names_the_repository_it_belongs_to() {
+        let main = temp_dir("cmd-recent-main");
+        let repo = git2::Repository::init(&main).unwrap();
+        let tree = repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("T", "t@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "c", &tree, &[]).unwrap();
+        let head = repo.head().unwrap().shorthand().unwrap().to_string();
+        let linked =
+            crate::infra::git_branches::add_worktree(&main, &head, "t", &temp_dir("cmd-recent-home")).unwrap();
+
+        let folders = recent_folders(vec![linked.display().to_string(), main.display().to_string()]);
+        let shown = |path: &str| std::path::Path::new(path).canonicalize().unwrap();
+        assert_eq!(folders[0].path, linked.display().to_string());
+        assert_eq!(folders[0].worktree_of.as_deref().map(shown), Some(main.canonicalize().unwrap()));
+        assert_eq!(folders[1], RecentFolder { path: main.display().to_string(), worktree_of: None });
     }
 
     #[test]

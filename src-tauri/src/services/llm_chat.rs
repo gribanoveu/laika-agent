@@ -211,6 +211,9 @@ pub struct Turn<'a> {
     /// Read at the start of the turn: a `writePlan` in this turn reaches the
     /// model through its own call in the history until the next one.
     pub plan: Option<&'a str>,
+    /// The main working tree, when the open folder is a worktree of it —
+    /// said in the prompt, so the model keeps out of the user's checkout.
+    pub worktree_of: Option<&'a std::path::Path>,
     /// The connected MCP servers' tools. Read once per turn, like the
     /// skills: the tools a model was shown must not change between rounds.
     pub mcp: &'a McpTools,
@@ -907,6 +910,7 @@ fn request_messages(turn: &Turn, history: &[LlmMessage]) -> Vec<LlmMessage> {
         skills: turn.skills,
         rules: turn.rules,
         plan: turn.plan,
+        worktree_of: turn.worktree_of,
     };
     let mut messages = prompt::system_messages(&context);
     messages.extend_from_slice(history);
@@ -1368,6 +1372,7 @@ mod tests {
         rules: Vec<RuleFile>,
         logged: Arc<Mutex<Vec<ToolCallLogEntry>>>,
         plan: Option<String>,
+        worktree_of: Option<PathBuf>,
         mcp: McpTools,
         hooks: Hooks,
         processes: Option<Arc<dyn BackgroundProcesses>>,
@@ -1411,6 +1416,7 @@ mod tests {
             rules: Vec::new(),
             logged: Arc::new(Mutex::new(Vec::new())),
             plan: None,
+            worktree_of: None,
             mcp: McpTools::default(),
             hooks: Hooks::default(),
             processes: None,
@@ -1461,6 +1467,7 @@ mod tests {
                 rules: &self.rules,
                 log_call: &log_call,
                 plan: self.plan.as_deref(),
+                worktree_of: self.worktree_of.as_deref(),
                 mcp: &self.mcp,
                 hooks: &self.hooks,
                 processes: self.processes.clone(),
@@ -3610,6 +3617,21 @@ mod tests {
             assert!(
                 request.messages.iter().any(|m| m.content.as_deref().is_some_and(|c| c.contains("1. edited by the user"))),
                 "a request went out without the plan"
+            );
+        }
+    }
+
+    #[test]
+    fn every_request_in_a_worktree_names_the_checkout_to_keep_out_of() {
+        let mut h = harness("turn-worktree", vec![asks(vec![wants("r1", "listFiles", r#"{"path":"."}"#)]), text("done")]);
+        h.worktree_of = Some(PathBuf::from("/work/the-main-checkout"));
+
+        h.run(|turn| stream(turn, vec![LlmMessage::user("go")], vec![])).expect("finishes");
+
+        for request in h.provider.requests() {
+            assert!(
+                request.messages.iter().any(|m| m.content.as_deref().is_some_and(|c| c.contains("git worktree of /work/the-main-checkout"))),
+                "a request went out without saying it is a worktree"
             );
         }
     }

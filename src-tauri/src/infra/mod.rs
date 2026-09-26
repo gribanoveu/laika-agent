@@ -25,6 +25,7 @@ pub mod background;
 pub mod terminal;
 pub mod git_aliases;
 pub mod git_head;
+pub mod git_branches;
 pub mod git_changes;
 pub mod file_tree;
 pub mod git_history;

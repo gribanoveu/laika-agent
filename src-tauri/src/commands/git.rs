@@ -13,9 +13,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::chat::AgentState;
+use crate::domain::git_branches::{BranchRef, CheckoutOutcome, WorktreeState};
 use crate::domain::git_changes::{ChangeTotals, FileSide, FileView, GitChangesError, GitHistory, WorkingChanges};
 use crate::infra::file_watcher::FileWatcher;
-use crate::infra::git_changes;
+use crate::infra::{chat_store, git_branches, git_changes};
 use crate::services::{commit_message, llm_session};
 
 /// The open folder's repository changed its index, HEAD or refs.
@@ -49,9 +50,9 @@ pub fn watch_git<R: Runtime>(app: &AppHandle<R>, watch: &GitWatch, root: &Path, 
     }
 }
 
-async fn in_repo<T: Send + 'static>(
+async fn in_repo<T: Send + 'static, E: std::fmt::Display + Send + 'static>(
     state: &AgentState,
-    op: impl FnOnce(PathBuf) -> Result<T, GitChangesError> + Send + 'static,
+    op: impl FnOnce(PathBuf) -> Result<T, E> + Send + 'static,
 ) -> Result<T, String> {
     let root = state.workspace()?;
     tauri::async_runtime::spawn_blocking(move || op(root))
@@ -119,6 +120,83 @@ pub async fn file_view(path: String, side: FileSide, state: State<'_, Arc<AgentS
     in_repo(&state, move |root| git_changes::file_view(&root, &path, side)).await
 }
 
+/// The branches a new chat can start on: local ones, then remote ones with
+/// no local branch of that name.
+#[tauri::command]
+pub async fn git_branches(state: State<'_, Arc<AgentState>>) -> Result<Vec<BranchRef>, String> {
+    in_repo(&state, |root| git_branches::list(&root)).await
+}
+
+/// Switches the open folder to `branch`, or says which files stand in the
+/// way — it never overwrites them.
+#[tauri::command]
+pub async fn git_checkout(branch: String, state: State<'_, Arc<AgentState>>) -> Result<CheckoutOutcome, String> {
+    in_repo(&state, move |root| git_branches::checkout(&root, &branch)).await
+}
+
+/// Starts a worktree on a new branch from `base`, in the app's directory, and
+/// returns its folder for the window to open. The open folder is left as it is.
+#[tauri::command]
+pub async fn git_worktree_add(base: String, state: State<'_, Arc<AgentState>>) -> Result<String, String> {
+    let worktrees = crate::infra::app_dir::ensure()?.join("worktrees");
+    let stamp = chrono::Local::now().format("%m%d-%H%M").to_string();
+    let path = in_repo(&state, move |root| git_branches::add_worktree(&root, &base, &stamp, &worktrees)).await?;
+    Ok(path.display().to_string())
+}
+
+/// The open worktree as removing it would find it, and how many chats would
+/// go with it — what the confirmation says before anything is done.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeCheck {
+    #[serde(flatten)]
+    state: WorktreeState,
+    chats: usize,
+}
+
+#[tauri::command]
+pub async fn git_worktree_check(state: State<'_, Arc<AgentState>>) -> Result<WorktreeCheck, String> {
+    let root = state.workspace()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let worktree = git_branches::worktree_state(&root).map_err(|e| e.to_string())?;
+        let chats = chat_store::list(&root.display().to_string()).map_err(|e| e.to_string())?.len();
+        Ok(WorktreeCheck { state: worktree, chats })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRemoved {
+    /// The branch left behind for the commits only it has.
+    branch_kept: Option<String>,
+    chats_removed: usize,
+}
+
+/// Removes the worktree at `path` and its chats. Run from its main folder,
+/// which the window opens first: the worktree's processes, terminals and
+/// watchers stop with the switch, not under a folder being deleted.
+#[tauri::command]
+pub async fn git_worktree_remove(path: String, state: State<'_, Arc<AgentState>>) -> Result<WorktreeRemoved, String> {
+    let main = state.workspace()?;
+    tauri::async_runtime::spawn_blocking(move || remove_with_chats(&main, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The folder first: chats deleted for a worktree that then stayed would be
+/// lost for nothing. Keyed by the same canonical spelling `workspace_open`
+/// saved them under.
+fn remove_with_chats(main: &Path, path: &str) -> Result<WorktreeRemoved, String> {
+    let target = Path::new(path).canonicalize().map_err(|e| format!("{path}: {e}"))?;
+    let saved_under = target.display().to_string();
+    let branch_kept = git_branches::remove_worktree(main, &target).map_err(|e| e.to_string())?;
+    let chats_removed = chat_store::delete_in(&saved_under)
+        .map_err(|e| format!("the worktree is removed, but its chats are not: {e}"))?;
+    Ok(WorktreeRemoved { branch_kept, chats_removed })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +234,38 @@ mod tests {
 
         watch_git(app.handle(), &watch, &temp_dir("git-watch-plain"), "plain".into());
         assert!(watch.0.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_removed_worktree_takes_its_chats_and_only_its_own() {
+        crate::testing::with_app_dir("cmd-worktree-remove", || {
+            let main = temp_dir("cmd-worktree-remove-main");
+            let repo = git2::Repository::init(&main).unwrap();
+            let tree = repo.find_tree(repo.index().unwrap().write_tree().unwrap()).unwrap();
+            let sig = git2::Signature::now("T", "t@example.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "c", &tree, &[]).unwrap();
+            let head = repo.head().unwrap().shorthand().unwrap().to_string();
+            let path = git_branches::add_worktree(&main, &head, "t", &temp_dir("cmd-worktree-remove-home")).unwrap();
+            let shown = |dir: &Path| dir.canonicalize().unwrap().display().to_string();
+            let save = |id: &str, folder: &str| {
+                chat_store::save(id, folder, &[], &serde_json::json!([]), &[], None, None).unwrap();
+            };
+            save("in-worktree", &shown(&path));
+            save("in-main", &shown(&main));
+
+            // Dirty: refused, and the chats stay with it.
+            std::fs::write(path.join("new.txt"), "x").unwrap();
+            assert!(remove_with_chats(&main, &path.display().to_string()).is_err());
+            assert_eq!(chat_store::list(&shown(&path)).unwrap().len(), 1);
+
+            std::fs::remove_file(path.join("new.txt")).unwrap();
+            let saved_under = shown(&path);
+            let removed = remove_with_chats(&main, &path.display().to_string()).unwrap();
+            assert_eq!(removed, WorktreeRemoved { branch_kept: None, chats_removed: 1 });
+            assert!(!path.exists());
+            assert!(chat_store::list(&saved_under).unwrap().is_empty());
+            assert_eq!(chat_store::list(&shown(&main)).unwrap().len(), 1);
+        });
     }
 
     /// `src/lib/chat.ts` listens on this name.

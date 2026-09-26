@@ -171,6 +171,8 @@ pub struct TurnContext<'a> {
     pub rules: &'a [RuleFile],
     /// The conversation's plan as the user last left it — possibly edited.
     pub plan: Option<&'a str>,
+    /// The main working tree, when the open folder is a linked worktree of it.
+    pub worktree_of: Option<&'a Path>,
 }
 
 /// The varying half: what is true at this moment and nowhere else.
@@ -187,6 +189,14 @@ pub fn context_block(ctx: &TurnContext) -> String {
         ctx.shell,
         std::env::consts::OS,
     );
+    if let Some(main) = ctx.worktree_of {
+        text.push_str(&format!(
+            "\n- The open folder is a git worktree of {}, on a branch of its own. That folder is the \
+             user's own checkout and may hold work in progress: do not edit files there, run commands \
+             in it, or point git at it. Commits made here land on this worktree's branch.",
+            main.display(),
+        ));
+    }
     if ctx.unattended {
         text.push_str(
             "\n- The user has approved this turn in advance: calls will not pause for them. \
@@ -342,6 +352,7 @@ mod tests {
             skills: &[],
             rules: &[],
             plan: None,
+            worktree_of: None,
         }
     }
 
@@ -532,6 +543,19 @@ mod tests {
         assert!(rule.contains("send only the tasks that are new"), "{rule}");
         assert!(!rule.contains("send the whole list"), "{rule}");
         assert!(rule.contains("ids and notes included"), "{rule}");
+    }
+
+    /// A worktree's main checkout is one `cd ..` away and holds the user's
+    /// own work; the model has to be told which of the two folders is its.
+    #[test]
+    fn a_worktree_says_whose_it_is_and_to_keep_out_of_that_one() {
+        let workspace = PathBuf::from("/tmp/wt");
+        let main = PathBuf::from("/work/project");
+        assert!(!context_block(&ctx(&workspace)).contains("worktree"));
+
+        let text = context_block(&TurnContext { worktree_of: Some(&main), ..ctx(&workspace) });
+        assert!(text.contains("git worktree of /work/project"), "{text}");
+        assert!(text.contains("do not edit files there"), "{text}");
     }
 
     /// Telling the model to expect an approval prompt that will not come is
