@@ -31,8 +31,9 @@ use std::time::{Duration, Instant};
 
 use crate::domain::command_exec::{
     CommandError, CommandEvent, CommandOutput, CommandRequest, CommandSink, OutputStream,
-    MAX_OUTPUT_CHARS, Shell, ShellFound, truncate_output,
+    MAX_OUTPUT_CHARS, Shell, ShellFound, collapse_redraws, truncate_output,
 };
+use crate::infra::command_output_store;
 
 /// How often the child is checked while waiting. Short enough that a timeout
 /// is accurate to a blink, long enough not to spin a core.
@@ -136,16 +137,22 @@ pub fn run_with(
     let stdout = stdout.join().unwrap_or_default();
     let stderr = stderr.join().unwrap_or_default();
 
-    let (stdout, stdout_cut) = truncate_output(&stdout, MAX_OUTPUT_CHARS);
-    let (stderr, stderr_cut) = truncate_output(&stderr, MAX_OUTPUT_CHARS);
+    let (shown_out, stdout_cut) = truncate_output(&stdout, MAX_OUTPUT_CHARS);
+    let (shown_err, stderr_cut) = truncate_output(&stderr, MAX_OUTPUT_CHARS);
+    let truncated = stdout_cut || stderr_cut;
+    let full_output = truncated
+        .then(|| command_output_store::save(&collapse_redraws(&stdout), &collapse_redraws(&stderr)))
+        .flatten()
+        .map(|path| path.display().to_string());
 
     Ok(CommandOutput {
-        stdout,
-        stderr,
+        stdout: shown_out,
+        stderr: shown_err,
         exit_code: status.and_then(|s| s.code()),
         timed_out,
-        truncated: stdout_cut || stderr_cut,
+        truncated,
         duration_ms: started.elapsed().as_millis() as u64,
+        full_output,
     })
 }
 
@@ -265,6 +272,22 @@ mod tests {
 
     /// What a hook is given: the event on stdin, the project in its env.
     #[cfg(unix)]
+    /// A cut result says where the whole was saved; one that fits saves nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_cut_output_is_saved_whole() {
+        crate::testing::with_app_dir("cmd-full-output", || {
+            let dir = temp_dir("cmd-full-output");
+            let long = run_in(&dir, "seq 1 20000");
+            assert!(long.truncated);
+            let saved = std::fs::read_to_string(long.full_output.expect("saved")).unwrap();
+            assert_eq!(saved.lines().count(), 20000, "the middle the result dropped is there");
+            assert!(saved.contains("\n10000\n"));
+
+            assert_eq!(run_in(&dir, "echo short").full_output, None);
+        });
+    }
+
     /// What the probe hears is each shell's own variables.
     #[cfg(unix)]
     #[test]

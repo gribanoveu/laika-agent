@@ -178,6 +178,10 @@ pub struct CommandOutput {
     /// running it again, and the model has no clock of its own.
     #[serde(default)]
     pub duration_ms: u64,
+    /// Where both streams were saved whole, when either was cut — so the
+    /// model can read the middle rather than run the command again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_output: Option<String>,
 }
 
 impl CommandOutput {

@@ -336,6 +336,9 @@ fn command(output: &CommandOutput) -> String {
     if output.stdout.trim().is_empty() && output.stderr.trim().is_empty() {
         out.push_str("\n(no output)");
     }
+    if let Some(path) = &output.full_output {
+        out.push_str(&format!("\nComplete output: {path} — grep, head or tail it instead of running the command again."));
+    }
     out
 }
 
@@ -571,12 +574,26 @@ mod tests {
                 timed_out,
                 truncated: false,
                 duration_ms: 0,
+                full_output: None,
             }))
         };
         assert_eq!(out("ok\n", "", Some(0), false), "Exit code 0\nstdout:\nok");
         assert_eq!(out("", "boom\n", Some(1), false), "Exit code 1\nstderr:\nboom");
         assert_eq!(out("", "", None, true), "Timed out and was killed, with everything it started.\n(no output)");
         assert_eq!(out("", "", None, false), "Ended by a signal, with no exit code.\n(no output)");
+    }
+
+    /// A cut result points at the saved whole, so the middle is read, not re-run.
+    #[test]
+    fn a_cut_command_names_where_its_whole_output_is() {
+        let text = for_model(&ToolResult::CommandRan(CommandOutput {
+            stdout: "head\n[... 9 lines omitted ...]\ntail".into(),
+            exit_code: Some(1),
+            truncated: true,
+            full_output: Some("/home/me/.kibo/command-output/1.log".into()),
+            ..CommandOutput::default()
+        }));
+        assert!(text.ends_with("\nComplete output: /home/me/.kibo/command-output/1.log — grep, head or tail it instead of running the command again."), "{text}");
     }
 
     /// Which terminal, how its shell stands, whether a program has taken

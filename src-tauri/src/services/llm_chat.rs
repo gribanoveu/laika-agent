@@ -3058,6 +3058,7 @@ mod tests {
                     timed_out: false,
                     truncated: false,
                     duration_ms: 0,
+                    full_output: None,
                 })
             }),
         );

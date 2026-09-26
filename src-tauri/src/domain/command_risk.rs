@@ -510,9 +510,15 @@ fn is_secret(word: &str) -> bool {
                 | "shadow" | "sudoers" | "environ"
         )
         || [".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".secret", ".secrets"].iter().any(|ext| name.ends_with(ext));
-    let secret_dir = [".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/", ".gcloud/", ".terraform/", ".kibo/"]
-        .iter()
-        .any(|dir| path.contains(dir) || path.ends_with(dir.trim_end_matches('/')));
+    // The one part of the app directory that is not a secret: output of the
+    // model's own commands, saved when its result was cut. Without `..`,
+    // which would lead from there to the credentials beside it.
+    let command_output =
+        path.contains(".kibo/command-output/") && !path.split(['/', '\\']).any(|part| part == "..");
+    let secret_dir = !command_output
+        && [".ssh/", ".aws/", ".gnupg/", ".kube/", ".docker/", ".gcloud/", ".terraform/", ".kibo/"]
+            .iter()
+            .any(|dir| path.contains(dir) || path.ends_with(dir.trim_end_matches('/')));
     secret_name || secret_dir
 }
 
@@ -621,6 +627,21 @@ mod tests {
     #[test]
     fn a_template_of_secrets_is_not_a_secret() {
         assert_eq!(classify("cat .env.example"), CommandRisk::ReadOnly);
+    }
+
+    /// A cut command's saved output is read without a card; the rest of the
+    /// app directory, reached directly or through `..`, is still a secret.
+    #[test]
+    fn saved_command_output_is_not_a_secret_but_the_app_dir_is() {
+        assert_eq!(classify("grep -n error /Users/me/.kibo/command-output/1-2-3.log"), CommandRisk::ReadOnly);
+        assert_eq!(classify("tail -50 /Users/me/.kibo/command-output/1-2-3.log"), CommandRisk::ReadOnly);
+        for command in [
+            "cat /Users/me/.kibo/credentials.json",
+            "cat /Users/me/.kibo/settings.json",
+            "cat /Users/me/.kibo/command-output/../settings.json",
+        ] {
+            assert_eq!(classify(command), CommandRisk::Ask, "{command}");
+        }
     }
 
     #[test]
