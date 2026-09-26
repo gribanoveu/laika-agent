@@ -7,7 +7,7 @@ export function IndexBadge({ state }: { state: IndexState }) {
   return (
     <span className={`index-badge index-badge--${tone}`} title={detail} role="status">
       <span className="index-badge-dot" aria-hidden="true" />
-      {label}
+      <span className="index-badge-label">{label}</span>
     </span>
   );
 }

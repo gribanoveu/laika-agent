@@ -7,13 +7,14 @@ import { act, renderHook } from "@testing-library/react";
 const calls: { command: string; args: unknown }[] = [];
 let opened: string | null = null;
 let recent: string[] = [];
+const folders = (paths: string[]) => paths.map((path) => ({ path, worktreeOf: null }));
 let current: string | null = null;
 let failOpen = false;
 
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     calls.push({ command, args });
-    if (command === "workspace_recent") return Promise.resolve(recent);
+    if (command === "workspace_recent") return Promise.resolve(folders(recent));
     if (command === "workspace_current") return Promise.resolve(current);
     if (command === "workspace_open" && failOpen) return Promise.reject("cannot open: gone");
     return Promise.resolve(command === "workspace_open" ? (args as { path: string }).path : null);
@@ -56,7 +57,7 @@ describe("coming back", () => {
     await settle();
     expect(calls).toContainEqual({ command: "workspace_open", args: { path: "/work/b" } });
     expect(result.current.path).toBe("/work/b");
-    expect(result.current.recent).toEqual(["/work/b", "/work/a"]);
+    expect(result.current.recent).toEqual(folders(["/work/b", "/work/a"]));
     expect(result.current.resumed).toBe(true);
   });
 
@@ -106,7 +107,7 @@ describe("coming back", () => {
     await act(async () => {
       await result.current.pick();
     });
-    expect(result.current.recent).toEqual(["/work/new"]);
+    expect(result.current.recent).toEqual(folders(["/work/new"]));
   });
 });
 

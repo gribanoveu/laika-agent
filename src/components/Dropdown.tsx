@@ -4,7 +4,13 @@ import "./Dropdown.css";
 
 /** `label` when what the caller sends and what the reader sees differ — a wire
     value like "plan" is not a word to put in a menu. */
-type Option = { value: string; label?: string; hint?: string };
+type Option = {
+  value: string;
+  label?: string;
+  hint?: string;
+  /** Drawn under the option before it, as something that belongs to it. */
+  nested?: boolean;
+};
 
 type Props = {
   label: ReactNode;
@@ -72,7 +78,7 @@ export function Dropdown({ label, title, options, value, onPick, emptyLabel, bel
               type="button"
               role="option"
               aria-selected={opt.value === value}
-              className={`dropdown-item${opt.value === value ? " active" : ""}`}
+              className={`dropdown-item${opt.value === value ? " active" : ""}${opt.nested ? " nested" : ""}`}
               onClick={() => {
                 onPick(opt.value);
                 setOpen(false);

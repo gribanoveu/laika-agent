@@ -68,6 +68,29 @@ describe("switching folders", () => {
     expect(blocked?.kind === "processes" && blocked.terminals.map((t) => t.id)).toEqual([2]);
   });
 
+  /// A message on its way to a new worktree goes back to the box when the switch does not happen.
+  test("says it was cancelled when the dialog closes without the switch, and not after the switch", async () => {
+    processes = [proc(1, "bun run dev", { state: "running" })];
+    let went = 0;
+    let cancelled = 0;
+    const { result } = renderHook(() => useFolderSwitch(false));
+    await act(() => result.current.guard(() => went++, () => cancelled++));
+    act(() => result.current.close());
+    expect([went, cancelled]).toEqual([0, 1]);
+
+    await act(() => result.current.guard(() => went++, () => cancelled++));
+    act(() => {
+      const blocked = result.current.blocked;
+      if (blocked?.kind === "processes") blocked.go();
+      result.current.close();
+    });
+    expect([went, cancelled]).toEqual([1, 1]);
+
+    const busy = renderHook(() => useFolderSwitch(true));
+    await act(() => busy.result.current.guard(() => went++, () => cancelled++));
+    expect([went, cancelled]).toEqual([1, 2]);
+  });
+
   /// The turn's chat is saved into whatever folder is open when it ends.
   test("while the agent works it is refused, whatever runs", async () => {
     let went = 0;

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { currentWorkspace, openWorkspace, recentWorkspaces } from "../lib/chat";
+import { currentWorkspace, openWorkspace, recentWorkspaces, type RecentFolder } from "../lib/chat";
 import { pickFolder } from "../lib/dialog";
 
 /** The folder the agent acts on. Resolved by the backend, displayed here. */
 export function useWorkspace() {
   const [path, setPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<string[]>([]);
+  const [recent, setRecent] = useState<RecentFolder[]>([]);
   // Whether the folder is the one the app came back to rather than one the
   // user just chose: only then is its last conversation reopened too.
   const [resumed, setResumed] = useState(false);
@@ -35,7 +35,7 @@ export function useWorkspace() {
       if (current) {
         setPath(current);
         setResumed(true);
-      } else if (list[0] && (await open(list[0]))) {
+      } else if (list[0] && (await open(list[0].path))) {
         setResumed(true);
       }
     })();
@@ -48,5 +48,10 @@ export function useWorkspace() {
     return open(chosen);
   }, [open]);
 
-  return { path, error, recent, resumed, open, pick };
+  /** Reads the folder list again — after a folder in it is gone. */
+  const refreshRecent = useCallback(() => {
+    recentWorkspaces().then(setRecent).catch(() => {});
+  }, []);
+
+  return { path, error, recent, resumed, open, pick, refreshRecent };
 }

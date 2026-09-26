@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { processesList, type ProcessView } from "../lib/chat";
 import { terminalList, type TerminalInfo } from "../lib/terminal";
 
@@ -17,10 +17,16 @@ export type SwitchBlock =
  */
 export function useFolderSwitch(agentRunning: boolean) {
   const [blocked, setBlocked] = useState<SwitchBlock | null>(null);
+  // What to do if the dialog closes without the switch: a message on its way
+  // to the other folder goes back to the box. Cleared by the switch itself.
+  const onCancelled = useRef<(() => void) | null>(null);
 
   const guard = useCallback(
-    async (go: () => void) => {
-      if (agentRunning) return setBlocked({ kind: "agent" });
+    async (go: () => void, onCancel?: () => void) => {
+      if (agentRunning) {
+        onCancel?.();
+        return setBlocked({ kind: "agent" });
+      }
       const [processes, terminals] = await Promise.all([
         processesList().catch(() => []),
         terminalList().catch(() => []),
@@ -28,11 +34,20 @@ export function useFolderSwitch(agentRunning: boolean) {
       const running = processes.filter((p) => p.state.state === "running");
       const shells = terminals.filter((t) => t.state.state === "running");
       if (running.length === 0 && shells.length === 0) return go();
-      setBlocked({ kind: "processes", processes: running, terminals: shells, go });
+      onCancelled.current = onCancel ?? null;
+      const proceed = () => {
+        onCancelled.current = null;
+        go();
+      };
+      setBlocked({ kind: "processes", processes: running, terminals: shells, go: proceed });
     },
     [agentRunning],
   );
 
-  const close = useCallback(() => setBlocked(null), []);
+  const close = useCallback(() => {
+    onCancelled.current?.();
+    onCancelled.current = null;
+    setBlocked(null);
+  }, []);
   return { blocked, guard, close };
 }

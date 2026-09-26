@@ -124,10 +124,19 @@ export async function currentBranch(): Promise<string | null> {
   return invoke<string | null>("workspace_branch");
 }
 
+/** The main working tree when the open folder is a git worktree of it; `null` otherwise. */
+export async function worktreeOf(): Promise<string | null> {
+  if (!inTauri()) return null;
+  return invoke<string | null>("workspace_worktree_of");
+}
+
 /** Folders opened lately that still exist, the last one first. */
-export async function recentWorkspaces(): Promise<string[]> {
+/** Mirrors `commands::chat::RecentFolder`: `worktreeOf` is the main folder when this one is a git worktree of it. */
+export type RecentFolder = { path: string; worktreeOf: string | null };
+
+export async function recentWorkspaces(): Promise<RecentFolder[]> {
   if (!inTauri()) return [];
-  return invoke<string[]>("workspace_recent");
+  return invoke<RecentFolder[]>("workspace_recent");
 }
 
 // --------------------------------------------------------- the folder index
@@ -689,6 +698,55 @@ export async function gitCommit(message: string): Promise<string> {
 export async function gitCommitMessage(draft: string): Promise<string> {
   requireBackend();
   return invoke<string>("git_commit_message", { draft });
+}
+
+/** Mirrors `domain::git_branches::BranchRef`: `origin/x` is remote, listed only with no local `x`. */
+export type BranchRef = { name: string; remote: boolean };
+/** Mirrors `domain::git_branches::CheckoutOutcome`: a conflict left the folder exactly as it was. */
+export type CheckoutOutcome = { kind: "switched" } | { kind: "conflicts"; paths: string[] };
+
+/** Local branches first, then remote ones. */
+export async function gitBranches(): Promise<BranchRef[]> {
+  requireBackend();
+  return invoke<BranchRef[]>("git_branches");
+}
+
+/** Switches the open folder, or names the files that stand in the way — never overwrites them. */
+export async function gitCheckout(branch: string): Promise<CheckoutOutcome> {
+  requireBackend();
+  return invoke<CheckoutOutcome>("git_checkout", { branch });
+}
+
+/** A new worktree on a new branch from `base`; resolves to its folder, not yet opened. */
+export async function gitWorktreeAdd(base: string): Promise<string> {
+  requireBackend();
+  return invoke<string>("git_worktree_add", { base });
+}
+
+/** Mirrors `commands::git::WorktreeCheck`: the open worktree as removing it would find it. */
+export type WorktreeCheck = {
+  /** The main folder, which the window goes back to. */
+  main: string;
+  branch: string | null;
+  /** Uncommitted changes and untracked files: removal is refused while there are any. */
+  dirty: string[];
+  /** Commits only this worktree's branch has. */
+  ownCommits: number;
+  keepsBranch: boolean;
+  chats: number;
+};
+/** Mirrors `commands::git::WorktreeRemoved`. */
+export type WorktreeRemoved = { branchKept: string | null; chatsRemoved: number };
+
+export async function gitWorktreeCheck(): Promise<WorktreeCheck> {
+  requireBackend();
+  return invoke<WorktreeCheck>("git_worktree_check");
+}
+
+/** Removes the worktree at `path` and its chats; run with its main folder open. */
+export async function gitWorktreeRemove(path: string): Promise<WorktreeRemoved> {
+  requireBackend();
+  return invoke<WorktreeRemoved>("git_worktree_remove", { path });
 }
 
 /** Mirrors `domain::git_changes::CommitSummary`; `time` is in seconds since the epoch. */

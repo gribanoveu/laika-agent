@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { FolderTab } from "../components/FolderTab";
-import type { ChangeTotals } from "../lib/chat";
+import { FolderTab, folderOptions } from "../components/FolderTab";
+import type { ChangeTotals, RecentFolder } from "../lib/chat";
 import { fromSnapshot, type IndexState } from "../lib/indexStatus";
 
 // The strip on the composer's top edge: which folder the next message is
@@ -22,7 +22,7 @@ const tab = (over: Over = {}) =>
   render(
     <FolderTab
       path={over.path === undefined ? "/work/kibo" : over.path}
-      recent={over.recent ?? []}
+      recent={(over.recent ?? []).map((path) => ({ path, worktreeOf: null }))}
       branch={over.branch}
       index={over.index}
       changes={over.changes}
@@ -106,5 +106,49 @@ describe("the changes", () => {
   test("a clean folder, or no repository, shows nothing", () => {
     tab({ changes: { files: 0, add: 0, del: 0 } });
     expect(screen.queryByTitle(/changed since the last commit/)).toBeNull();
+  });
+});
+
+describe("the folder menu", () => {
+  const folder = (path: string, worktreeOf: string | null = null): RecentFolder => ({ path, worktreeOf });
+
+  test("puts a worktree under the folder it was made from, however recently each was opened", () => {
+    const rows = folderOptions([
+      folder("/home/.kibo/worktrees/kibo/main-0925-2214", "/work/kibo"),
+      folder("/work/atlas"),
+      folder("/work/kibo/"),
+      folder("/home/.kibo/worktrees/kibo/fix-0924-1010", "/work/kibo"),
+    ]);
+    expect(rows.map((row) => [row.label, row.hint, Boolean(row.nested)])).toEqual([
+      ["atlas", "/work/atlas", false],
+      ["kibo", "/work/kibo/", false],
+      ["main-0925-2214", "worktree of kibo", true],
+      ["fix-0924-1010", "worktree of kibo", true],
+    ]);
+  });
+
+  test("a worktree whose folder is not listed stays in place, named as one but not drawn under another", () => {
+    const rows = folderOptions([folder("/work/atlas"), folder("/wt/kibo/main-0925-2214", "/work/kibo")]);
+    expect(rows.map((row) => [row.label, row.hint, Boolean(row.nested)])).toEqual([
+      ["atlas", "/work/atlas", false],
+      ["main-0925-2214", "worktree of kibo", false],
+    ]);
+  });
+
+  test("draws the nested rows as such", () => {
+    render(
+      <FolderTab
+        path="/work/kibo"
+        recent={[folder("/work/kibo"), folder("/wt/kibo/main-0925-2214", "/work/kibo")]}
+        onOpenFolder={() => {}}
+        onPickFolder={() => {}}
+        onOpenChanges={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    const [main, worktree] = screen.getAllByRole("option");
+    expect(main.className).not.toContain("nested");
+    expect(worktree.className).toContain("nested");
+    expect(worktree.textContent).toBe("main-0925-2214worktree of kibo");
   });
 });

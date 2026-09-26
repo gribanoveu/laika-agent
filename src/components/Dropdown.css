@@ -106,6 +106,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Belongs to the option above it: indented, with a guide line joining it on. */
+.dropdown-item.nested {
+  padding-left: 18px;
+}
+.dropdown-item.nested .dropdown-item-text {
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
 .dropdown-check {
   flex: none;
   color: var(--accent);

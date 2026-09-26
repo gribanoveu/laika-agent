@@ -26,7 +26,7 @@ import { useToolLog } from "./hooks/useToolLog";
 import { roomFor, usePanelSizes } from "./hooks/usePanelSizes";
 import { useTheme } from "./hooks/useTheme";
 import { useChatFontSize } from "./hooks/useChatFontSize";
-import { useGitBranch } from "./hooks/useGitBranch";
+import { useGitBranch, useWorktreeOf } from "./hooks/useGitBranch";
 import { useChangeTotals } from "./hooks/useChangeTotals";
 import { useToast } from "./hooks/useToast";
 import { nativeFrame, startWindowDrag, toggleMaximizeWindow } from "./lib/window";
@@ -45,6 +45,10 @@ import { isAsideTab, type AsideTab } from "./types";
 import { useFolderSwitch } from "./hooks/useFolderSwitch";
 import { fileLinkPath, useOpenFiles } from "./hooks/useOpenFiles";
 import { FolderSwitchDialog } from "./components/FolderSwitchDialog";
+import { useBranchPicker } from "./hooks/useBranchPicker";
+import { BranchConflictDialog } from "./components/BranchConflictDialog";
+import { useWorktreeRemoval } from "./hooks/useWorktreeRemoval";
+import { WorktreeRemoveDialog } from "./components/WorktreeRemoveDialog";
 import "./App.css";
 
 // Titlebar drag: single press drags the window, double press zooms it — the macOS
@@ -147,6 +151,7 @@ export default function App() {
     toast.show("Auto is on here — the agent will change files without asking"),
   );
   const branch = useGitBranch(workspace.path, agent.turn.status);
+  const worktreeOf = useWorktreeOf(workspace.path);
   const changeTotals = useChangeTotals(workspace.path);
   // An archived chat is not where the user left off, even when it was touched last.
   useFolderConversation(workspace.path, workspace.resumed, history.chats.find((one) => !one.archived)?.id, agent);
@@ -247,12 +252,38 @@ export default function App() {
   const folderSwitch = useFolderSwitch(agent.turn.status === "running");
   const openFolder = (path: string) => folderSwitch.guard(() => void workspace.open(path));
   const chooseFolder = () => folderSwitch.guard(() => void workspace.pick());
+  // Offered only before the first message: a chat that has started is about
+  // the branch it started on.
+  const branchPicker = useBranchPicker({
+    current: branch,
+    guard: folderSwitch.guard,
+    open: workspace.open,
+    notify: toast.show,
+    send: agent.send,
+  });
+  const unstarted = agent.turn.blocks.length === 0 && agent.turn.status !== "running";
+  const worktreeRemoval = useWorktreeRemoval({
+    workspace: workspace.path,
+    guard: folderSwitch.guard,
+    open: workspace.open,
+    notify: toast.show,
+    refreshRecent: workspace.refreshRecent,
+  });
+  // The composer cleared the box when the message went; one that is not sent
+  // after all is put back rather than typed again.
+  const giveBack = (text: string) => setQuote((last) => ({ text, seq: (last?.seq ?? 0) + 1 }));
 
   // Asking before the first message rather than refusing it — and then sending
   // it: the composer has already cleared the box, so anything not sent here is
   // typed twice.
   const send = async (text: string) => {
     if (!workspace.path && !(await workspace.pick())) return;
+    // With Worktree ticked the first message is where the worktree is made:
+    // sent here, it would be worked on in the folder the user meant to keep out of.
+    if (unstarted && branchPicker.worktree && branchPicker.base) {
+      if (!(await branchPicker.startWorktree(branchPicker.base, text))) giveBack(text);
+      return;
+    }
     agent.send(text);
   };
 
@@ -402,10 +433,24 @@ export default function App() {
                 recent={workspace.recent}
                 onOpenFolder={openFolder}
                 onPickFolder={chooseFolder}
+                onRemoveWorktree={worktreeRemoval.ask}
                 branch={branch}
+                worktreeOf={worktreeOf}
                 index={index}
                 changes={changeTotals}
                 onOpenChanges={() => openTab("changes")}
+                branchPicker={
+                  unstarted
+                    ? {
+                        branches: branchPicker.branches,
+                        onOpen: branchPicker.load,
+                        onPick: (name) => void branchPicker.pick(name),
+                        worktree: branchPicker.worktree,
+                        base: branchPicker.base,
+                        onWorktree: branchPicker.setWorktree,
+                      }
+                    : undefined
+                }
               />
             }
             onSend={send}
@@ -494,6 +539,16 @@ export default function App() {
         folder={workspace.path}
         onStopAgent={agent.cancel}
         onClose={folderSwitch.close}
+      />
+      <WorktreeRemoveDialog
+        asked={worktreeRemoval.asked}
+        onConfirm={worktreeRemoval.confirm}
+        onClose={worktreeRemoval.close}
+      />
+      <BranchConflictDialog
+        conflict={branchPicker.conflict}
+        onWorktree={branchPicker.startWorktree}
+        onClose={branchPicker.closeConflict}
       />
 
       <Modal title="Settings" wide open={settingsOpen} onClose={() => setSettingsOpen(false)}>

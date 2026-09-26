@@ -1,0 +1,28 @@
+.conflict-text {
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.conflict-text b {
+  color: var(--text);
+  font-weight: 600;
+}
+.conflict-paths {
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.conflict-paths li {
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--bg-panel-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
