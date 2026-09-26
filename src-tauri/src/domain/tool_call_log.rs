@@ -179,8 +179,10 @@ pub fn redact_result(result: &ToolResult) -> Value {
 /// "…"`), which for an `edits` sent as one string is the whole edit.
 pub fn redact_error(error: &ToolError) -> String {
     match error {
-        ToolError::EditTextNotFound(_) => "edit text not found".to_string(),
+        ToolError::EditTextNotFound { .. } => "edit text not found".to_string(),
         ToolError::EditTextAmbiguous(_, count) => format!("edit text is not unique — matched {count} times"),
+        ToolError::EditInsideWord(..) => "edit text starts or ends inside a word".to_string(),
+        ToolError::InEdit { index, of, reason } => format!("edit {index} of {of}: {}", redact_error(reason)),
         // The tool's own words, which can be anything it read.
         ToolError::McpToolFailed(_) => "the MCP tool reported an error".to_string(),
         // Carries the server's last stderr lines.
@@ -390,9 +392,12 @@ mod tests {
 
     #[test]
     fn an_edit_that_did_not_apply_is_logged_without_its_text() {
-        let logged = redact_error(&ToolError::EditTextNotFound(LEAK.into()));
-        assert_eq!(logged, "edit text not found");
+        let missing = ToolError::EditTextNotFound { text: LEAK.into(), nearest: Some((3, LEAK.into())) };
+        assert_eq!(redact_error(&missing), "edit text not found");
         assert!(!redact_error(&ToolError::EditTextAmbiguous(LEAK.into(), 3)).contains(LEAK));
+        assert!(!redact_error(&ToolError::EditInsideWord(LEAK.into(), LEAK.into())).contains(LEAK));
+        let second = ToolError::InEdit { index: 2, of: 3, reason: Box::new(missing) };
+        assert_eq!(redact_error(&second), "edit 2 of 3: edit text not found");
         assert_eq!(redact_error(&ToolError::NotFound("src/a.rs".into())), "not found: src/a.rs");
     }
 

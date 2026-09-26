@@ -85,9 +85,12 @@ fn exact_match_ranges<'a>(
 ) -> Result<Vec<(usize, usize, Cow<'a, str>)>, ToolError> {
     let ending = line_ending(content);
     let mut ranges: Vec<(usize, usize, Cow<str>)> = Vec::with_capacity(edits.len());
-    for edit in edits {
+    for (index, edit) in edits.iter().enumerate() {
         let old = in_endings(&edit.old, ending);
-        let (start, end) = find_unique(content, &old)?;
+        let (start, end) = find_unique(content, &old).map_err(|reason| match edits.len() {
+            1 => reason,
+            of => ToolError::InEdit { index: index + 1, of, reason: Box::new(reason) },
+        })?;
         ranges.push((start, end, in_endings(&edit.new, ending)));
     }
 
@@ -147,7 +150,10 @@ fn line_endings_differ(content: &str, old: &str) -> Option<ToolError> {
 fn find_unique(content: &str, old: &str) -> Result<(usize, usize), ToolError> {
     let mut occurrences = content.match_indices(old);
     let Some((start, _)) = occurrences.next() else {
-        return Err(line_endings_differ(content, old).unwrap_or_else(|| ToolError::EditTextNotFound(old.to_string())));
+        return Err(line_endings_differ(content, old).unwrap_or_else(|| ToolError::EditTextNotFound {
+            text: old.to_string(),
+            nearest: closest_line(content, old),
+        }));
     };
     let count = 1 + occurrences.count();
     if count > 1 {
@@ -158,6 +164,25 @@ fn find_unique(content: &str, old: &str) -> Result<(usize, usize), ToolError> {
         return Err(ToolError::EditInsideWord(old.to_string(), word));
     }
     Ok((start, end))
+}
+
+/// The line of `content` most like the anchor's first non-blank one: the one
+/// sharing the most words with it — at least half, or it is a guess worth
+/// less than no hint. The same line indented otherwise shares all of them.
+// ponytail: the anchor's first line only; one that starts `}` finds nothing.
+fn closest_line(content: &str, old: &str) -> Option<(u32, String)> {
+    let first = old.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let words = |text: &str| -> std::collections::HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|w| !w.is_empty()).map(str::to_string).collect()
+    };
+    let wanted = words(first);
+    let (index, line, score) = content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| (i, line, words(line).intersection(&wanted).count()))
+        .max_by_key(|&(i, _, score)| (score, std::cmp::Reverse(i)))?;
+    (score > 0 && score * 2 >= wanted.len())
+        .then(|| (index as u32 + 1, line.trim_end().chars().take(200).collect()))
 }
 
 /// The word `start..end` cuts into, if an edge of it falls between two word
@@ -184,7 +209,7 @@ fn split_word(content: &str, start: usize, end: usize) -> Option<String> {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "editFile".to_string(),
-        description: "Replace exact passages in an existing file. The preferred way to change code: it touches only what you name. Each edit's `old` must appear **exactly once** in the file as it is now — include the surrounding lines needed to make it unique — and must begin and end on whole words: an anchor that starts or ends inside a name is refused. If any anchor is missing, ambiguous or overlaps another edit, the whole call is refused and nothing is written, so a failed edit never leaves the file half-changed. All edits are matched against the file's original content, so one edit's replacement can never become another's anchor. The file must already exist and have been read this turn."
+        description: "Replace exact passages in an existing file. The preferred way to change code: it touches only what you name. Each edit's `old` must appear **exactly once** in the file as it is now — include the surrounding lines needed to make it unique — and must begin and end on whole words: an anchor that starts or ends inside a name is refused. If any anchor is missing, ambiguous or overlaps another edit, the whole call is refused and nothing is written, so a failed edit never leaves the file half-changed. All edits are matched against the file's original content, so one edit's replacement can never become another's anchor. The file must already exist. It needs no readFile first: an anchor seen in a grep result is enough, since it has to match exactly. A file that changed on disk since you read it is refused."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -325,8 +350,32 @@ mod tests {
 
         let err = edit_file(&scope, &edits(&[("= 9", "= 2")]), &mut reads).expect_err("no match");
 
-        assert!(matches!(err, ToolError::EditTextNotFound(_)));
+        assert!(matches!(err, ToolError::EditTextNotFound { .. }));
         assert_eq!(on_disk(&root), "let x = 1;\n", "left untouched");
+    }
+
+    /// A miss says which edit of several it was and which line was probably
+    /// meant — indented otherwise here — so the retry fixes one anchor, by
+    /// copying.
+    #[test]
+    fn a_missing_anchor_names_its_edit_and_the_closest_line() {
+        let body = "fn a() {\n    let total = price * qty;\n    total\n}\n";
+        let (scope, _, mut reads) = fixture("edit-closest", body);
+
+        let err = edit_file(&scope, &edits(&[("fn a()", "fn b()"), ("let total = price * qty;\n  total", "x")]), &mut reads)
+            .expect_err("indented otherwise");
+        let ToolError::InEdit { index: 2, of: 2, reason } = &err else { panic!("{err}") };
+        assert!(
+            matches!(&**reason, ToolError::EditTextNotFound { nearest: Some((2, line)), .. } if line == "    let total = price * qty;"),
+            "{err}"
+        );
+        assert!(err.to_string().starts_with("edit 2 of 2: edit text not found"), "{err}");
+
+        // One word changed is still the line; one word in common of four is not.
+        let err = edit_file(&scope, &edits(&[("let total = cost * qty;", "x")]), &mut reads).expect_err("a word differs");
+        assert!(matches!(err, ToolError::EditTextNotFound { nearest: Some((2, _)), .. }), "{err}");
+        let err = edit_file(&scope, &edits(&[("let sum = a + b;", "x")]), &mut reads).expect_err("unrelated");
+        assert!(matches!(err, ToolError::EditTextNotFound { nearest: None, .. }), "{err}");
     }
 
     /// A model writes `\n` whatever the file uses: the edit takes the file's
@@ -372,7 +421,7 @@ mod tests {
 
         let (scope, _, mut reads) = fixture("edit-absent", "a: 1\nb: 2\n");
         let err = edit_file(&scope, &edits(&[("a: 9\r\nb: 2", "x")]), &mut reads).expect_err("absent");
-        assert!(matches!(err, ToolError::EditTextNotFound(_)), "{err}");
+        assert!(matches!(err, ToolError::EditTextNotFound { .. }), "{err}");
     }
 
     /// A unique anchor inside a word would rewrite part of a name: `line on`
@@ -434,16 +483,21 @@ mod tests {
         assert_eq!(on_disk(&root), "alpha\nbeta\n", "the good edit did not land either");
     }
 
+    /// Straight from a grep hit: the anchor is the check, and a read first
+    /// would only cost a round. It does not unlock a wholesale write after.
     #[test]
-    fn editing_an_unread_file_is_refused() {
+    fn an_unread_file_can_be_edited_but_not_then_replaced() {
         let dir = temp_dir("edit-unread");
         std::fs::write(dir.join("a.txt"), "precious\n").expect("writable");
         let scope = ToolScope::new(&dir).expect("root resolves");
+        let mut reads = ReadFiles::default();
 
-        let err = edit_file(&scope, &edits(&[("precious", "gone")]), &mut ReadFiles::default())
-            .expect_err("never read");
+        edit_file(&scope, &edits(&[("precious", "kept")]), &mut reads).expect("an anchor is enough");
 
-        assert!(matches!(err, ToolError::FileNotRead(_)));
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "kept\n");
+        assert_eq!(reads.check("a.txt", "kept\n", true), Err(WriteBlocked::ReadInPart));
+        let err = edit_file(&scope, &edits(&[("nowhere", "x")]), &mut reads).expect_err("still anchored");
+        assert!(matches!(err, ToolError::EditTextNotFound { .. }), "{err}");
     }
 
     /// The difference from `writeFile`. An anchored edit is content-addressed:

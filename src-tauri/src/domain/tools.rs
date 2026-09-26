@@ -300,6 +300,15 @@ impl ApprovalPolicy {
     }
 }
 
+/// How [`ToolError::EditTextNotFound`] points at the line the anchor was
+/// probably meant to be.
+fn closest_line(nearest: &Option<(u32, String)>) -> String {
+    match nearest {
+        Some((line, text)) => format!(" — the closest line is {line}: `{text}`"),
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,8 +777,11 @@ pub enum ToolError {
     #[error("invalid regex in `pattern`: {0}")]
     InvalidRegex(String),
     /// An `editFile` edit's `old` text appears nowhere in the file.
-    #[error("edit text not found: {0}")]
-    EditTextNotFound(String),
+    /// `nearest` is the line most like its first one — usually the same line
+    /// indented otherwise, or with a word changed — so the retry copies it
+    /// rather than guessing again.
+    #[error("edit text not found: {text}{}", closest_line(.nearest))]
+    EditTextNotFound { text: String, nearest: Option<(u32, String)> },
     /// The anchor is in the file but with the other line endings. A `\r` is
     /// invisible in an error message, so without saying this the model can
     /// only guess why a text it copied does not match. Carries no text of
@@ -786,6 +798,10 @@ pub enum ToolError {
     /// look plausible enough to miss.
     #[error("edit text starts or ends inside a word — it matched within `{1}`; anchor on whole words: {0}")]
     EditInsideWord(String, String),
+    /// Which of several edits an anchor error is about. The call is refused
+    /// whole, so without it the model rewrites every anchor to fix one.
+    #[error("edit {index} of {of}: {reason}")]
+    InEdit { index: usize, of: usize, reason: Box<ToolError> },
     /// Two edits in one call matched overlapping regions of the original
     /// content: applying both would be order-dependent or would corrupt one of
     /// them, so the whole call is rejected.
@@ -1411,10 +1427,13 @@ impl ReadFiles {
     /// Whether the agent may write `current` at `path`, or why not.
     ///
     /// `require_whole` is the difference between an anchored edit and a
-    /// wholesale replacement.
+    /// wholesale replacement. An edit needs no read at all: its anchor has to
+    /// match the file exactly and once, so text the agent never saw cannot be
+    /// hit — and the read it would have to make first costs a round, most
+    /// often after a grep that already showed it the line.
     pub fn check(&self, path: &str, current: &str, require_whole: bool) -> Result<(), WriteBlocked> {
         let Some(seen) = self.seen.get(path) else {
-            return Err(WriteBlocked::NeverRead);
+            return if require_whole { Err(WriteBlocked::NeverRead) } else { Ok(()) };
         };
         if seen.hash != hash(current) {
             return Err(WriteBlocked::ChangedSinceRead);
