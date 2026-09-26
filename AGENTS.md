@@ -112,4 +112,5 @@ A component used from more than one place carries its own styles rather than bor
 
 - Keep commits scoped to one layer or one concern where practical.
 - Run the relevant checks above before marking work done; mention in the summary which checks were run.
-- A finished feature adds one line to `CHANGELOG.md` at the repo root, newest on top: the date and what the user can now do, e.g. `2026-09-26 Add selector for thinking level for providers`. Create the file if it is missing. Refactors, tests and internal fixes the user never sees don't get a line.
+- A finished feature adds one list item to `CHANGELOG.md` at the repo root, under `## Unreleased`, newest on top: the date and what the user can now do, e.g. `- 2026-09-26 Add selector for thinking level for providers`. Create the file if it is missing, with a `# Changelog` title and an empty `## Unreleased`. Refactors, tests and internal fixes the user never sees don't get a line.
+- Creating a release tag closes the section: rename `## Unreleased` to `## <tag> — <date>` (e.g. `## v0.1.2-alfa — 2026-09-27`), open a new empty `## Unreleased` above it, and commit that before tagging, so the tag holds its own changelog.
