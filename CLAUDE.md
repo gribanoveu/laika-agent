@@ -9,19 +9,6 @@ Architecture, layering rules, IPC conventions, error handling and UI rules live 
 
 What follows is only what `AGENTS.md` does not cover.
 
-## This repository is mid-port
-
-The agent core is being ported here from Alfa Atlas
-(`/Users/eugene/Downloads/docflow-tauri/docflow`) one feature at a time.
-[`docs/06-port-plan.md`](docs/06-port-plan.md) is the running checklist: what is in,
-what is next, and — for each ported module — what had to change and what must not be
-lost. Read it before adding backend code, and update it when a feature lands.
-
-The backend is live: the shell talks to real `#[tauri::command]`s, and the mock data the
-plan started from is gone. Stages 5–7 (index and search, skills and observability,
-extensions) are the ones still landing — the plan's own progress tables say where each
-stands.
-
 ## Tests
 
 Frontend tests run on **Bun's own runner** (not vitest/jest), from `src/__tests__/`:
@@ -38,8 +25,7 @@ only through `bun test` — running the file with `bun run` gives it no DOM.
 `tsconfig.json` excludes `src/__tests__/**`: Bun type-checks those itself, and `tsc`
 does not know `bun:test`.
 
-Rust tests are inline `#[cfg(test)] mod tests` blocks, ported together with the code
-they cover:
+Rust tests are inline `#[cfg(test)] mod tests` blocks, next to the code they cover:
 
 ```bash
 cd src-tauri && cargo test              # all
@@ -78,8 +64,7 @@ cd src-tauri && AGENT_BENCH_API_KEY=… AGENT_BENCH_MODEL=… AGENT_BENCH_RUNS=3
 
 New backend code is not done when `cargo test` is green — the tests have to be shown to
 catch something. Break your own logic one edit at a time and check that each break fails
-a test; a survivor is a missing test, not a bad mutant. This is how every ported feature
-was checked, and the run is reported in `docs/06-port-plan.md`.
+a test; a survivor is a missing test, not a bad mutant.
 
 The method, the outcomes and what to write in the report are in
 [`docs/11-mutation-testing.md`](docs/11-mutation-testing.md). The runner takes a JSON plan

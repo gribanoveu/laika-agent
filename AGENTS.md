@@ -2,16 +2,7 @@
 
 Context for AI coding agents (Claude Code and others) working in this repository.
 
-## Project - original app
-
-**Alfa Atlas** — a documentation editor that works directly with Git repositories.
-
-- Original codebase: /Users/eugene/Downloads/docflow-tauri/docflow
-- Identifier: `com.eugene.alfa-atlas`
-- Stack: Tauri v2, React + TypeScript frontend, Rust backend
-- Package manager: **bun** — always use `bun`/`bunx`, never `npm`/`pnpm`/`yarn`
-
-## Project - this app
+## Project
 
 **Kibo Agent** - a cli agent like claude code desktop 
 
