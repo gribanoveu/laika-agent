@@ -22,6 +22,9 @@
 //! - `AGENT_BENCH_BASE_URL` — defaults to the vendor's own `/v1`.
 //! - `AGENT_BENCH_MAX_TOKENS`, `AGENT_BENCH_REASONING_EFFORT` — as in the
 //!   provider settings.
+//! - `AGENT_BENCH_TRUSTED_CERT` — path to a PEM file, for a gateway with its
+//!   own certificate or a proxy with its own CA; replaces the trust store, as
+//!   the provider setting does.
 //! - `AGENT_BENCH_RUNS` — runs per task, default 1. A model is not
 //!   deterministic: compare versions on three or more.
 //! - `AGENT_BENCH_TASKS` — comma-separated substrings of task names to run.
@@ -94,6 +97,8 @@ fn session() -> LlmSession {
         model: Some(model.clone()),
         max_tokens: var("AGENT_BENCH_MAX_TOKENS").map(|n| n.parse().expect("AGENT_BENCH_MAX_TOKENS is a number")),
         reasoning_effort: var("AGENT_BENCH_REASONING_EFFORT"),
+        trusted_cert_pem: var("AGENT_BENCH_TRUSTED_CERT")
+            .map(|path| std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("AGENT_BENCH_TRUSTED_CERT {path}: {e}"))),
         ..ProviderConfig::default()
     };
     let key = SecretString::from(required("AGENT_BENCH_API_KEY"));
@@ -148,8 +153,11 @@ fn copy_dir(from: &Path, to: &Path) {
 /// so that `git diff` shows the agent's work and nothing else. Line endings
 /// are stored as they are, whatever the user's global `core.autocrlf` says:
 /// `crlf-edit` is about exactly those bytes.
+///
+/// The folder is not named after the task: the agent sees its path, and a
+/// model that read "crlf-edit" in it went around `editFile` on the hint alone.
 fn workspace(task: &Task, run: usize) -> PathBuf {
-    let work = temp_dir(&format!("agent-bench-{}-{run}", task.name)).canonicalize().unwrap();
+    let work = temp_dir(&format!("agent-bench-{run}")).canonicalize().unwrap();
     copy_dir(&task.dir.join("repo"), &work);
     for args in [
         &["init", "-q"][..],
