@@ -112,3 +112,4 @@ A component used from more than one place carries its own styles rather than bor
 
 - Keep commits scoped to one layer or one concern where practical.
 - Run the relevant checks above before marking work done; mention in the summary which checks were run.
+- A finished feature adds one line to `CHANGELOG.md` at the repo root, newest on top: the date and what the user can now do, e.g. `2026-09-26 Add selector for thinking level for providers`. Create the file if it is missing. Refactors, tests and internal fixes the user never sees don't get a line.
