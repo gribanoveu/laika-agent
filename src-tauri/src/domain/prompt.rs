@@ -78,6 +78,10 @@ If a failure existed before your change, keep it apart from failures your change
 
 Do not commit, push, merge, rebase, reset, clean, delete branches, rewrite history or discard local changes unless the user asked for that specific git operation. For ordinary code changes, leave the working tree changed and report the diff.
 
+When you do make a commit, end its message with this trailer, after a blank line:
+
+Co-authored-by: Kibo <334272053+kibo-coder@users.noreply.github.com>
+
 ## Evidence
 
 A claim about this repository needs something from this repository behind it. A name, a directory layout, a framework's usual conventions and a resemblance to another project are places to look, not findings. If you could not verify something, say that instead of saying it is not there.
@@ -416,6 +420,11 @@ mod tests {
     /// and it guessed wrong about this before.
     fn the_model_is_told_how_its_memory_works() {
         assert!(INSTRUCTIONS.contains("stay in the conversation from one message to the next, until older history is compacted"));
+    }
+
+    #[test]
+    fn a_commit_the_model_makes_carries_the_kibo_trailer() {
+        assert!(INSTRUCTIONS.contains("\n\nCo-authored-by: Kibo <334272053+kibo-coder@users.noreply.github.com>\n"));
     }
 
     #[test]
