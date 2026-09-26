@@ -151,6 +151,24 @@ describe("editing a provider", () => {
     expect(saved[0]?.provider.reasoningEffort).toBeNull();
   });
 
+  test("a key typed and left is saved with its provider, but not a cleared one or a nameless form", async () => {
+    const { saved } = form();
+    fireEvent.change(field("API key"), { target: { value: "sk-typed" } });
+    await act(async () => {
+      fireEvent.blur(field("API key"));
+    });
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.provider.id).toBe("local");
+    expect(saved[0]?.apiKey).toBe("sk-typed");
+
+    fireEvent.change(field("API key"), { target: { value: "" } });
+    fireEvent.blur(field("API key"));
+    fireEvent.change(field("Name"), { target: { value: " " } });
+    fireEvent.change(field("API key"), { target: { value: "sk-other" } });
+    fireEvent.blur(field("API key"));
+    expect(saved).toHaveLength(1);
+  });
+
   test("a thinking level is one click, and the box shows what it sends", async () => {
     const { saved } = form({
       providers: [{ id: "gpt", baseUrl: "u", hasApiKey: true }],

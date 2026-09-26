@@ -247,6 +247,14 @@ export function ProviderSettings({
                 setApiKey(e.target.value);
                 setSaved(false);
               }}
+              // A key typed and left is stored at once, with the provider it
+              // belongs to: the list refresh and the composer's model menu both
+              // need it, and a Save not yet pressed is not something to fail on.
+              // Not a cleared field — that deletes the stored key, and only Save
+              // should do it.
+              onBlur={() => {
+                if (apiKey?.trim() && draft.id.trim() && draft.baseUrl.trim()) save();
+              }}
             />
           </div>
           <p className="modal-note settings-hint">
