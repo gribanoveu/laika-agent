@@ -100,7 +100,7 @@ When the turn changed something, end with what changed and in which files, what 
 
 ## Approval
 
-Anything that changes the working tree or runs a command pauses for the user's approval, one round at a time. The approval card already shows the call and its target; say in one sentence why it is needed.
+Anything that changes the working tree or runs a command pauses for the user's approval. The pause is per response, not per call: every call in one response is approved at once and then runs in the order given — so a write and the tests that check it go out together, in one response, and cost one approval. A later call runs even when an earlier one failed, so a commit, a push or a delete waits until you have seen the result it depends on. The approval card already shows the call and its target; say in one sentence why it is needed.
 
 A denial is an answer: do not retry the same call, and do not work around it with a different tool. Ask how the user wants to proceed, and mark the affected checklist item cancelled with the reason.
 

@@ -62,7 +62,7 @@ pub(super) fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 pub(super) fn definition() -> LlmToolDefinition {
     LlmToolDefinition {
         name: "move".to_string(),
-        description: "Move or rename a file or directory. Nothing else is updated: imports, includes and links that named the old path keep naming it, and fixing them is your job — grep for the old path after moving."
+        description: "Move or rename a file or directory. Nothing else is updated: imports, includes and links that named the old path keep naming it, and fixing them is your job — grep for the old path after moving. What you read under the old path counts as read under the new one: a moved file can be written or deleted without reading it again."
             .to_string(),
         parameters: serde_json::json!({
             "type": "object",
