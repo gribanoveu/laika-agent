@@ -196,6 +196,11 @@ impl LlmProvider for AnthropicProvider {
                     ) {
                         result.truncated = true;
                     }
+                    // A `200` that declined: whatever streamed before it is
+                    // not an answer, and asking again gets the same decline.
+                    if delta.stop_reason.as_deref() == Some("refusal") {
+                        return Err(refusal_error(delta.stop_details.unwrap_or_default()));
+                    }
                 }
                 StreamEvent::MessageStop => break,
                 StreamEvent::Error { error } => return Err(stream_error(error)),
@@ -280,6 +285,14 @@ fn native_content(blocks: Vec<(usize, Value)>, calls: &[(usize, LlmToolCall)]) -
         })
         .collect();
     Some(Value::Array(content))
+}
+
+/// A model's safety classifier declined the request. Its category and
+/// explanation are the only way the user learns why, so they go in the text.
+fn refusal_error(details: StopDetails) -> LlmError {
+    let category = details.category.map(|c| format!(" ({c})")).unwrap_or_default();
+    let explanation = details.explanation.map(|e| format!(": {e}")).unwrap_or_default();
+    LlmError::Provider(format!("the model declined this request{category}{explanation}"))
 }
 
 /// An `error` event arrives after the `200`, so `ok_or_status_error` never
@@ -481,6 +494,16 @@ enum BlockDelta {
 struct MessageDeltaBody {
     #[serde(default)]
     stop_reason: Option<String>,
+    #[serde(default)]
+    stop_details: Option<StopDetails>,
+}
+
+#[derive(Default, Deserialize)]
+struct StopDetails {
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    explanation: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -965,6 +988,24 @@ mod tests {
             assert_eq!(body.get("output_config") == Some(&json!({"effort":"high"})), expected, "{sent}");
             assert_eq!(body.get("thinking") == Some(&json!({"type":"adaptive"})), expected, "{sent}");
         }
+    }
+
+    /// A refusal arrives as an ordinary stop after a `200`; read as one, the
+    /// turn ends in silence and the loop nudges the same request again.
+    #[test]
+    fn a_refusal_is_an_error_that_says_why() {
+        let (url, server) = serve(
+            "200 OK",
+            sse(&[
+                r#"{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber","explanation":"declined"}},"usage":{"output_tokens":0}}"#,
+            ]),
+        );
+        let err = provider(url)
+            .chat_stream(request(vec![LlmMessage::user("hi")]), &|_| {}, &|_| {}, &|_, _, _| {}, &|| false)
+            .expect_err("a refusal");
+        server.join().ok();
+        let message = err.to_string();
+        assert!(message.contains("declined this request (cyber): declined"), "{message}");
     }
 
     #[test]
