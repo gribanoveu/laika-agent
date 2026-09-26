@@ -49,7 +49,8 @@ import { useBranchPicker } from "./hooks/useBranchPicker";
 import { BranchConflictDialog } from "./components/BranchConflictDialog";
 import { useWorktreeRemoval } from "./hooks/useWorktreeRemoval";
 import { WorktreeRemoveDialog } from "./components/WorktreeRemoveDialog";
-import { fileCommands, type SlashCommand } from "./lib/slashCommands";
+import { expandTemplate, fileCommands, type SlashCommand } from "./lib/slashCommands";
+import initPrompt from "./prompts/init.md?raw";
 import { useCommandFiles } from "./hooks/useCommandFiles";
 import "./App.css";
 
@@ -259,6 +260,17 @@ export default function App() {
           ? "Nothing to fork yet"
           : undefined,
       run: () => agent.branch(),
+    },
+    {
+      name: "init",
+      hint: "Write AGENTS.md and CLAUDE.md for this repository, or suggest edits to the ones it has",
+      argumentHint: "[what to focus on]",
+      unavailable: busy
+        ? "Not while a turn is running"
+        : conversation.value !== "agent"
+          ? "Switch to Agent mode — it writes files"
+          : undefined,
+      run: (args) => void send(expandTemplate(initPrompt, args)),
     },
   ];
   // `send` is declared further down; the arrow reaches it when a command runs.

@@ -81,3 +81,16 @@ describe("a command file", () => {
     expect(sent).toEqual(["Do src/a.ts"]);
   });
 });
+
+// Read as Vite's `?raw` does, through Bun's own loader.
+const initPrompt = (await import("../prompts/init.md", { with: { type: "text" } })).default as string;
+
+describe("the /init prompt", () => {
+  /// It is sent as it is: frontmatter would reach the model as text, and a
+  /// lost placeholder would put the user's focus after the summary step.
+  test("is a prompt with one place for what was typed", () => {
+    expect(initPrompt.startsWith("---")).toBe(false);
+    expect(initPrompt.split("$ARGUMENTS")).toHaveLength(2);
+    expect(expandTemplate(initPrompt, "the IPC layer")).toContain("(may be empty): the IPC layer\n");
+  });
+});
