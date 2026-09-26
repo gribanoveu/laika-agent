@@ -38,6 +38,7 @@ export const SHORTCUTS = {
   ...PANE_SHORTCUTS,
   send: { label: "Send the message", group: "Chat", combos: [{ code: "Enter" }] },
   newLine: { label: "New line in the message", group: "Chat", combos: [{ code: "Enter", shift: true }] },
+  closeFile: { label: "Close the file tab", group: "Files", combos: [{ code: "KeyE", mod: true }] },
   nextFile: { label: "Next changed file", group: "Files", combos: [{ code: "ArrowDown", alt: true }] },
   prevFile: { label: "Previous changed file", group: "Files", combos: [{ code: "ArrowUp", alt: true }] },
   save: { label: "Save the config file", group: "Files", combos: [{ code: "KeyS", mod: true }] },

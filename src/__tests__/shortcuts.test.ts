@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { comboKeys, matches, shortcutText, SHORTCUTS } from "../lib/shortcuts";
+import { renderHook } from "@testing-library/react";
+import { useShortcuts } from "../hooks/useShortcuts";
+import { comboKeys, IS_MAC, matches, shortcutText, SHORTCUTS } from "../lib/shortcuts";
 import { togglePane, type Docks } from "../lib/docks";
 
 const key = (code: string, mods: Partial<Record<"metaKey" | "ctrlKey" | "shiftKey" | "altKey", boolean>> = {}) => ({
@@ -58,5 +60,25 @@ describe("the pane keys", () => {
   test("go Changes, Plan, Files, Rules, Skills, MCP, Hooks", () => {
     const keys = ["changes", "plan", "files", "rules", "skills", "mcp", "hooks"] as const;
     expect(keys.map((id) => shortcutText(id, true))).toEqual(["⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7"]);
+  });
+});
+
+describe("a window-wide shortcut", () => {
+  const press = (code: string) => {
+    const e = new KeyboardEvent("keydown", { code, cancelable: true, ...(IS_MAC ? { metaKey: true } : { ctrlKey: true }) });
+    window.dispatchEvent(e);
+    return e;
+  };
+
+  test("runs its handler and keeps the key from anything else", () => {
+    let closed = 0;
+    renderHook(() => useShortcuts({ closeFile: () => closed++ }));
+    expect(press("KeyE").defaultPrevented).toBe(true);
+    expect(closed).toBe(1);
+  });
+
+  test("with no handler, leaves the key alone", () => {
+    renderHook(() => useShortcuts({ closeFile: undefined }));
+    expect(press("KeyE").defaultPrevented).toBe(false);
   });
 });

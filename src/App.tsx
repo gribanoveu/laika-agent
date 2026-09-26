@@ -209,6 +209,8 @@ export default function App() {
     newChat: () => newChat(),
     sidebar: toggleSidebar,
     settings: () => setSettingsOpen(true),
+    // Not ⌘W: once the last tab is gone, the next press would close the window.
+    closeFile: viewer.active ? () => viewer.active && viewer.close(viewer.active) : undefined,
   });
 
   // A plan the agent has just finished writing is shown, once, when its turn
